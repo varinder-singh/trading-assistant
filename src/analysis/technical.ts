@@ -23,11 +23,7 @@ export function analyzeTechnical(candles: Candle[], timeframe: string = "15m"): 
   const vwap = calculateVWAP(candles)
   const rsi = calculateRSI(candles)
 
-  const lastCandle = candles[candles.length - 1]
-  if (!lastCandle) {
-    throw new Error("Cannot analyze technical indicators without candles")
-  }
-
+  const lastCandle = candles[candles.length - 1]!
   const last = lastCandle.close
 
   const highs = candles.slice(-20).map(c => c.high)

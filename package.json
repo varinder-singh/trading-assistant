@@ -10,7 +10,9 @@
     "kite:options": "node --loader ts-node/esm src/data/kite-options.ts",
     "kite:token": "node --loader ts-node/esm src/scripts/kite-access-token.ts",
     "trade": "node --loader ts-node/esm src/cli/trade.ts",
-    "test": "npm run check"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "keywords": [],
   "author": "",
@@ -24,7 +26,9 @@
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^25.6.0",
+    "@vitest/coverage-v8": "^4.1.6",
     "ts-node": "^10.9.2",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
   }
 }
