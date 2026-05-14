@@ -1,3 +1,4 @@
+import "dotenv/config"
 import { spawn } from "node:child_process"
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"

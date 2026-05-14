@@ -1,15 +1,4 @@
-import { createRequire } from "module"
-const require = createRequire(import.meta.url)
-const OpenAI = require("openai").default
-
-const endpoint = (process.env.AZURE_OPENAI_ENDPOINT ?? "https://delta-codex-us-2-poc.services.ai.azure.com/openai/v1").replace(/\/+$/, "")
-// const deploymentName = process.env.AZURE_OPENAI_DEPLOYMENT ?? "gpt-5.5"
-const deploymentName = "gpt-5.5"
-
-const client = new OpenAI({
-  apiKey: process.env.AZURE_OPENAI_API_KEY,
-  baseURL: endpoint,
-})
+import { getLLMProvider } from "./factory.js";
 
 export async function analyzeWithAI(input: any) {
   let prompt = ""
@@ -33,13 +22,17 @@ Assess the primary direction from 15-min data:
 - RSI (15m): Overbought / Oversold / Neutral
 - Options flow (ATM PCR): Bullish / Bearish / Neutral
   - pcrAtm > 1.2 = bearish (more puts = hedging), pcrAtm < 0.8 = bullish (more calls), 0.8–1.2 = neutral
+- India VIX (Volatility): Low / Normal / High / Extreme
+  - VIX < 12 (Low): Expect range-bound or slow moves; breakouts may lack follow-through.
+  - VIX 12-20 (Normal): Standard rules apply.
+  - VIX > 20 (High/Extreme): High volatility; increase stop-loss width, reduce position size, expect sharp reversals.
 - Sentiment: Positive / Negative / Neutral
 
 ## Step 2 — Direction Confirmation (15-Minute)
-Require ≥3 of 5 signals to align for a clear direction:
-- BUY: 15m trend bullish, price above VWAP, near 15m support, pcrAtm bullish, positive/neutral sentiment
+Require ≥3 of 6 signals to align for a clear direction:
+- BUY: 15m trend bullish, price above VWAP, near 15m support, pcrAtm bullish, VIX not extreme, positive/neutral sentiment
 - SELL: 15m trend bearish, price below VWAP, near 15m resistance, pcrAtm bearish, negative/neutral sentiment
-- NO_TRADE: mixed signals, RSI extreme without confirmation, sideways trend
+- NO_TRADE: mixed signals, RSI extreme without confirmation, sideways trend, or VIX > 25 (Extreme) without clear trend.
 
 ## Step 3 — Entry Precision (5-Minute)
 If direction is confirmed in Step 2, use 5m data for exact entry/exit:
@@ -88,22 +81,17 @@ ${JSON.stringify(input, null, 2)}
   let text = "{}"
 
   try {
-    const response = await client.chat.completions.create({
-      model: deploymentName,
-      messages: [
-        { role: "system", content: systemMessage },
-        { role: "user", content: prompt },
-      ]
-    })
+    const provider = getLLMProvider();
+    text = await provider.chat([
+      { role: "system", content: systemMessage },
+      { role: "user", content: prompt },
+    ]);
 
-    text = response.choices[0]?.message.content || "{}"
     // Strip markdown code fences if present
     text = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
-  } catch (error) {
-    console.error("⚠️ AI request failed", {
-      error,
-      endpoint,
-      deploymentName,
+  } catch (error: any) {
+    console.error(`⚠️ AI request failed with provider: ${process.env.LLM_PROVIDER || 'gemini'}`, {
+      error: error.message || error,
     })
     return { decision: "NO_TRADE", reason: "AI request error", confidence: 0 }
   }
@@ -118,4 +106,3 @@ ${JSON.stringify(input, null, 2)}
     return { decision: "NO_TRADE", reason: "Parsing error", confidence: 0 }
   }
 }
-

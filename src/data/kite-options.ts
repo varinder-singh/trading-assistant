@@ -1,3 +1,4 @@
+import "dotenv/config"
 import { pathToFileURL } from "node:url"
 import type { Instrument } from "kiteconnect"
 import { analyzeOptions, type KiteOptionQuote } from "../analysis/kite-options.js"

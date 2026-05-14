@@ -1,3 +1,4 @@
+import "dotenv/config"
 import { Command } from "commander"
 import { getDualTimeframeCandles } from "../data/yahoo.js"
 import { analyzeDualTimeframe } from "../analysis/technical.js"
@@ -7,6 +8,7 @@ import { getNews } from "../data/news.js"
 import { analyzeSentiment } from "../analysis/sentiment.js"
 import { getOptionChain } from "../data/kite-options.js"
 import { analyzeOptions, formatOptionsAnalysisForLog } from "../analysis/kite-options.js"
+import { getIndiaVix } from "../data/vix.js"
 
 const program = new Command()
 const divider = "═".repeat(50)
@@ -31,21 +33,33 @@ program
     const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
     const mode = options.mode as "intraday" | "swing"
 
-    const { candles15m, candles5m } = await getDualTimeframeCandles(ticker)
+    const [candlesData, headlines, vix, kiteData] = await Promise.all([
+      getDualTimeframeCandles(ticker),
+      getNews(symbol),
+      getIndiaVix(),
+      getOptionChain(symbol),
+    ])
+
+    const { candles15m, candles5m } = candlesData
     const { tf15m, tf5m } = analyzeDualTimeframe(candles15m, candles5m)
     const plan = generateTradePlan(tf15m, mode)
-    const headlines = await getNews(symbol)
     const sentiment = await analyzeSentiment(headlines)
-    // kite zerodha data
-    const { quotes, finalOptions } = await getOptionChain(symbol)
+
+    const { quotes, finalOptions } = kiteData
     const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price)
+    
     const aiDecision = await analyzeWithAI({
       tf15m,
       tf5m,
       sentiment,
       optionsAnalysisZerodha,
+      vix,
       mode,
     })
+
+    logSection("📊 Market Volatility (VIX)")
+    console.log(`India VIX: ${vix.current} (${vix.change}% change)`)
+    console.log(`Sentiment: ${vix.sentiment.toUpperCase()}`)
 
     logSection("📰 Sentiment")
     console.log(`Sentiment: ${sentiment.sentiment}`)
