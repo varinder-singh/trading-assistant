@@ -17,7 +17,7 @@ function readCachedAccessToken() {
   return cachedToken.accessToken
 }
 
-function getAccessToken() {
+export function getAccessToken() {
   const accessToken = readCachedAccessToken() ?? process.env.KITE_ACCESS_TOKEN
 
   if (!accessToken) {
@@ -32,5 +32,18 @@ const kc = new KiteConnect({
 })
 
 kc.setAccessToken(getAccessToken())
+
+export async function getInstrumentToken(symbol: string): Promise<number | undefined> {
+  const instruments = await kc.getInstruments("NSE")
+  // NIFTY -> NIFTY 50, BANKNIFTY -> NIFTY BANK
+  const nameMap: Record<string, string> = {
+    "NIFTY": "NIFTY 50",
+    "BANKNIFTY": "NIFTY BANK",
+    "FINNIFTY": "NIFTY FIN SERVICE"
+  }
+  const targetName = nameMap[symbol] ?? symbol
+  const instrument = instruments.find(i => i.tradingsymbol === targetName || i.name === targetName)
+  return instrument?.instrument_token ? Number(instrument.instrument_token) : undefined
+}
 
 export default kc

@@ -8,8 +8,21 @@ export async function analyzeWithAI(input: any) {
     prompt = input.prompt
   }
   else {
-    prompt = `Analyze the market data below and produce a trade decision using DUAL TIMEFRAME analysis.
+    let liveContextSection = ""
+    if (input.liveContext) {
+      liveContextSection = `
+## REAL-TIME WEBSOCKET CONTEXT (TRULY LIVE)
+- Trigger Reason: ${input.liveContext.triggerReason}
+- Last Price: ${input.liveContext.tick.last_price}
+- Momentum: ${input.liveContext.reason.includes('Volatility') ? 'High Volatility detected' : 'Price Action driven'}
+- Recent Ticks (last 60s): ${JSON.stringify(input.liveContext.recentTicks.map((t: any) => t.last_price))}
 
+NOTE: This real-time data is from a live WebSocket. It takes PRECEDENCE over the 5m/15m historical candles if there is a sharp divergence or breakout happening RIGHT NOW.
+`
+    }
+
+    prompt = `Analyze the market data below and produce a trade decision using DUAL TIMEFRAME analysis.
+${liveContextSection}
 ## TIMEFRAME STRATEGY
 - 15-Minute (tf15m): Trend confirmation and directional bias
 - 5-Minute (tf5m): Entry precision and exact levels
