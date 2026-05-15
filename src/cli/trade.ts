@@ -29,7 +29,7 @@ function logSubsection(title: string) {
   console.log(`${"─".repeat(50)}\n`)
 }
 
-async function runAnalysis(symbol: string, mode: "intraday" | "swing", liveContext?: any) {
+async function runAnalysis(symbol: string, mode: "intraday" | "swing", liveContext?: any, previousDecision?: any) {
   const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
 
   const [candlesData, headlines, vix, kiteData] = await Promise.all([
@@ -55,6 +55,7 @@ async function runAnalysis(symbol: string, mode: "intraday" | "swing", liveConte
     vix,
     mode,
     liveContext,
+    previousDecision,
   })
 
   if (liveContext) {
@@ -113,8 +114,11 @@ program
     }
     console.log(`✅ Resolved ${symbol} to token ${token}`)
 
+    let lastDecision: any = null
+
     // 2. Get Initial Levels
-    const { tf15m } = await runAnalysis(symbol, mode)
+    const { tf15m, aiDecision } = await runAnalysis(symbol, mode)
+    lastDecision = aiDecision
     
     // 3. Setup Analyzer
     const analyzer = new LiveAnalyzer()
@@ -152,7 +156,8 @@ program
     analyzer.on("breakout", async (context) => {
       console.log("\n" + "=".repeat(50))
       console.log("⚡ BREAKOUT DETECTED")
-      await runAnalysis(symbol, mode, context)
+      const result = await runAnalysis(symbol, mode, context, lastDecision)
+      lastDecision = result.aiDecision
       console.log("\n" + "=".repeat(50))
       console.log("🔭 Resuming Watch Mode...")
     })

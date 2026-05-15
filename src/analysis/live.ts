@@ -5,6 +5,7 @@ export interface LiveTick {
   volume_traded?: number
   timestamp?: Date
   instrument_token: number
+  received_at?: number
 }
 
 export interface AnalysisLevels {
@@ -29,6 +30,7 @@ export class LiveAnalyzer extends EventEmitter {
   }
 
   addTick(tick: LiveTick) {
+    tick.received_at = Date.now()
     this.ticks.push(tick)
     this.cleanupOldTicks()
     this.checkTriggers(tick)
@@ -37,7 +39,7 @@ export class LiveAnalyzer extends EventEmitter {
   private cleanupOldTicks() {
     const now = Date.now()
     this.ticks = this.ticks.filter(t => {
-      const tickTime = t.timestamp?.getTime() ?? now
+      const tickTime = t.received_at ?? now
       return now - tickTime < this.windowSizeMs
     })
   }

@@ -6,13 +6,12 @@ export async function analyzeWithAI(input: any) {
 
   if (input.prompt) {
     prompt = input.prompt
-  }
-  else {
+  } else {
     let liveContextSection = ""
     if (input.liveContext) {
       liveContextSection = `
 ## REAL-TIME WEBSOCKET CONTEXT (TRULY LIVE)
-- Trigger Reason: ${input.liveContext.triggerReason}
+- Trigger Reason: ${input.liveContext.reason}
 - Last Price: ${input.liveContext.tick.last_price}
 - Momentum: ${input.liveContext.reason.includes('Volatility') ? 'High Volatility detected' : 'Price Action driven'}
 - Recent Ticks (last 60s): ${JSON.stringify(input.liveContext.recentTicks.map((t: any) => t.last_price))}
@@ -21,8 +20,33 @@ NOTE: This real-time data is from a live WebSocket. It takes PRECEDENCE over the
 `
     }
 
+    let previousDecisionSection = ""
+    if (input.previousDecision) {
+      previousDecisionSection = `
+## PREVIOUS AI DECISION (FEEDBACK LOOP)
+Your last analysis resulted in:
+- Decision: ${input.previousDecision.decision}
+- Setup: ${input.previousDecision.setup}
+- Reason: ${input.previousDecision.reason}
+- Entry: ${input.previousDecision.entry}
+- Stop Loss: ${input.previousDecision.stopLoss}
+
+Use this context to decide if the current live breakout confirms your previous bias or if a trend reversal is occurring.
+`
+    }
+
+    // Strip massive arrays from input before stringifying to avoid token limits
+    const cleanedInput = { ...input }
+    if (cleanedInput.liveContext) {
+      cleanedInput.liveContext = { ...cleanedInput.liveContext, recentTicks: "[OMITTED FOR BREVITY - SEE LIVE CONTEXT SECTION ABOVE]" }
+    }
+    if (cleanedInput.previousDecision) {
+      cleanedInput.previousDecision = "[OMITTED - SEE PREVIOUS AI DECISION SECTION ABOVE]"
+    }
+
     prompt = `Analyze the market data below and produce a trade decision using DUAL TIMEFRAME analysis.
 ${liveContextSection}
+${previousDecisionSection}
 ## TIMEFRAME STRATEGY
 - 15-Minute (tf15m): Trend confirmation and directional bias
 - 5-Minute (tf5m): Entry precision and exact levels
@@ -54,21 +78,13 @@ If direction is confirmed in Step 2, use 5m data for exact entry/exit:
 - Targets: Use 5m resistance/support for quick profits
 - Risk-Reward: Minimum 1.5 for intraday (5m moves fast, use tight stops)
 
-## Mode Rules
-- intraday: Use 5m entries for quick exits (scalp profits before theta decay)
-- swing: Can hold 5m breakouts longer, wider stops acceptable
-
-## Mode rules
-- intraday: tighter stops (0.3–0.5% of price), require ≥4/5 signals
-- swing: wider stops (1–2%), use daily trend as primary signal
-
 ## RSI rules
 - RSI > 70: avoid fresh BUY; SHORT_SELL only on clear rejection + 3+ signals
 - RSI < 30: avoid fresh SHORT_SELL; BUY only on bounce + 3+ signals
 - RSI 40–60 without confirmed direction: NO_TRADE
 
 ## Market Data
-${JSON.stringify(input, null, 2)}
+${JSON.stringify(cleanedInput, null, 2)}
 
 ## Required Output (JSON only — no other text, no code fences)
 {

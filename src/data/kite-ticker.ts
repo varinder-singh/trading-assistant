@@ -7,5 +7,8 @@ export function createTicker() {
     access_token: getAccessToken(),
   })
 
+  // Enable auto reconnect with 5 second interval and retry for maximum of 10 times.
+  ticker.autoReconnect(true, 10, 5)
+
   return ticker
 }
