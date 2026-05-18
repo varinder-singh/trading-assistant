@@ -8,8 +8,8 @@ export type Analysis = {
 }
 
 export type TradePlan = {
-  decision: "BUY" | "SELL" | "NO_TRADE"
-  reason: string
+  decision: "BUY" | "SELL" | "NO_TRADE" | "NEUTRAL"
+  reason?: string
   entry?: number
   stopLoss?: number
   targets?: number[]
@@ -23,4 +23,8 @@ export interface Candle {
   close: number
   volume: number
   time: number
+}
+
+export interface FifteenMinuteCandle extends Candle, Analysis {
+  rsi: number
 }

@@ -74,5 +74,5 @@ async function runStandalone() {
 }
 
 if (isDirectRun()) {
-  await runStandalone()
+  runStandalone().catch(console.error)
 }

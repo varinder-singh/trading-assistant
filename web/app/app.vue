@@ -1,0 +1,477 @@
+<script setup lang="ts">
+import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { Search, TrendingUp, TrendingDown, AlertCircle, Info, Activity, ShieldCheck, Target, Zap } from '@lucide/vue'
+import { createChart, LineSeries } from 'lightweight-charts'
+import type { IChartApi, ISeriesApi } from 'lightweight-charts'
+
+const symbol = ref('NIFTY')
+const mode = ref<'intraday' | 'swing'>('intraday')
+const loading = ref(false)
+const analysisResult = ref<any>(null)
+const error = ref<string | null>(null)
+const livePrice = ref<number | null>(null)
+const breakouts = ref<any[]>([])
+const portfolio = ref<any[]>([])
+
+// Chart Refs
+const chartContainer = ref<HTMLElement | null>(null)
+let chart: IChartApi | null = null
+let lineSeries: ISeriesApi<"Line"> | null = null
+let resistanceLine: any = null
+let supportLine: any = null
+
+// WebSocket
+let ws: WebSocket | null = null
+
+function connectWebSocket() {
+  if (ws) ws.close()
+  
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  ws = new WebSocket(`${protocol}//${window.location.host}/_ws`)
+  
+  ws.onopen = () => {
+    console.log('WS Connected')
+    if (analysisResult.value) {
+      startWatching()
+    }
+  }
+  
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data)
+    if (msg.type === 'tick') {
+      const price = msg.data.last_price
+      livePrice.value = price
+      updateChart(price)
+    } else if (msg.type === 'breakout') {
+      breakouts.value.unshift(msg.data)
+      if (breakouts.value.length > 5) breakouts.value.pop()
+    } else if (msg.type === 'portfolio') {
+      portfolio.value = msg.data
+    }
+  }
+}
+
+function startWatching() {
+  if (ws && ws.readyState === WebSocket.OPEN && analysisResult.value) {
+    ws.send(JSON.stringify({
+      type: 'watch',
+      data: {
+        symbol: symbol.value,
+        levels: {
+          resistance: analysisResult.value.tf15m.resistance,
+          support: analysisResult.value.tf15m.support,
+          vwap: analysisResult.value.tf15m.vwap
+        }
+      }
+    }))
+  }
+}
+
+async function runAnalysis() {
+  if (!symbol.value) return
+  
+  loading.value = true
+  error.value = null
+  breakouts.value = []
+  
+  try {
+    const data = await $fetch('/api/analyze', {
+      method: 'POST',
+      body: { 
+        symbol: symbol.value.toUpperCase(),
+        mode: mode.value 
+      }
+    })
+    analysisResult.value = data
+    initChart()
+    startWatching()
+  } catch (err: any) {
+    error.value = err.statusMessage || 'Failed to run analysis'
+    console.error(err)
+  } finally {
+    loading.value = false
+  }
+}
+
+function initChart() {
+  if (!chartContainer.value) return
+  if (chart) {
+    chart.remove()
+  }
+
+  chart = createChart(chartContainer.value, {
+    layout: {
+      background: { color: '#ffffff' },
+      textColor: '#333',
+    },
+    grid: {
+      vertLines: { color: '#f0f0f0' },
+      horzLines: { color: '#f0f0f0' },
+    },
+    width: chartContainer.value.clientWidth,
+    height: 300,
+  })
+
+  lineSeries = chart.addSeries(LineSeries, {
+    color: '#4f46e5',
+    lineWidth: 2,
+  })
+
+  if (analysisResult.value) {
+    const { resistance, support } = analysisResult.value.tf15m
+    
+    // Custom price lines for levels
+    lineSeries.createPriceLine({
+        price: resistance,
+        color: '#ef4444',
+        lineWidth: 1,
+        lineStyle: 2, // Dashed
+        axisLabelVisible: true,
+        title: 'RESISTANCE',
+    })
+
+    lineSeries.createPriceLine({
+        price: support,
+        color: '#22c55e',
+        lineWidth: 1,
+        lineStyle: 2, // Dashed
+        axisLabelVisible: true,
+        title: 'SUPPORT',
+    })
+  }
+}
+
+function updateChart(price: number) {
+  if (lineSeries) {
+    lineSeries.update({
+      time: (Math.floor(Date.now() / 1000) as any),
+      value: price
+    })
+  }
+}
+
+function getDecisionColor(decision: string) {
+  switch (decision?.toUpperCase()) {
+    case 'BUY': return 'text-green-500 bg-green-50'
+    case 'SELL': return 'text-red-500 bg-red-50'
+    default: return 'text-gray-500 bg-gray-50'
+  }
+}
+
+onMounted(() => {
+  runAnalysis()
+  connectWebSocket()
+  
+  window.addEventListener('resize', () => {
+    if (chart && chartContainer.value) {
+      chart.applyOptions({ width: chartContainer.value.clientWidth })
+    }
+  })
+})
+
+onUnmounted(() => {
+  if (ws) ws.close()
+})
+</script>
+
+<template>
+  <div class="min-h-screen bg-gray-50 text-gray-900 font-sans">
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 sticky top-0 z-20">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div class="flex items-center gap-2">
+          <div class="bg-indigo-600 p-2 rounded-lg">
+            <Activity class="w-6 h-6 text-white" />
+          </div>
+          <h1 class="text-xl font-bold tracking-tight text-gray-900">Trading Assistant</h1>
+        </div>
+        
+        <div class="flex items-center gap-3">
+          <div class="relative flex-1 md:w-64">
+            <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input 
+              v-model="symbol"
+              type="text" 
+              placeholder="Enter Symbol (e.g. NIFTY)" 
+              class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+              @keyup.enter="runAnalysis"
+            />
+          </div>
+          
+          <select 
+            v-model="mode"
+            class="px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+          >
+            <option value="intraday">Intraday</option>
+            <option value="swing">Swing</option>
+          </select>
+          
+          <button 
+            @click="runAnalysis"
+            :disabled="loading"
+            class="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            <span v-if="loading" class="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></span>
+            {{ loading ? 'Analyzing...' : 'Analyze' }}
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <!-- Error Message -->
+      <div v-if="error" class="mb-8 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 text-red-700">
+        <AlertCircle class="w-5 h-5 shrink-0 mt-0.5" />
+        <div>
+          <h3 class="font-semibold">Analysis Failed</h3>
+          <p class="text-sm opacity-90">{{ error }}</p>
+        </div>
+      </div>
+
+      <div v-if="analysisResult" class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <!-- Main Content -->
+        <div class="lg:col-span-2 space-y-8">
+          <!-- Chart Card -->
+          <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="p-4 border-b border-gray-100 flex items-center justify-between">
+              <h3 class="text-sm font-bold text-gray-500 uppercase flex items-center gap-2">
+                <Activity class="w-4 h-4 text-indigo-500" />
+                Live Price Chart
+              </h3>
+              <div v-if="livePrice" class="flex items-center gap-2">
+                <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                <span class="text-sm font-mono font-bold">{{ livePrice.toFixed(2) }}</span>
+              </div>
+            </div>
+            <div ref="chartContainer" class="w-full"></div>
+          </div>
+
+          <!-- AI Decision Card -->
+          <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+              <h2 class="text-lg font-semibold flex items-center gap-2">
+                <ShieldCheck class="w-5 h-5 text-indigo-600" />
+                AI Decision
+              </h2>
+              <span class="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider" :class="getDecisionColor(analysisResult.aiDecision.decision)">
+                {{ analysisResult.aiDecision.decision }}
+              </span>
+            </div>
+            
+            <div class="p-8">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div>
+                  <div class="text-sm text-gray-500 mb-1">Recommended Action</div>
+                  <div class="text-3xl font-bold" :class="analysisResult.aiDecision.decision === 'BUY' ? 'text-green-600' : analysisResult.aiDecision.decision === 'SELL' ? 'text-red-600' : 'text-gray-900'">
+                    {{ analysisResult.aiDecision.decision }}
+                  </div>
+                  
+                  <div class="mt-6 space-y-4">
+                    <div class="flex items-center justify-between py-2 border-b border-gray-50">
+                      <span class="text-sm text-gray-500">Confidence</span>
+                      <span class="font-semibold">{{ analysisResult.aiDecision.confidence }}</span>
+                    </div>
+                    <div class="flex items-center justify-between py-2 border-b border-gray-50">
+                      <span class="text-sm text-gray-500">Setup</span>
+                      <span class="font-semibold">{{ analysisResult.aiDecision.setup || 'N/A' }}</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="bg-gray-50 rounded-xl p-6">
+                  <h3 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                    <Info class="w-4 h-4 text-indigo-500" />
+                    Rationale
+                  </h3>
+                  <p class="text-sm text-gray-600 leading-relaxed italic">
+                    "{{ analysisResult.aiDecision.reason }}"
+                  </p>
+                </div>
+              </div>
+              
+              <div class="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div class="p-4 bg-indigo-50 rounded-xl border border-indigo-100">
+                  <div class="text-xs text-indigo-600 font-bold uppercase mb-1">Entry Price</div>
+                  <div class="text-xl font-bold text-indigo-900">{{ analysisResult.aiDecision.entry }}</div>
+                </div>
+                <div class="p-4 bg-red-50 rounded-xl border border-red-100">
+                  <div class="text-xs text-red-600 font-bold uppercase mb-1">Stop Loss</div>
+                  <div class="text-xl font-bold text-red-900">{{ analysisResult.aiDecision.stopLoss }}</div>
+                </div>
+                <div class="p-4 bg-green-50 rounded-xl border border-green-100">
+                  <div class="text-xs text-green-600 font-bold uppercase mb-1">Target(s)</div>
+                  <div class="text-xl font-bold text-green-900">{{ analysisResult.aiDecision.targets?.join(', ') || 'N/A' }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sidebar Details -->
+        <div class="space-y-8">
+          <!-- Paper Portfolio -->
+          <div v-if="portfolio.length > 0" class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="p-4 bg-indigo-50 border-b border-indigo-100">
+              <h3 class="text-sm font-bold text-indigo-700 uppercase flex items-center gap-2">
+                <ShieldCheck class="w-4 h-4" />
+                Paper Portfolio
+              </h3>
+            </div>
+            <div class="p-4 space-y-4">
+              <div v-for="pos in portfolio" :key="pos.symbol" class="p-4 bg-gray-50 rounded-xl border border-gray-100">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="text-xs font-black text-gray-900">{{ pos.symbol }}</span>
+                  <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase" :class="pos.unrealizedPnL >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">
+                    {{ pos.unrealizedPnL >= 0 ? '+' : '' }}{{ pos.unrealizedPnL.toFixed(2) }}
+                  </span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-[10px]">
+                  <div>
+                    <div class="text-gray-400 uppercase font-bold">Qty</div>
+                    <div class="font-bold">{{ pos.quantity }}</div>
+                  </div>
+                  <div>
+                    <div class="text-gray-400 uppercase font-bold">Avg Entry</div>
+                    <div class="font-bold">{{ pos.avgEntryPrice.toFixed(2) }}</div>
+                  </div>
+                  <div>
+                    <div class="text-gray-400 uppercase font-bold">LTP</div>
+                    <div class="font-bold">{{ pos.currentPrice.toFixed(2) }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Breakout Alerts -->
+          <div v-if="breakouts.length > 0" class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="p-4 bg-orange-50 border-b border-orange-100">
+              <h3 class="text-sm font-bold text-orange-700 uppercase flex items-center gap-2">
+                <Zap class="w-4 h-4" />
+                Live Alerts
+              </h3>
+            </div>
+            <div class="p-4 space-y-4">
+              <div v-for="(b, i) in breakouts" :key="i" class="p-3 bg-gray-50 rounded-lg border-l-4 border-orange-500 animate-in fade-in slide-in-from-right duration-500">
+                <div class="text-xs font-bold text-gray-900 mb-1">{{ b.reason }}</div>
+                <div class="text-[10px] text-gray-500">Price: {{ b.tick.last_price }}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Price Card (if no live price) -->
+          <div v-if="!livePrice" class="bg-indigo-600 rounded-2xl p-6 text-white shadow-lg shadow-indigo-200">
+            <div class="flex items-center justify-between mb-4">
+              <span class="text-indigo-100 font-medium">Last Price</span>
+              <Activity class="w-5 h-5 text-indigo-200" />
+            </div>
+            <div class="text-4xl font-black mb-1">
+              {{ analysisResult.tf15m.price.toFixed(2) }}
+            </div>
+            <div class="text-sm text-indigo-100 italic">
+              Awaiting live feed...
+            </div>
+          </div>
+
+          <!-- Technicals & Context (Condensed) -->
+          <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+            <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-6 flex items-center gap-2">
+              <TrendingUp class="w-4 h-4" />
+              Technical Stats
+            </h3>
+            
+            <div class="space-y-4 text-sm">
+              <div class="flex items-center justify-between">
+                <span class="text-gray-500">Trend</span>
+                <span class="font-bold" :class="analysisResult.tf15m.trend === 'up' ? 'text-green-600' : 'text-red-600'">
+                  {{ analysisResult.tf15m.trend.toUpperCase() }}
+                </span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-gray-500">RSI</span>
+                <span class="font-bold">{{ analysisResult.tf15m.rsi.toFixed(2) }}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-gray-500">VWAP</span>
+                <span class="font-bold">{{ analysisResult.tf15m.vwap.toFixed(2) }}</span>
+              </div>
+              <div class="pt-4 border-t border-gray-50">
+                <div class="text-xs text-gray-400 font-bold uppercase mb-3">Sentiment</div>
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="font-bold capitalize">{{ analysisResult.sentiment?.sentiment }}</span>
+                  <div class="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div 
+                      class="h-full bg-indigo-500 rounded-full" 
+                      :style="{ width: analysisResult.sentiment?.confidence * 100 + '%' }"
+                    ></div>
+                  </div>
+                </div>
+                <p class="text-[10px] text-gray-400 leading-tight">
+                  {{ analysisResult.sentiment?.reason }}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Market Context -->
+          <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+            <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+              <Target class="w-4 h-4" />
+              Volatility
+            </h3>
+            <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-2xl font-bold">{{ analysisResult.vix?.current }}</div>
+                  <div class="text-[10px] font-bold uppercase" :class="analysisResult.vix?.change > 0 ? 'text-red-500' : 'text-green-500'">
+                    {{ analysisResult.vix?.change > 0 ? '+' : '' }}{{ analysisResult.vix?.change }}%
+                  </div>
+                </div>
+                <div class="text-right">
+                    <div class="text-[10px] text-gray-400 font-bold uppercase mb-1">Sentiment</div>
+                    <div class="px-2 py-0.5 bg-gray-100 rounded font-bold text-xs uppercase">
+                        {{ analysisResult.vix?.sentiment }}
+                    </div>
+                </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Empty State -->
+      <div v-else-if="!loading" class="text-center py-20">
+        <div class="bg-white w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-sm border border-gray-100">
+          <Activity class="w-10 h-10 text-gray-300" />
+        </div>
+        <h2 class="text-xl font-bold text-gray-900 mb-2">Ready to Analyze</h2>
+        <p class="text-gray-500 max-w-sm mx-auto">
+          Enter a symbol and click analyze to get AI-driven insights and technical levels for your next trade.
+        </p>
+      </div>
+    </main>
+  </div>
+</template>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+body {
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.animate-in {
+  animation: animate-in 0.5s ease-out;
+}
+
+@keyframes animate-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+</style>

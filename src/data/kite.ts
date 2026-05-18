@@ -1,12 +1,15 @@
+import "dotenv/config"
 import { KiteConnect } from "kiteconnect"
 import { existsSync, readFileSync } from "node:fs"
-import { resolve } from "node:path"
+import { fileURLToPath } from "node:url"
+import { dirname, join } from "node:path"
 
 type CachedKiteToken = {
   accessToken?: string
 }
 
-const tokenFilePath = resolve(process.cwd(), ".kite", "access-token.json")
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const tokenFilePath = join(__dirname, "../../.kite", "access-token.json")
 
 function readCachedAccessToken() {
   if (!existsSync(tokenFilePath)) {
@@ -46,4 +49,28 @@ export async function getInstrumentToken(symbol: string): Promise<number | undef
   return instrument?.instrument_token ? Number(instrument.instrument_token) : undefined
 }
 
+export async function getOptionToken(underlying: string, strike: number, type: "CE" | "PE"): Promise<{ token: number, symbol: string } | undefined> {
+  const instruments = await kc.getInstruments("NFO")
+  
+  // Filter for current symbol and strike
+  const filtered = instruments.filter(i => 
+    i.name === underlying && 
+    Number(i.strike) === strike && 
+    i.instrument_type === type &&
+    i.segment === "NFO-OPT"
+  )
+
+  if (filtered.length === 0) return undefined
+
+  // Sort by expiry to get the nearest one
+  const sorted = filtered.sort((a, b) => a.expiry.getTime() - b.expiry.getTime())
+  const target = sorted[0]!
+
+  return {
+    token: Number(target.instrument_token),
+    symbol: target.tradingsymbol
+  }
+}
+
 export default kc
+
