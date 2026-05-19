@@ -1,5 +1,14 @@
 import { EventEmitter } from "node:events";
 import type { TradeOrder, PaperPosition, TradeResponse, OrderSide, OrderType } from "./types.js";
+import { tradeRepo } from "../db/repositories/trade-repo.js";
+
+export interface TradeContext {
+  aiReasoning?: string;
+  aiConfidence?: number;
+  vixLevel?: number;
+  rsiLevel?: number;
+  trend15m?: string;
+}
 
 export class PaperTrader extends EventEmitter {
   private positions: Map<string, PaperPosition> = new Map();
@@ -15,6 +24,7 @@ export class PaperTrader extends EventEmitter {
     side: OrderSide;
     quantity: number;
     price: number;
+    context?: TradeContext;
   }): Promise<TradeResponse> {
     const orderId = `paper_${Math.random().toString(36).substr(2, 9)}`;
     
@@ -33,6 +43,21 @@ export class PaperTrader extends EventEmitter {
     this.orders.push(order);
     this.updatePosition(order);
 
+    // PERSIST TO DATABASE
+    if (order.side === "BUY") {
+      await tradeRepo.insertTrade({
+        symbol: order.symbol,
+        side: "BUY",
+        quantity: order.quantity,
+        entry_price: order.price!,
+        ai_reasoning: params.context?.aiReasoning || null,
+        ai_confidence: params.context?.aiConfidence || null,
+        vix_level: params.context?.vixLevel || null,
+        rsi_level: params.context?.rsiLevel || null,
+        trend_15m: params.context?.trend15m || null,
+      }).catch(err => console.error("❌ Failed to save paper trade to DB:", err));
+    }
+
     console.log(`📝 [PAPER TRADE] ${order.side} ${order.quantity}x ${order.symbol} @ ${order.price}`);
     
     this.emit("order_update", order);
@@ -41,7 +66,7 @@ export class PaperTrader extends EventEmitter {
     return { success: true, orderId };
   }
 
-  private updatePosition(order: TradeOrder) {
+  private async updatePosition(order: TradeOrder) {
     const existing = this.positions.get(order.symbol);
 
     if (order.side === "BUY") {
@@ -69,6 +94,15 @@ export class PaperTrader extends EventEmitter {
         const pnl = (order.price! - existing.avgEntryPrice) * order.quantity;
         existing.realizedPnL += pnl;
         existing.quantity -= order.quantity;
+
+        // DB: We'll need to find the correct trade ID. 
+        // For now, let's assume we find the most recent open trade for this symbol.
+        const openTrades = await tradeRepo.getOpenTrades();
+        const targetTrade = openTrades.find(t => t.symbol === order.symbol);
+        if (targetTrade) {
+          await tradeRepo.closeTrade(targetTrade.id, order.price!).catch(err => console.error("❌ Failed to close trade in DB:", err));
+        }
+
         if (existing.quantity <= 0) {
           this.positions.delete(order.symbol);
         }

@@ -2,21 +2,35 @@ import "dotenv/config"
 import { KiteConnect } from "kiteconnect"
 import { existsSync, readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 
 type CachedKiteToken = {
   accessToken?: string
 }
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const tokenFilePath = join(__dirname, "../../.kite", "access-token.json")
-
 function readCachedAccessToken() {
-  if (!existsSync(tokenFilePath)) {
+  const pathsToTry = [
+    resolve(process.cwd(), ".kite", "access-token.json"), // CLI
+    resolve(process.cwd(), "..", ".kite", "access-token.json"), // Nuxt dev
+    join(dirname(fileURLToPath(import.meta.url)), "../../.kite", "access-token.json") // Fallback
+  ]
+
+  let foundPath: string | undefined = undefined
+
+  for (const p of pathsToTry) {
+    if (existsSync(p)) {
+      foundPath = p
+      break
+    }
+  }
+
+  if (!foundPath) {
+    console.error(`[Kite] Could not find access-token.json. Tried: \n${pathsToTry.join("\n")}`)
     return undefined
   }
 
-  const cachedToken = JSON.parse(readFileSync(tokenFilePath, "utf8")) as CachedKiteToken
+  console.log(`[Kite] Found token at: ${foundPath}`)
+  const cachedToken = JSON.parse(readFileSync(foundPath, "utf8")) as CachedKiteToken
   return cachedToken.accessToken
 }
 
@@ -30,8 +44,13 @@ export function getAccessToken() {
   return accessToken
 }
 
+const apiKey = process.env.KITE_API_KEY
+if (!apiKey) {
+  throw new Error("KITE_API_KEY is missing in environment variables. Check your .env file.")
+}
+
 const kc = new KiteConnect({
-  api_key: process.env.KITE_API_KEY!,
+  api_key: apiKey,
 })
 
 kc.setAccessToken(getAccessToken())

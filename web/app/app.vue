@@ -12,6 +12,29 @@ const error = ref<string | null>(null)
 const livePrice = ref<number | null>(null)
 const breakouts = ref<any[]>([])
 const portfolio = ref<any[]>([])
+const tradeHistory = ref<any[]>([])
+const currentView = ref<'live' | 'history'>('live')
+const expandedTradeId = ref<string | null>(null)
+
+async function fetchHistory() {
+  try {
+    const data = await $fetch('/api/history')
+    tradeHistory.value = data as any[]
+  } catch (err: any) {
+    console.error('Failed to fetch history:', err)
+  }
+}
+
+function toggleView(view: 'live' | 'history') {
+  currentView.value = view
+  if (view === 'history') {
+    fetchHistory()
+  }
+}
+
+function toggleTradeExpand(id: string) {
+  expandedTradeId.value = expandedTradeId.value === id ? null : id
+}
 
 // Chart Refs
 const chartContainer = ref<HTMLElement | null>(null)
@@ -85,6 +108,9 @@ async function runAnalysis() {
     analysisResult.value = data
     initChart()
     startWatching()
+    
+    // Refresh history if we are on that view
+    if (currentView.value === 'history') fetchHistory()
   } catch (err: any) {
     error.value = err.statusMessage || 'Failed to run analysis'
     console.error(err)
@@ -185,6 +211,24 @@ onUnmounted(() => {
           </div>
           <h1 class="text-xl font-bold tracking-tight text-gray-900">Trading Assistant</h1>
         </div>
+
+        <!-- Navigation Tabs -->
+        <nav class="flex p-1 bg-gray-100 rounded-xl">
+          <button 
+            @click="toggleView('live')"
+            class="px-4 py-2 text-sm font-bold rounded-lg transition-all"
+            :class="currentView === 'live' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+          >
+            Live Analysis
+          </button>
+          <button 
+            @click="toggleView('history')"
+            class="px-4 py-2 text-sm font-bold rounded-lg transition-all"
+            :class="currentView === 'history' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+          >
+            Trade History
+          </button>
+        </nav>
         
         <div class="flex items-center gap-3">
           <div class="relative flex-1 md:w-64">
@@ -228,224 +272,304 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div v-if="analysisResult" class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <!-- Main Content -->
-        <div class="lg:col-span-2 space-y-8">
-          <!-- Chart Card -->
-          <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div class="p-4 border-b border-gray-100 flex items-center justify-between">
-              <h3 class="text-sm font-bold text-gray-500 uppercase flex items-center gap-2">
-                <Activity class="w-4 h-4 text-indigo-500" />
-                Live Price Chart
-              </h3>
-              <div v-if="livePrice" class="flex items-center gap-2">
-                <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                <span class="text-sm font-mono font-bold">{{ livePrice.toFixed(2) }}</span>
+      <!-- Live View -->
+      <div v-if="currentView === 'live'">
+        <div v-if="analysisResult" class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <!-- Main Content -->
+          <div class="lg:col-span-2 space-y-8">
+            <!-- Chart Card -->
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+              <div class="p-4 border-b border-gray-100 flex items-center justify-between">
+                <h3 class="text-sm font-bold text-gray-500 uppercase flex items-center gap-2">
+                  <Activity class="w-4 h-4 text-indigo-500" />
+                  Live Price Chart
+                </h3>
+                <div v-if="livePrice" class="flex items-center gap-2">
+                  <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                  <span class="text-sm font-mono font-bold">{{ livePrice.toFixed(2) }}</span>
+                </div>
               </div>
+              <div ref="chartContainer" class="w-full"></div>
             </div>
-            <div ref="chartContainer" class="w-full"></div>
-          </div>
 
-          <!-- AI Decision Card -->
-          <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div class="p-6 border-b border-gray-100 flex items-center justify-between">
-              <h2 class="text-lg font-semibold flex items-center gap-2">
-                <ShieldCheck class="w-5 h-5 text-indigo-600" />
-                AI Decision
-              </h2>
-              <span class="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider" :class="getDecisionColor(analysisResult.aiDecision.decision)">
-                {{ analysisResult.aiDecision.decision }}
-              </span>
-            </div>
-            
-            <div class="p-8">
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div>
-                  <div class="text-sm text-gray-500 mb-1">Recommended Action</div>
-                  <div class="text-3xl font-bold" :class="analysisResult.aiDecision.decision === 'BUY' ? 'text-green-600' : analysisResult.aiDecision.decision === 'SELL' ? 'text-red-600' : 'text-gray-900'">
-                    {{ analysisResult.aiDecision.decision }}
+            <!-- AI Decision Card -->
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+              <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+                <h2 class="text-lg font-semibold flex items-center gap-2">
+                  <ShieldCheck class="w-5 h-5 text-indigo-600" />
+                  AI Decision
+                </h2>
+                <span class="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider" :class="getDecisionColor(analysisResult.aiDecision.decision)">
+                  {{ analysisResult.aiDecision.decision }}
+                </span>
+              </div>
+              
+              <div class="p-8">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div>
+                    <div class="text-sm text-gray-500 mb-1">Recommended Action</div>
+                    <div class="text-3xl font-bold" :class="analysisResult.aiDecision.decision === 'BUY' ? 'text-green-600' : analysisResult.aiDecision.decision === 'SELL' ? 'text-red-600' : 'text-gray-900'">
+                      {{ analysisResult.aiDecision.decision }}
+                    </div>
+                    
+                    <div class="mt-6 space-y-4">
+                      <div class="flex items-center justify-between py-2 border-b border-gray-50">
+                        <span class="text-sm text-gray-500">Confidence</span>
+                        <span class="font-semibold">{{ analysisResult.aiDecision.confidence }}</span>
+                      </div>
+                      <div class="flex items-center justify-between py-2 border-b border-gray-50">
+                        <span class="text-sm text-gray-500">Setup</span>
+                        <span class="font-semibold">{{ analysisResult.aiDecision.setup || 'N/A' }}</span>
+                      </div>
+                    </div>
                   </div>
                   
-                  <div class="mt-6 space-y-4">
-                    <div class="flex items-center justify-between py-2 border-b border-gray-50">
-                      <span class="text-sm text-gray-500">Confidence</span>
-                      <span class="font-semibold">{{ analysisResult.aiDecision.confidence }}</span>
-                    </div>
-                    <div class="flex items-center justify-between py-2 border-b border-gray-50">
-                      <span class="text-sm text-gray-500">Setup</span>
-                      <span class="font-semibold">{{ analysisResult.aiDecision.setup || 'N/A' }}</span>
-                    </div>
+                  <div class="bg-gray-50 rounded-xl p-6">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                      <Info class="w-4 h-4 text-indigo-500" />
+                      Rationale
+                    </h3>
+                    <p class="text-sm text-gray-600 leading-relaxed italic">
+                      "{{ analysisResult.aiDecision.reason }}"
+                    </p>
                   </div>
                 </div>
                 
-                <div class="bg-gray-50 rounded-xl p-6">
-                  <h3 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                    <Info class="w-4 h-4 text-indigo-500" />
-                    Rationale
-                  </h3>
-                  <p class="text-sm text-gray-600 leading-relaxed italic">
-                    "{{ analysisResult.aiDecision.reason }}"
-                  </p>
+                <div class="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div class="p-4 bg-indigo-50 rounded-xl border border-indigo-100">
+                    <div class="text-xs text-indigo-600 font-bold uppercase mb-1">Entry Price</div>
+                    <div class="text-xl font-bold text-indigo-900">{{ analysisResult.aiDecision.entry }}</div>
+                  </div>
+                  <div class="p-4 bg-red-50 rounded-xl border border-red-100">
+                    <div class="text-xs text-red-600 font-bold uppercase mb-1">Stop Loss</div>
+                    <div class="text-xl font-bold text-red-900">{{ analysisResult.aiDecision.stopLoss }}</div>
+                  </div>
+                  <div class="p-4 bg-green-50 rounded-xl border border-green-100">
+                    <div class="text-xs text-green-600 font-bold uppercase mb-1">Target(s)</div>
+                    <div class="text-xl font-bold text-green-900">{{ analysisResult.aiDecision.targets?.join(', ') || 'N/A' }}</div>
+                  </div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <!-- Sidebar Details -->
+          <div class="space-y-8">
+            <!-- Paper Portfolio -->
+            <div v-if="portfolio.length > 0" class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+              <div class="p-4 bg-indigo-50 border-b border-indigo-100">
+                <h3 class="text-sm font-bold text-indigo-700 uppercase flex items-center gap-2">
+                  <ShieldCheck class="w-4 h-4" />
+                  Paper Portfolio
+                </h3>
+              </div>
+              <div class="p-4 space-y-4">
+                <div v-for="pos in portfolio" :key="pos.symbol" class="p-4 bg-gray-50 rounded-xl border border-gray-100">
+                  <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-black text-gray-900">{{ pos.symbol }}</span>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase" :class="pos.unrealizedPnL >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">
+                      {{ pos.unrealizedPnL >= 0 ? '+' : '' }}{{ pos.unrealizedPnL.toFixed(2) }}
+                    </span>
+                  </div>
+                  <div class="grid grid-cols-2 gap-2 text-[10px]">
+                    <div>
+                      <div class="text-gray-400 uppercase font-bold">Qty</div>
+                      <div class="font-bold">{{ pos.quantity }}</div>
+                    </div>
+                    <div>
+                      <div class="text-gray-400 uppercase font-bold">Avg Entry</div>
+                      <div class="font-bold">{{ pos.avgEntryPrice.toFixed(2) }}</div>
+                    </div>
+                    <div>
+                      <div class="text-gray-400 uppercase font-bold">LTP</div>
+                      <div class="font-bold">{{ pos.currentPrice.toFixed(2) }}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Breakout Alerts -->
+            <div v-if="breakouts.length > 0" class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+              <div class="p-4 bg-orange-50 border-b border-orange-100">
+                <h3 class="text-sm font-bold text-orange-700 uppercase flex items-center gap-2">
+                  <Zap class="w-4 h-4" />
+                  Live Alerts
+                </h3>
+              </div>
+              <div class="p-4 space-y-4">
+                <div v-for="(b, i) in breakouts" :key="i" class="p-3 bg-gray-50 rounded-lg border-l-4 border-orange-500 animate-in fade-in slide-in-from-right duration-500">
+                  <div class="text-xs font-bold text-gray-900 mb-1">{{ b.reason }}</div>
+                  <div class="text-[10px] text-gray-500">Price: {{ b.tick.last_price }}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Price Card (if no live price) -->
+            <div v-if="!livePrice" class="bg-indigo-600 rounded-2xl p-6 text-white shadow-lg shadow-indigo-200">
+              <div class="flex items-center justify-between mb-4">
+                <span class="text-indigo-100 font-medium">Last Price</span>
+                <Activity class="w-5 h-5 text-indigo-200" />
+              </div>
+              <div class="text-4xl font-black mb-1">
+                {{ analysisResult.tf15m.price.toFixed(2) }}
+              </div>
+              <div class="text-sm text-indigo-100 italic">
+                Awaiting live feed...
+              </div>
+            </div>
+
+            <!-- Technicals & Context (Condensed) -->
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+              <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-6 flex items-center gap-2">
+                <TrendingUp class="w-4 h-4" />
+                Technical Stats
+              </h3>
               
-              <div class="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div class="p-4 bg-indigo-50 rounded-xl border border-indigo-100">
-                  <div class="text-xs text-indigo-600 font-bold uppercase mb-1">Entry Price</div>
-                  <div class="text-xl font-bold text-indigo-900">{{ analysisResult.aiDecision.entry }}</div>
+              <div class="space-y-4 text-sm">
+                <div class="flex items-center justify-between">
+                  <span class="text-gray-500">Trend</span>
+                  <span class="font-bold" :class="analysisResult.tf15m.trend === 'up' ? 'text-green-600' : 'text-red-600'">
+                    {{ analysisResult.tf15m.trend.toUpperCase() }}
+                  </span>
                 </div>
-                <div class="p-4 bg-red-50 rounded-xl border border-red-100">
-                  <div class="text-xs text-red-600 font-bold uppercase mb-1">Stop Loss</div>
-                  <div class="text-xl font-bold text-red-900">{{ analysisResult.aiDecision.stopLoss }}</div>
+                <div class="flex items-center justify-between">
+                  <span class="text-gray-500">RSI</span>
+                  <span class="font-bold">{{ analysisResult.tf15m.rsi.toFixed(2) }}</span>
                 </div>
-                <div class="p-4 bg-green-50 rounded-xl border border-green-100">
-                  <div class="text-xs text-green-600 font-bold uppercase mb-1">Target(s)</div>
-                  <div class="text-xl font-bold text-green-900">{{ analysisResult.aiDecision.targets?.join(', ') || 'N/A' }}</div>
+                <div class="flex items-center justify-between">
+                  <span class="text-gray-500">VWAP</span>
+                  <span class="font-bold">{{ analysisResult.tf15m.vwap.toFixed(2) }}</span>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Sidebar Details -->
-        <div class="space-y-8">
-          <!-- Paper Portfolio -->
-          <div v-if="portfolio.length > 0" class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div class="p-4 bg-indigo-50 border-b border-indigo-100">
-              <h3 class="text-sm font-bold text-indigo-700 uppercase flex items-center gap-2">
-                <ShieldCheck class="w-4 h-4" />
-                Paper Portfolio
-              </h3>
-            </div>
-            <div class="p-4 space-y-4">
-              <div v-for="pos in portfolio" :key="pos.symbol" class="p-4 bg-gray-50 rounded-xl border border-gray-100">
-                <div class="flex items-center justify-between mb-2">
-                  <span class="text-xs font-black text-gray-900">{{ pos.symbol }}</span>
-                  <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase" :class="pos.unrealizedPnL >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">
-                    {{ pos.unrealizedPnL >= 0 ? '+' : '' }}{{ pos.unrealizedPnL.toFixed(2) }}
-                  </span>
-                </div>
-                <div class="grid grid-cols-2 gap-2 text-[10px]">
-                  <div>
-                    <div class="text-gray-400 uppercase font-bold">Qty</div>
-                    <div class="font-bold">{{ pos.quantity }}</div>
-                  </div>
-                  <div>
-                    <div class="text-gray-400 uppercase font-bold">Avg Entry</div>
-                    <div class="font-bold">{{ pos.avgEntryPrice.toFixed(2) }}</div>
-                  </div>
-                  <div>
-                    <div class="text-gray-400 uppercase font-bold">LTP</div>
-                    <div class="font-bold">{{ pos.currentPrice.toFixed(2) }}</div>
-                  </div>
-                </div>
-              </div>
-            </div>
+        <!-- Empty State -->
+        <div v-else-if="!loading" class="text-center py-20">
+          <div class="bg-white w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-sm border border-gray-100">
+            <Activity class="w-10 h-10 text-gray-300" />
           </div>
-
-          <!-- Breakout Alerts -->
-          <div v-if="breakouts.length > 0" class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div class="p-4 bg-orange-50 border-b border-orange-100">
-              <h3 class="text-sm font-bold text-orange-700 uppercase flex items-center gap-2">
-                <Zap class="w-4 h-4" />
-                Live Alerts
-              </h3>
-            </div>
-            <div class="p-4 space-y-4">
-              <div v-for="(b, i) in breakouts" :key="i" class="p-3 bg-gray-50 rounded-lg border-l-4 border-orange-500 animate-in fade-in slide-in-from-right duration-500">
-                <div class="text-xs font-bold text-gray-900 mb-1">{{ b.reason }}</div>
-                <div class="text-[10px] text-gray-500">Price: {{ b.tick.last_price }}</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Price Card (if no live price) -->
-          <div v-if="!livePrice" class="bg-indigo-600 rounded-2xl p-6 text-white shadow-lg shadow-indigo-200">
-            <div class="flex items-center justify-between mb-4">
-              <span class="text-indigo-100 font-medium">Last Price</span>
-              <Activity class="w-5 h-5 text-indigo-200" />
-            </div>
-            <div class="text-4xl font-black mb-1">
-              {{ analysisResult.tf15m.price.toFixed(2) }}
-            </div>
-            <div class="text-sm text-indigo-100 italic">
-              Awaiting live feed...
-            </div>
-          </div>
-
-          <!-- Technicals & Context (Condensed) -->
-          <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-            <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-6 flex items-center gap-2">
-              <TrendingUp class="w-4 h-4" />
-              Technical Stats
-            </h3>
-            
-            <div class="space-y-4 text-sm">
-              <div class="flex items-center justify-between">
-                <span class="text-gray-500">Trend</span>
-                <span class="font-bold" :class="analysisResult.tf15m.trend === 'up' ? 'text-green-600' : 'text-red-600'">
-                  {{ analysisResult.tf15m.trend.toUpperCase() }}
-                </span>
-              </div>
-              <div class="flex items-center justify-between">
-                <span class="text-gray-500">RSI</span>
-                <span class="font-bold">{{ analysisResult.tf15m.rsi.toFixed(2) }}</span>
-              </div>
-              <div class="flex items-center justify-between">
-                <span class="text-gray-500">VWAP</span>
-                <span class="font-bold">{{ analysisResult.tf15m.vwap.toFixed(2) }}</span>
-              </div>
-              <div class="pt-4 border-t border-gray-50">
-                <div class="text-xs text-gray-400 font-bold uppercase mb-3">Sentiment</div>
-                <div class="flex items-center gap-2 mb-2">
-                  <span class="font-bold capitalize">{{ analysisResult.sentiment?.sentiment }}</span>
-                  <div class="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                    <div 
-                      class="h-full bg-indigo-500 rounded-full" 
-                      :style="{ width: analysisResult.sentiment?.confidence * 100 + '%' }"
-                    ></div>
-                  </div>
-                </div>
-                <p class="text-[10px] text-gray-400 leading-tight">
-                  {{ analysisResult.sentiment?.reason }}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <!-- Market Context -->
-          <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-            <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-              <Target class="w-4 h-4" />
-              Volatility
-            </h3>
-            <div class="flex items-center justify-between">
-                <div>
-                  <div class="text-2xl font-bold">{{ analysisResult.vix?.current }}</div>
-                  <div class="text-[10px] font-bold uppercase" :class="analysisResult.vix?.change > 0 ? 'text-red-500' : 'text-green-500'">
-                    {{ analysisResult.vix?.change > 0 ? '+' : '' }}{{ analysisResult.vix?.change }}%
-                  </div>
-                </div>
-                <div class="text-right">
-                    <div class="text-[10px] text-gray-400 font-bold uppercase mb-1">Sentiment</div>
-                    <div class="px-2 py-0.5 bg-gray-100 rounded font-bold text-xs uppercase">
-                        {{ analysisResult.vix?.sentiment }}
-                    </div>
-                </div>
-            </div>
-          </div>
+          <h2 class="text-xl font-bold text-gray-900 mb-2">Ready to Analyze</h2>
+          <p class="text-gray-500 max-w-sm mx-auto">
+            Enter a symbol and click analyze to get AI-driven insights and technical levels for your next trade.
+          </p>
         </div>
       </div>
 
-      <!-- Empty State -->
-      <div v-else-if="!loading" class="text-center py-20">
-        <div class="bg-white w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-sm border border-gray-100">
-          <Activity class="w-10 h-10 text-gray-300" />
+      <!-- History View -->
+      <div v-else-if="currentView === 'history'" class="space-y-8 animate-in fade-in slide-in-from-bottom duration-500">
+        <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+          <div class="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+            <h2 class="text-lg font-semibold flex items-center gap-2">
+              <Activity class="w-5 h-5 text-indigo-600" />
+              Paper Trade History
+            </h2>
+            <button @click="fetchHistory" class="text-sm font-medium text-indigo-600 hover:text-indigo-700">Refresh</button>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+              <thead>
+                <tr class="bg-gray-50/50 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                  <th class="px-6 py-4">Date</th>
+                  <th class="px-6 py-4">Symbol</th>
+                  <th class="px-6 py-4">Side</th>
+                  <th class="px-6 py-4 text-right">Entry</th>
+                  <th class="px-6 py-4 text-right">Exit</th>
+                  <th class="px-6 py-4 text-right">PnL</th>
+                  <th class="px-6 py-4 text-center">Status</th>
+                  <th class="px-6 py-4"></th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-50">
+                <template v-for="trade in tradeHistory" :key="trade.id">
+                  <tr class="hover:bg-gray-50/50 transition-colors group cursor-pointer" @click="toggleTradeExpand(trade.id)">
+                    <td class="px-6 py-4 text-xs text-gray-500 font-medium">
+                      {{ new Date(trade.opened_at).toLocaleDateString() }}
+                      <div class="text-[10px] opacity-50">{{ new Date(trade.opened_at).toLocaleTimeString() }}</div>
+                    </td>
+                    <td class="px-6 py-4">
+                      <span class="text-sm font-black text-gray-900">{{ trade.symbol }}</span>
+                    </td>
+                    <td class="px-6 py-4">
+                      <span class="px-2 py-0.5 rounded text-[10px] font-black uppercase" :class="trade.side === 'BUY' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">
+                        {{ trade.side }}
+                      </span>
+                    </td>
+                    <td class="px-6 py-4 text-right font-mono text-sm font-bold text-gray-600">
+                      {{ trade.entry_price.toFixed(2) }}
+                    </td>
+                    <td class="px-6 py-4 text-right font-mono text-sm font-bold text-gray-600">
+                      {{ trade.exit_price ? trade.exit_price.toFixed(2) : '—' }}
+                    </td>
+                    <td class="px-6 py-4 text-right">
+                      <span v-if="trade.pnl !== null" class="font-mono text-sm font-black" :class="trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'">
+                        {{ trade.pnl >= 0 ? '+' : '' }}{{ trade.pnl.toFixed(2) }}
+                      </span>
+                      <span v-else class="text-gray-300">—</span>
+                    </td>
+                    <td class="px-6 py-4 text-center">
+                      <span class="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-tighter" :class="trade.status === 'CLOSED' ? 'bg-gray-100 text-gray-500' : 'bg-indigo-100 text-indigo-700 animate-pulse'">
+                        {{ trade.status }}
+                      </span>
+                    </td>
+                    <td class="px-6 py-4 text-right">
+                      <Info class="w-4 h-4 text-gray-300 group-hover:text-indigo-500 transition-colors" />
+                    </td>
+                  </tr>
+                  <!-- Expandable AI Rationale Row -->
+                  <tr v-if="expandedTradeId === trade.id" class="bg-indigo-50/30">
+                    <td colspan="8" class="px-8 py-6">
+                      <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                        <div class="md:col-span-2 space-y-4">
+                          <h4 class="text-[10px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
+                            <ShieldCheck class="w-3 h-3" />
+                            AI Reasoning at Entry
+                          </h4>
+                          <p class="text-sm text-gray-700 leading-relaxed italic border-l-2 border-indigo-200 pl-4 bg-white/50 p-3 rounded-r-lg">
+                            "{{ trade.ai_reasoning || 'No reasoning recorded.' }}"
+                          </p>
+                        </div>
+                        <div class="space-y-4">
+                          <h4 class="text-[10px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
+                            <Target class="w-3 h-3" />
+                            Market State
+                          </h4>
+                          <div class="grid grid-cols-2 gap-4">
+                            <div class="bg-white/80 p-3 rounded-lg border border-indigo-100/50">
+                              <div class="text-[9px] text-gray-400 font-bold uppercase">Confidence</div>
+                              <div class="text-sm font-black text-indigo-900">{{ (trade.ai_confidence * 100).toFixed(0) }}%</div>
+                            </div>
+                            <div class="bg-white/80 p-3 rounded-lg border border-indigo-100/50">
+                              <div class="text-[9px] text-gray-400 font-bold uppercase">India VIX</div>
+                              <div class="text-sm font-black text-indigo-900">{{ trade.vix_level?.toFixed(2) || '—' }}</div>
+                            </div>
+                            <div class="bg-white/80 p-3 rounded-lg border border-indigo-100/50">
+                              <div class="text-[9px] text-gray-400 font-bold uppercase">RSI (15m)</div>
+                              <div class="text-sm font-black text-indigo-900">{{ trade.rsi_level?.toFixed(2) || '—' }}</div>
+                            </div>
+                            <div class="bg-white/80 p-3 rounded-lg border border-indigo-100/50">
+                              <div class="text-[9px] text-gray-400 font-bold uppercase">Trend</div>
+                              <div class="text-sm font-black text-indigo-900 capitalize">{{ trade.trend_15m || '—' }}</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                </template>
+                <tr v-if="tradeHistory.length === 0">
+                  <td colspan="8" class="px-6 py-20 text-center text-gray-400">
+                    <Activity class="w-8 h-8 mx-auto mb-4 opacity-20" />
+                    <div class="text-sm font-bold">No trades found in memory</div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
-        <h2 class="text-xl font-bold text-gray-900 mb-2">Ready to Analyze</h2>
-        <p class="text-gray-500 max-w-sm mx-auto">
-          Enter a symbol and click analyze to get AI-driven insights and technical levels for your next trade.
-        </p>
       </div>
     </main>
   </div>

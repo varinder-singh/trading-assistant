@@ -1,52 +1,6 @@
 import { getLLMProvider } from "./factory.js";
 
-export async function analyzeWithAI(input: any) {
-  let prompt = ""
-  let systemMessage = "You are a professional NSE options trader and technical analyst specializing in NIFTY intraday and swing trades. You produce precise, actionable trade plans based on technical indicators, options flow data, and market sentiment. You always respond with valid JSON only — no markdown, no prose, no code fences."
-
-  if (input.prompt) {
-    prompt = input.prompt
-  } else {
-    let liveContextSection = ""
-    if (input.liveContext) {
-      liveContextSection = `
-## REAL-TIME WEBSOCKET CONTEXT (TRULY LIVE)
-- Trigger Reason: ${input.liveContext.reason}
-- Last Price: ${input.liveContext.tick.last_price}
-- Momentum: ${input.liveContext.reason.includes('Volatility') ? 'High Volatility detected' : 'Price Action driven'}
-- Recent Ticks (last 60s): ${JSON.stringify(input.liveContext.recentTicks.map((t: any) => t.last_price))}
-
-NOTE: This real-time data is from a live WebSocket. It takes PRECEDENCE over the 5m/15m historical candles if there is a sharp divergence or breakout happening RIGHT NOW.
-`
-    }
-
-    let previousDecisionSection = ""
-    if (input.previousDecision) {
-      previousDecisionSection = `
-## PREVIOUS AI DECISION (FEEDBACK LOOP)
-Your last analysis resulted in:
-- Decision: ${input.previousDecision.decision}
-- Setup: ${input.previousDecision.setup}
-- Reason: ${input.previousDecision.reason}
-- Entry: ${input.previousDecision.entry}
-- Stop Loss: ${input.previousDecision.stopLoss}
-
-Use this context to decide if the current live breakout confirms your previous bias or if a trend reversal is occurring.
-`
-    }
-
-    // Strip massive arrays from input before stringifying to avoid token limits
-    const cleanedInput = { ...input }
-    if (cleanedInput.liveContext) {
-      cleanedInput.liveContext = { ...cleanedInput.liveContext, recentTicks: "[OMITTED FOR BREVITY - SEE LIVE CONTEXT SECTION ABOVE]" }
-    }
-    if (cleanedInput.previousDecision) {
-      cleanedInput.previousDecision = "[OMITTED - SEE PREVIOUS AI DECISION SECTION ABOVE]"
-    }
-
-    prompt = `Analyze the market data below and produce a trade decision using DUAL TIMEFRAME analysis.
-${liveContextSection}
-${previousDecisionSection}
+const STATIC_TRADING_RULES = `
 ## TIMEFRAME STRATEGY
 - 15-Minute (tf15m): Trend confirmation and directional bias
 - 5-Minute (tf5m): Entry precision and exact levels
@@ -83,6 +37,65 @@ If direction is confirmed in Step 2, use 5m data for exact entry/exit:
 - RSI < 30: avoid fresh SHORT_SELL; BUY only on bounce + 3+ signals
 - RSI 40–60 without confirmed direction: NO_TRADE
 
+## ADVANCED TRADING KNOWLEDGE BASE (Required for Context Caching)
+- VWAP Institutional Psychology: Volume Weighted Average Price is the most critical benchmark for institutions. Large buyers (FII/DII) typically accumulate below VWAP and distribute above it. When price crosses VWAP on high volume, it signals a shift in institutional bias.
+- RSI Momentum Divergence: A classic bearish divergence occurs when price makes a higher high but RSI makes a lower high. Conversely, a bullish divergence is seen when price makes a lower low but RSI makes a higher low. Divergences at support/resistance levels are high-probability reversal signals.
+- Option Chain Dynamics: Put-Call Ratio (PCR) is a contrarian indicator. High PCR (>1.2) suggests a bottoming process as markets are over-hedged, while low PCR (<0.6) suggests a frothy, overbought market. Max Pain is the strike price where the most options expire worthless, often acting as a magnet for price on expiry days.
+- Fibonacci Retracement Levels: In strong trends, a pullback to the 0.5 or 0.618 Fib level often provides a secondary entry point. Failure to hold the 0.618 level often indicates a total trend reversal.
+- Candlestick Patterns: Look for 'Shooting Stars' or 'Gravestone Dojis' at resistance, and 'Hammer' or 'Dragonfly Dojis' at support. These signify price rejection and potential reversals.
+- Market Regimes: Volatile markets (High VIX) favor mean-reversion and scalping strategies. Trending markets (Low VIX with expansion) favor breakout and trend-following strategies.
+`
+
+export async function analyzeWithAI(input: any) {
+  console.log("[AI] Starting analyzeWithAI...");
+  let userPrompt = ""
+  let systemMessage = "You are a professional NSE options trader and technical analyst specializing in NIFTY intraday and swing trades. You produce precise, actionable trade plans based on technical indicators, options flow data, and market sentiment. You always respond with valid JSON only — no markdown, no prose, no code fences."
+  systemMessage += STATIC_TRADING_RULES
+
+  try {
+    if (input.prompt) {
+      userPrompt = input.prompt
+    } else {
+      let liveContextSection = ""
+      if (input.liveContext) {
+        liveContextSection = `
+## REAL-TIME WEBSOCKET CONTEXT (TRULY LIVE)
+- Trigger Reason: ${input.liveContext.reason}
+- Last Price: ${input.liveContext.tick.last_price}
+- Momentum: ${input.liveContext.reason.includes('Volatility') ? 'High Volatility detected' : 'Price Action driven'}
+- Recent Ticks (last 60s): ${JSON.stringify(input.liveContext.recentTicks.map((t: any) => t.last_price))}
+
+NOTE: This real-time data is from a live WebSocket. It takes PRECEDENCE over the 5m/15m historical candles if there is a sharp divergence or breakout happening RIGHT NOW.
+`
+      }
+
+      let previousDecisionSection = ""
+      if (input.previousDecision) {
+        previousDecisionSection = `
+## PREVIOUS AI DECISION (FEEDBACK LOOP)
+Your last analysis resulted in:
+- Decision: ${input.previousDecision.decision}
+- Setup: ${input.previousDecision.setup}
+- Reason: ${input.previousDecision.reason}
+- Entry: ${input.previousDecision.entry}
+- Stop Loss: ${input.previousDecision.stopLoss}
+
+Use this context to decide if the current live breakout confirms your previous bias or if a trend reversal is occurring.
+`
+      }
+
+      // Strip massive arrays from input before stringifying to avoid token limits
+      const cleanedInput = { ...input }
+      if (cleanedInput.liveContext) {
+        cleanedInput.liveContext = { ...cleanedInput.liveContext, recentTicks: "[OMITTED FOR BREVITY - SEE LIVE CONTEXT SECTION ABOVE]" }
+      }
+      if (cleanedInput.previousDecision) {
+        cleanedInput.previousDecision = "[OMITTED - SEE PREVIOUS AI DECISION SECTION ABOVE]"
+      }
+
+      userPrompt = `Analyze the market data below and produce a trade decision using DUAL TIMEFRAME analysis.
+${liveContextSection}
+${previousDecisionSection}
 ## Market Data
 ${JSON.stringify(cleanedInput, null, 2)}
 
@@ -101,37 +114,33 @@ ${JSON.stringify(cleanedInput, null, 2)}
   "riskReward": <number or null>
 }
 `
-  }
+    }
 
-  if (input.systemPrompt) {
-    systemMessage = input.systemPrompt
-  }
+    if (input.systemPrompt) {
+      systemMessage = input.systemPrompt
+    }
 
-  let text = "{}"
-
-  try {
+    console.log("[AI] Initializing Provider...");
     const provider = getLLMProvider();
-    text = await provider.chat([
+    
+    console.log("[AI] Calling Provider.chat...");
+    const text = await provider.chat([
       { role: "system", content: systemMessage },
-      { role: "user", content: prompt },
+      { role: "user", content: userPrompt },
     ]);
 
     // Strip markdown code fences if present
-    text = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
-  } catch (error: any) {
-    console.error(`⚠️ AI request failed with provider: ${process.env.LLM_PROVIDER || 'gemini'}`, {
-      error: error.message || error,
-    })
-    return { decision: "NO_TRADE", reason: "AI request error", confidence: 0 }
-  }
+    const cleanedText = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
+    
+    try {
+      return JSON.parse(cleanedText)
+    } catch (parseError) {
+      console.error("[AI] Failed to parse JSON response:", cleanedText);
+      return { decision: "NO_TRADE", reason: "Parsing error", confidence: 0 }
+    }
 
-  try {
-    return JSON.parse(text)
-  } catch (error) {
-    console.error("⚠️ Failed to parse AI response", {
-      error,
-      response: text,
-    })
-    return { decision: "NO_TRADE", reason: "Parsing error", confidence: 0 }
+  } catch (error: any) {
+    console.error("[AI] Critical Error in analyzeWithAI:", error);
+    return { decision: "NO_TRADE", reason: "Internal AI error", confidence: 0 }
   }
 }

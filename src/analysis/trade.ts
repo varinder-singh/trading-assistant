@@ -61,7 +61,6 @@ export function generateTradePlan(tf: FifteenMinuteCandle, mode: "intraday" | "s
     decision: "NEUTRAL"
   }
 }
-
 export async function runAnalysis(symbol: string, mode: "intraday" | "swing", liveContext?: any, previousDecision?: any) {
   const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
 
@@ -77,20 +76,22 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
     throw new Error("No 15-minute candles found.")
   }
   const { tf15m, tf5m } = analyzeDualTimeframe(candles15m, candles5m)
-  
+
   const last15mCandle = candles15m[candles15m.length - 1]!
   const full15mAnalysis: FifteenMinuteCandle = {
       ...last15mCandle,
       ...tf15m
   }
-  
+
   generateTradePlan(full15mAnalysis, mode)
+
   const sentiment = await analyzeSentiment(headlines)
 
   const { quotes, finalOptions } = kiteData
   const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price)
   
   const aiDecision = await analyzeWithAI({
+...
     tf15m,
     tf5m,
     sentiment,
@@ -134,5 +135,5 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
   console.log(`Resistance: ${tf15m.resistance.toFixed(2)}`)
   console.log(`Support: ${tf15m.support.toFixed(2)}`)
 
-  return { tf15m, tf5m, aiDecision }
+  return { tf15m, tf5m, aiDecision, vix, sentiment }
 }

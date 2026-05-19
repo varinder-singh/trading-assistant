@@ -11,8 +11,7 @@ export const watchCommand = new Command("watch")
   .option("-m, --mode <mode>", "intraday | swing", "intraday")
   .action(async (symbol, options) => {
     const mode = options.mode as "intraday" | "swing"
-    console.log(`
-🔭 Starting Watch Mode for ${symbol} (${mode})...`)
+    console.log(`\n🔭 Starting Watch Mode for ${symbol} (${mode})...`)
 
     // 1. Resolve Instrument Token
     const token = await getInstrumentToken(symbol)
@@ -69,17 +68,17 @@ export const watchCommand = new Command("watch")
     analyzer.on("breakout", async (context) => {
       console.log("\n" + "=".repeat(50))
       console.log("⚡ BREAKOUT DETECTED")
-      const result = await runAnalysis(symbol, mode, context, lastDecision)
-      lastDecision = result.aiDecision
+      const { tf15m: tf, aiDecision: decision, vix, sentiment } = await runAnalysis(symbol, mode, context, lastDecision)
+      lastDecision = decision
 
       // --- Paper Trading Execution ---
       if (lastDecision.optionAction && lastDecision.optionAction !== "NONE" && lastDecision.strike) {
         const type = lastDecision.optionAction === "BUY_CE" ? "CE" : "PE"
         const option = await getOptionToken(symbol, lastDecision.strike, type)
-        
+
         if (option) {
           console.log(`📝 Executing Paper Trade for ${option.symbol}...`)
-          
+
           // Subscribe ticker to the option
           ticker.subscribe([option.token])
           ticker.setMode(ticker.modeFull, [option.token])
@@ -93,7 +92,14 @@ export const watchCommand = new Command("watch")
             token: option.token,
             side: "BUY",
             quantity: 1, // Default to 1 lot for safety
-            price: entryPrice
+            price: entryPrice,
+            context: {
+                aiReasoning: lastDecision.reason,
+                aiConfidence: lastDecision.confidence,
+                vixLevel: vix.current,
+                rsiLevel: tf.rsi,
+                trend15m: tf.trend
+            }
           })
         }
       }
