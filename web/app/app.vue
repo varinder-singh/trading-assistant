@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { Search, TrendingUp, TrendingDown, AlertCircle, Info, Activity, ShieldCheck, Target, Zap } from '@lucide/vue'
 import { createChart, LineSeries } from 'lightweight-charts'
 import type { IChartApi, ISeriesApi } from 'lightweight-charts'
@@ -29,6 +29,12 @@ function toggleView(view: 'live' | 'history') {
   currentView.value = view
   if (view === 'history') {
     fetchHistory()
+  } else if (view === 'live') {
+    nextTick(() => {
+      if (chart && chartContainer.value) {
+        chart.applyOptions({ width: chartContainer.value.clientWidth })
+      }
+    })
   }
 }
 
@@ -80,6 +86,7 @@ function startWatching() {
       type: 'watch',
       data: {
         symbol: symbol.value,
+        mode: mode.value,
         levels: {
           resistance: analysisResult.value.tf15m.resistance,
           support: analysisResult.value.tf15m.support,
@@ -273,7 +280,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Live View -->
-      <div v-if="currentView === 'live'">
+      <div v-show="currentView === 'live'">
         <div v-if="analysisResult" class="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <!-- Main Content -->
           <div class="lg:col-span-2 space-y-8">
@@ -459,7 +466,7 @@ onUnmounted(() => {
       </div>
 
       <!-- History View -->
-      <div v-else-if="currentView === 'history'" class="space-y-8 animate-in fade-in slide-in-from-bottom duration-500">
+      <div v-show="currentView === 'history'" class="space-y-8 animate-in fade-in slide-in-from-bottom duration-500">
         <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
           <div class="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
             <h2 class="text-lg font-semibold flex items-center gap-2">

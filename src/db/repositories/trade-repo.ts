@@ -19,7 +19,7 @@ export class TradeRepository {
         exit_price: null,
         pnl: null,
         closed_at: null,
-      })
+      } as any)
       .execute();
 
     return id;

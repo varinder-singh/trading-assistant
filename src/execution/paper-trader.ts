@@ -13,9 +13,46 @@ export interface TradeContext {
 export class PaperTrader extends EventEmitter {
   private positions: Map<string, PaperPosition> = new Map();
   private orders: TradeOrder[] = [];
+  private initialized = false;
 
   constructor() {
     super();
+  }
+
+  async initialize() {
+    if (this.initialized) return;
+
+    try {
+      const openTrades = await tradeRepo.getOpenTrades();
+      console.log(`[PaperTrader] Restoring ${openTrades.length} open trades from DB...`);
+      
+      for (const trade of openTrades) {
+        // Group by symbol to reconstruct positions
+        const existing = this.positions.get(trade.symbol);
+        if (existing) {
+          const totalQty = existing.quantity + trade.quantity;
+          const totalCost = (existing.avgEntryPrice * existing.quantity) + (trade.entry_price * trade.quantity);
+          existing.avgEntryPrice = totalCost / totalQty;
+          existing.quantity = totalQty;
+        } else {
+          this.positions.set(trade.symbol, {
+            symbol: trade.symbol,
+            token: trade.token || 0, // Should have token from new schema
+            side: "BUY",
+            quantity: trade.quantity,
+            avgEntryPrice: trade.entry_price,
+            currentPrice: trade.entry_price,
+            unrealizedPnL: 0,
+            realizedPnL: 0,
+            timestamp: new Date(trade.opened_at),
+          });
+        }
+      }
+      this.initialized = true;
+      console.log("[PaperTrader] Initialization complete.");
+    } catch (err) {
+      console.error("[PaperTrader] Failed to initialize:", err);
+    }
   }
 
   async placeOrder(params: {
@@ -26,6 +63,8 @@ export class PaperTrader extends EventEmitter {
     price: number;
     context?: TradeContext;
   }): Promise<TradeResponse> {
+    await this.initialize();
+
     const orderId = `paper_${Math.random().toString(36).substr(2, 9)}`;
     
     const order: TradeOrder = {
@@ -41,12 +80,13 @@ export class PaperTrader extends EventEmitter {
     };
 
     this.orders.push(order);
-    this.updatePosition(order);
+    await this.updatePosition(order);
 
     // PERSIST TO DATABASE
     if (order.side === "BUY") {
       await tradeRepo.insertTrade({
         symbol: order.symbol,
+        token: order.token,
         side: "BUY",
         quantity: order.quantity,
         entry_price: order.price!,
@@ -110,7 +150,9 @@ export class PaperTrader extends EventEmitter {
     }
   }
 
-  updatePrice(token: number, price: number) {
+  async updatePrice(token: number, price: number) {
+    if (!this.initialized) await this.initialize();
+    
     let changed = false;
     for (const [symbol, pos] of this.positions) {
       if (pos.token === token) {

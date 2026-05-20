@@ -2,6 +2,8 @@ import { createTicker } from "@core/data/kite-ticker.js"
 import { getInstrumentToken, getOptionToken } from "@core/data/kite.js"
 import { LiveAnalyzer } from "@core/analysis/live.js"
 import { paperTrader } from "@core/execution/paper-trader.js"
+import { runAnalysis } from "@core/analysis/trade.js"
+import kc from "@core/data/kite.js"
 
 // Shared ticker instance
 let globalTicker: any = null
@@ -9,7 +11,9 @@ const clients = new Map<string, {
   peer: any, 
   analyzer: LiveAnalyzer, 
   symbol: string, 
-  token: number 
+  token: number,
+  mode: "intraday" | "swing",
+  lastDecision: any
 }>()
 
 // Listen to paper trader updates globally
@@ -80,7 +84,7 @@ export default defineWebSocketHandler({
       const msg = JSON.parse(text)
       
       if (msg.type === 'watch') {
-        const { symbol, levels } = msg.data
+        const { symbol, levels, mode } = msg.data
         const token = await getInstrumentToken(symbol)
         
         if (!token) {
@@ -93,18 +97,59 @@ export default defineWebSocketHandler({
           analyzer.setLevels(levels)
         }
 
-        analyzer.on("breakout", (data) => {
-          peer.send(JSON.stringify({
-            type: 'breakout',
-            data
-          }))
+        analyzer.on("breakout", async (context) => {
+          const client = clients.get(peer.id)
+          if (!client) return
+
+          console.log(`[ws] Breakout detected for ${symbol}`)
+          peer.send(JSON.stringify({ type: 'breakout', data: context }))
+
+          try {
+            const { tf15m: tf, aiDecision: decision, vix } = await runAnalysis(symbol, client.mode, context, client.lastDecision)
+            client.lastDecision = decision
+
+            // --- Paper Trading Execution ---
+            if (decision.optionAction && decision.optionAction !== "NONE" && decision.strike) {
+              const type = decision.optionAction === "BUY_CE" ? "CE" : "PE"
+              const option = await getOptionToken(symbol, decision.strike, type)
+
+              if (option) {
+                console.log(`[ws] Executing Paper Trade for ${option.symbol}...`)
+                const ticker = getTicker()
+                ticker.subscribe([option.token])
+                ticker.setMode(ticker.modeFull, [option.token])
+
+                const quote = await kc.getQuote([`NFO:${option.symbol}`])
+                const entryPrice = quote[`NFO:${option.symbol}`]?.last_price || 0
+
+                await paperTrader.placeOrder({
+                  symbol: option.symbol,
+                  token: option.token,
+                  side: "BUY",
+                  quantity: 1,
+                  price: entryPrice,
+                  context: {
+                    aiReasoning: decision.reason,
+                    aiConfidence: decision.confidence,
+                    vixLevel: vix.current,
+                    rsiLevel: tf.rsi,
+                    trend15m: tf.trend
+                  }
+                })
+              }
+            }
+          } catch (err) {
+            console.error(`[ws] Error during breakout analysis:`, err)
+          }
         })
 
         clients.set(peer.id, {
           peer,
           analyzer,
           symbol,
-          token
+          token,
+          mode: mode || "intraday",
+          lastDecision: null
         })
 
         const ticker = getTicker()

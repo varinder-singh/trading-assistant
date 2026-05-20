@@ -1,5 +1,4 @@
 import { tradeRepo } from "@core/db/repositories/trade-repo.js"
-
 export default defineEventHandler(async () => {
   try {
     const trades = await tradeRepo.getAllTrades()
