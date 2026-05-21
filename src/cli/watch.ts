@@ -37,6 +37,12 @@ export const watchCommand = new Command("watch")
 
     // 4. Setup Ticker
     const ticker = createTicker()
+
+    paperTrader.on("market_close", () => {
+      console.log("\n🛑 Market closed (3:30 PM IST). Stopping watch mode.")
+      ticker.disconnect()
+      process.exit(0)
+    })
     
     ticker.on("ticks", (ticks: any[]) => {
       const targetTick = ticks.find(t => t.instrument_token === token)
@@ -98,7 +104,9 @@ export const watchCommand = new Command("watch")
                 aiConfidence: lastDecision.confidence,
                 vixLevel: vix.current,
                 rsiLevel: tf.rsi,
-                trend15m: tf.trend
+                trend15m: tf.trend,
+                aiStopLoss: lastDecision.stopLoss,
+                aiTarget: lastDecision.targets && lastDecision.targets.length > 0 ? lastDecision.targets[0] : undefined
             }
           })
         }

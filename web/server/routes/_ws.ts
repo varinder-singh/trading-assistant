@@ -25,6 +25,15 @@ paperTrader.on("pnl_update", (positions) => {
   broadcast({ type: 'portfolio', data: positions })
 })
 
+paperTrader.on("market_close", () => {
+  console.log("[ws] Market Closed signal received. Stopping ticker.");
+  if (globalTicker) {
+    globalTicker.disconnect();
+    globalTicker = null;
+  }
+  broadcast({ type: 'market_closed', message: 'Market hours ended (3:30 PM IST). Watching stopped.' });
+})
+
 function broadcast(msg: any) {
   const data = JSON.stringify(msg)
   for (const [id, client] of clients) {
@@ -133,7 +142,9 @@ export default defineWebSocketHandler({
                     aiConfidence: decision.confidence,
                     vixLevel: vix.current,
                     rsiLevel: tf.rsi,
-                    trend15m: tf.trend
+                    trend15m: tf.trend,
+                    aiStopLoss: decision.stopLoss,
+                    aiTarget: decision.targets && decision.targets.length > 0 ? decision.targets[0] : undefined
                   }
                 })
               }

@@ -44,6 +44,8 @@ export interface PaperTradesTable {
   vix_level: number | null;
   rsi_level: number | null;
   trend_15m: string | null;
+  ai_stop_loss: number | null;
+  ai_target: number | null;
   opened_at: string; // ISO string
   closed_at: string | null; // ISO string
 }

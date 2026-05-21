@@ -8,6 +8,8 @@ export interface TradeContext {
   vixLevel?: number;
   rsiLevel?: number;
   trend15m?: string;
+  aiStopLoss?: number;
+  aiTarget?: number;
 }
 
 export class PaperTrader extends EventEmitter {
@@ -37,21 +39,68 @@ export class PaperTrader extends EventEmitter {
         } else {
           this.positions.set(trade.symbol, {
             symbol: trade.symbol,
-            token: trade.token || 0, // Should have token from new schema
+            token: trade.token || 0,
             side: "BUY",
             quantity: trade.quantity,
             avgEntryPrice: trade.entry_price,
             currentPrice: trade.entry_price,
             unrealizedPnL: 0,
             realizedPnL: 0,
+            aiStopLoss: trade.ai_stop_loss || undefined,
+            aiTarget: trade.ai_target || undefined,
             timestamp: new Date(trade.opened_at),
           });
         }
       }
       this.initialized = true;
       console.log("[PaperTrader] Initialization complete.");
+      
+      // Start market status monitoring
+      this.startMarketMonitor();
     } catch (err) {
       console.error("[PaperTrader] Failed to initialize:", err);
+    }
+  }
+
+  private startMarketMonitor() {
+    setInterval(() => {
+      this.checkMarketStatus();
+    }, 60 * 1000); // Check every minute
+  }
+
+  private checkMarketStatus() {
+    const now = new Date();
+    // Convert to IST (UTC+5:30)
+    const istTime = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+    const hours = istTime.getUTCHours();
+    const minutes = istTime.getUTCMinutes();
+
+    // 1. Square-off at 3:25 PM IST (15:25)
+    if (hours === 15 && minutes === 25) {
+      const positions = this.getAllPositions();
+      if (positions.length > 0) {
+        console.log(`[EXIT] 15:25 IST - Market Square-off triggered for ${positions.length} positions.`);
+        this.squareOffAll();
+      }
+    }
+
+    // 2. Market Close at 3:30 PM IST (15:30)
+    if (hours === 15 && minutes === 30) {
+      console.log("[EXIT] 15:30 IST - Market Closed. Emitting shutdown signal.");
+      this.emit("market_close");
+    }
+  }
+
+  async squareOffAll() {
+    const positions = this.getAllPositions();
+    for (const pos of positions) {
+      await this.placeOrder({
+        symbol: pos.symbol,
+        token: pos.token,
+        side: "SELL",
+        quantity: pos.quantity,
+        price: pos.currentPrice,
+      });
     }
   }
 
@@ -95,6 +144,8 @@ export class PaperTrader extends EventEmitter {
         vix_level: params.context?.vixLevel || null,
         rsi_level: params.context?.rsiLevel || null,
         trend_15m: params.context?.trend15m || null,
+        ai_stop_loss: params.context?.aiStopLoss || null,
+        ai_target: params.context?.aiTarget || null,
       }).catch(err => console.error("❌ Failed to save paper trade to DB:", err));
     }
 
@@ -159,6 +210,29 @@ export class PaperTrader extends EventEmitter {
         pos.currentPrice = price;
         pos.unrealizedPnL = (price - pos.avgEntryPrice) * pos.quantity;
         changed = true;
+
+        // Automated Exit Monitoring
+        if (pos.side === "BUY") {
+          if (pos.aiStopLoss && price <= pos.aiStopLoss) {
+            console.log(`[EXIT] Stop-Loss hit for ${symbol} @ ${price} (SL: ${pos.aiStopLoss})`);
+            this.placeOrder({
+              symbol: pos.symbol,
+              token: pos.token,
+              side: "SELL",
+              quantity: pos.quantity,
+              price: price
+            });
+          } else if (pos.aiTarget && price >= pos.aiTarget) {
+            console.log(`[EXIT] Target reached for ${symbol} @ ${price} (Target: ${pos.aiTarget})`);
+            this.placeOrder({
+              symbol: pos.symbol,
+              token: pos.token,
+              side: "SELL",
+              quantity: pos.quantity,
+              price: price
+            });
+          }
+        }
       }
     }
     if (changed) {

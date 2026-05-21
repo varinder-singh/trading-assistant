@@ -23,6 +23,8 @@ export interface PaperPosition {
   currentPrice: number;
   unrealizedPnL: number;
   realizedPnL: number;
+  aiStopLoss?: number;
+  aiTarget?: number;
   timestamp: Date;
 }
 
