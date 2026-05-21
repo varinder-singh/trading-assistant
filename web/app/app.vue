@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { Search, TrendingUp, TrendingDown, AlertCircle, Info, Activity, ShieldCheck, Target, Zap } from '@lucide/vue'
+import { Search, TrendingUp, TrendingDown, AlertCircle, Info, Activity, ShieldCheck, Target, Zap, X } from '@lucide/vue'
 import { createChart, LineSeries } from 'lightweight-charts'
 import type { IChartApi, ISeriesApi } from 'lightweight-charts'
 
@@ -15,6 +15,15 @@ const portfolio = ref<any[]>([])
 const tradeHistory = ref<any[]>([])
 const currentView = ref<'live' | 'history'>('live')
 const expandedTradeId = ref<string | null>(null)
+const notifications = ref<any[]>([])
+
+function addNotification(notif: any) {
+  const id = Math.random().toString(36).substr(2, 9)
+  notifications.value.push({ id, ...notif })
+  setTimeout(() => {
+    notifications.value = notifications.value.filter(n => n.id !== id)
+  }, 8000) // 8 seconds for important trade info
+}
 
 async function fetchHistory() {
   try {
@@ -74,8 +83,21 @@ function connectWebSocket() {
     } else if (msg.type === 'breakout') {
       breakouts.value.unshift(msg.data)
       if (breakouts.value.length > 5) breakouts.value.pop()
+      addNotification({
+        title: '⚠️ Breakout Detected',
+        message: msg.data.reason,
+        type: 'warning'
+      })
     } else if (msg.type === 'portfolio') {
       portfolio.value = msg.data
+    } else if (msg.type === 'notification') {
+      addNotification(msg.data)
+    } else if (msg.type === 'market_closed') {
+      addNotification({
+        title: '🏁 Market Closed',
+        message: msg.message,
+        type: 'info'
+      })
     }
   }
 }
@@ -579,6 +601,57 @@ onUnmounted(() => {
         </div>
       </div>
     </main>
+
+    <!-- Notifications Toast -->
+    <div class="fixed bottom-6 right-6 z-50 flex flex-col gap-3 pointer-events-none">
+      <div 
+        v-for="n in notifications" 
+        :key="n.id"
+        class="pointer-events-auto bg-white border rounded-2xl shadow-2xl p-4 min-w-[320px] max-w-md animate-in slide-in-from-right duration-300 border-l-4"
+        :class="{
+          'border-l-green-500': n.type === 'success',
+          'border-l-red-500': n.type === 'error',
+          'border-l-orange-500': n.type === 'warning',
+          'border-l-indigo-500': n.type === 'info'
+        }"
+      >
+        <div class="flex items-start gap-3">
+          <div :class="{
+            'text-green-500': n.type === 'success',
+            'text-red-500': n.type === 'error',
+            'text-orange-500': n.type === 'warning',
+            'text-indigo-500': n.type === 'info'
+          }">
+            <Zap v-if="n.type === 'warning'" class="w-5 h-5" />
+            <ShieldCheck v-else-if="n.type === 'success'" class="w-5 h-5" />
+            <AlertCircle v-else-if="n.type === 'error'" class="w-5 h-5" />
+            <Info v-else class="w-5 h-5" />
+          </div>
+          <div class="flex-1">
+            <h4 class="text-sm font-bold text-gray-900">{{ n.title }}</h4>
+            <p class="text-xs text-gray-500 mt-1 leading-relaxed">{{ n.message }}</p>
+            
+            <div v-if="n.details" class="mt-3 grid grid-cols-2 gap-2 p-2 bg-gray-50 rounded-lg border border-gray-100">
+              <div v-if="n.details.price">
+                <div class="text-[9px] text-gray-400 font-bold uppercase">Price</div>
+                <div class="text-[11px] font-black text-gray-900">{{ n.details.price.toFixed(2) }}</div>
+              </div>
+              <div v-if="n.details.stopLoss">
+                <div class="text-[9px] text-red-400 font-bold uppercase">Stop Loss</div>
+                <div class="text-[11px] font-black text-red-600">{{ n.details.stopLoss.toFixed(2) }}</div>
+              </div>
+              <div v-if="n.details.target">
+                <div class="text-[9px] text-green-400 font-bold uppercase">Target</div>
+                <div class="text-[11px] font-black text-green-600">{{ n.details.target.toFixed(2) }}</div>
+              </div>
+            </div>
+          </div>
+          <button @click="notifications = notifications.filter(x => x.id !== n.id)" class="text-gray-300 hover:text-gray-500">
+            <X class="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 

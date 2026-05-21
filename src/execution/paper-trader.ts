@@ -151,6 +151,36 @@ export class PaperTrader extends EventEmitter {
 
     console.log(`📝 [PAPER TRADE] ${order.side} ${order.quantity}x ${order.symbol} @ ${order.price}`);
     
+    // Determine notification details
+    let title = order.side === "BUY" ? "🚀 Trade Executed" : "✅ Position Closed";
+    let type = order.side === "BUY" ? "success" : "info";
+    
+    if (order.side === "SELL") {
+      const existing = this.positions.get(order.symbol);
+      if (existing) {
+        if (existing.aiStopLoss && order.price! <= existing.aiStopLoss) {
+          title = "🛑 Stop-Loss Hit";
+          type = "error";
+        } else if (existing.aiTarget && order.price! >= existing.aiTarget) {
+          title = "🎯 Target Reached";
+          type = "success";
+        }
+      }
+    }
+
+    this.emit("notification", {
+      title,
+      message: `${order.side} ${order.quantity}x ${order.symbol} @ ${order.price}`,
+      type,
+      details: {
+        symbol: order.symbol,
+        price: order.price,
+        side: order.side,
+        stopLoss: params.context?.aiStopLoss || this.positions.get(order.symbol)?.aiStopLoss,
+        target: params.context?.aiTarget || this.positions.get(order.symbol)?.aiTarget
+      }
+    });
+
     this.emit("order_update", order);
     this.emit("portfolio_update", this.getAllPositions());
 

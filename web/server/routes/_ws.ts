@@ -25,6 +25,10 @@ paperTrader.on("pnl_update", (positions) => {
   broadcast({ type: 'portfolio', data: positions })
 })
 
+paperTrader.on("notification", (notif) => {
+  broadcast({ type: 'notification', data: notif })
+})
+
 paperTrader.on("market_close", () => {
   console.log("[ws] Market Closed signal received. Stopping ticker.");
   if (globalTicker) {
