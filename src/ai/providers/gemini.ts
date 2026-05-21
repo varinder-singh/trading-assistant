@@ -14,7 +14,7 @@ export class GeminiProvider implements LLMProvider {
       this.genAI = new GoogleGenerativeAI(apiKey);
     }
 
-    const modelName = options?.model || "gemini-2.5-flash";
+    const modelName = options?.model || "gemini-2.5-flash-lite";
 
     // Extract system message if present
     const systemMessage = messages.find((m) => m.role === "system");
@@ -28,25 +28,32 @@ export class GeminiProvider implements LLMProvider {
       modelParams.systemInstruction = systemMessage.content;
     }
 
-    const model = this.genAI.getGenerativeModel(modelParams);
+    console.log(`[Gemini] Starting chat with model: ${modelName} (System Instruction: ${modelParams.systemInstruction?.length || 0} chars)`);
 
-    const chat = model.startChat({
-      history: userMessages.slice(0, -1).map((m) => ({
-        role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.content }],
-      })),
-      generationConfig: {
-        temperature: options?.temperature ?? 0.7,
-      },
-    });
+    try {
+      const model = this.genAI.getGenerativeModel(modelParams);
 
-    const lastMessage = userMessages[userMessages.length - 1];
-    if (!lastMessage) {
-      throw new Error("No user message provided for Gemini chat");
+      const chat = model.startChat({
+        history: userMessages.slice(0, -1).map((m) => ({
+          role: m.role === "assistant" ? "model" : "user",
+          parts: [{ text: m.content }],
+        })),
+        generationConfig: {
+          temperature: options?.temperature ?? 0.7,
+        },
+      });
+
+      const lastMessage = userMessages[userMessages.length - 1];
+      if (!lastMessage) {
+        throw new Error("No user message provided for Gemini chat");
+      }
+
+      const result = await chat.sendMessage(lastMessage.content);
+      const response = await result.response;
+      return response.text();
+    } catch (error: any) {
+      console.error("[Gemini] API Error:", JSON.stringify(error, null, 2) || error.message || error);
+      throw error;
     }
-
-    const result = await chat.sendMessage(lastMessage.content);
-    const response = await result.response;
-    return response.text();
   }
 }

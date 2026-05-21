@@ -6,7 +6,10 @@ import { createInterface } from "node:readline/promises"
 import { stdin as input, stdout as output } from "node:process"
 import { KiteConnect } from "kiteconnect"
 
-const tokenFilePath = resolve(process.cwd(), ".kite", "access-token.json")
+import { fileURLToPath } from "node:url"
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const tokenFilePath = resolve(__dirname, "../../.kite", "access-token.json")
 
 function getRequiredEnv(name: string) {
   const value = process.env[name]
@@ -119,4 +122,4 @@ async function run() {
   console.log("Run your trade CLI in the same project without updating ~/.zshrc.")
 }
 
-await run()
+run().catch(console.error)
