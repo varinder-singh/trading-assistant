@@ -10,14 +10,16 @@ export async function getCandles(symbol: string, interval: string = "15m", range
   const { open, high, low, close, volume } = result.indicators.quote[0]
   const timestamps = result.timestamp
 
-  return timestamps.map((t: number, i: number) => ({
-    time: t,
-    open: open[i],
-    high: high[i],
-    low: low[i],
-    close: close[i],
-    volume: volume[i],
-  }))
+  return timestamps
+    .map((t: number, i: number) => ({
+      time: t,
+      open: open[i],
+      high: high[i],
+      low: low[i],
+      close: close[i],
+      volume: volume[i],
+    }))
+    .filter((c: any) => c.open !== null && c.high !== null && c.low !== null && c.close !== null) as Candle[]
 }
 
 export async function getDualTimeframeCandles(symbol: string) {

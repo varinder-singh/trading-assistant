@@ -90,6 +90,19 @@ function connectWebSocket() {
       })
     } else if (msg.type === 'portfolio') {
       portfolio.value = msg.data
+      
+      // Auto-alert for aggressive institutional flow from last analysis
+      const topSC = analysisResult.value?.optionsAnalysis?.windowStats?.topShortCovering
+      if (topSC && topSC.length > 0) {
+        const best = topSC[0]
+        if (Math.abs(best.intervalOi) > 50000) {
+           addNotification({
+             title: '🔥 Institutional Action',
+             message: `Aggressive Short Covering on ${best.strike} CE detected!`,
+             type: 'warning'
+           })
+        }
+      }
     } else if (msg.type === 'notification') {
       addNotification(msg.data)
     } else if (msg.type === 'market_closed') {

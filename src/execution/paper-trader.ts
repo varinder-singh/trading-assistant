@@ -16,6 +16,8 @@ export class PaperTrader extends EventEmitter {
   private positions: Map<string, PaperPosition> = new Map();
   private orders: TradeOrder[] = [];
   private initialized = false;
+  private initializationPromise: Promise<void> | null = null;
+  private exitingPositions: Set<string> = new Set();
 
   constructor() {
     super();
@@ -23,43 +25,50 @@ export class PaperTrader extends EventEmitter {
 
   async initialize() {
     if (this.initialized) return;
+    if (this.initializationPromise) return this.initializationPromise;
 
-    try {
-      const openTrades = await tradeRepo.getOpenTrades();
-      console.log(`[PaperTrader] Restoring ${openTrades.length} open trades from DB...`);
-      
-      for (const trade of openTrades) {
-        // Group by symbol to reconstruct positions
-        const existing = this.positions.get(trade.symbol);
-        if (existing) {
-          const totalQty = existing.quantity + trade.quantity;
-          const totalCost = (existing.avgEntryPrice * existing.quantity) + (trade.entry_price * trade.quantity);
-          existing.avgEntryPrice = totalCost / totalQty;
-          existing.quantity = totalQty;
-        } else {
-          this.positions.set(trade.symbol, {
-            symbol: trade.symbol,
-            token: trade.token || 0,
-            side: "BUY",
-            quantity: trade.quantity,
-            avgEntryPrice: trade.entry_price,
-            currentPrice: trade.entry_price,
-            unrealizedPnL: 0,
-            realizedPnL: 0,
-            aiStopLoss: trade.ai_stop_loss || undefined,
-            aiTarget: trade.ai_target || undefined,
-            timestamp: new Date(trade.opened_at),
-          });
+    this.initializationPromise = (async () => {
+      try {
+        const openTrades = await tradeRepo.getOpenTrades();
+        console.log(`[PaperTrader] Restoring ${openTrades.length} open trades from DB...`);
+        
+        for (const trade of openTrades) {
+          // Group by symbol to reconstruct positions
+          const existing = this.positions.get(trade.symbol);
+          if (existing) {
+            const totalQty = existing.quantity + trade.quantity;
+            const totalCost = (existing.avgEntryPrice * existing.quantity) + (trade.entry_price * trade.quantity);
+            existing.avgEntryPrice = totalCost / totalQty;
+            existing.quantity = totalQty;
+          } else {
+            this.positions.set(trade.symbol, {
+              symbol: trade.symbol,
+              token: trade.token || 0,
+              side: "BUY",
+              quantity: trade.quantity,
+              avgEntryPrice: trade.entry_price,
+              currentPrice: trade.entry_price,
+              unrealizedPnL: 0,
+              realizedPnL: 0,
+              aiStopLoss: trade.ai_stop_loss || undefined,
+              aiTarget: trade.ai_target || undefined,
+              timestamp: new Date(trade.opened_at),
+            });
+          }
         }
+        this.initialized = true;
+        console.log("[PaperTrader] Initialization complete.");
+        
+        // Start market status monitoring
+        this.startMarketMonitor();
+      } catch (err) {
+        console.error("[PaperTrader] Failed to initialize:", err);
+      } finally {
+        this.initializationPromise = null;
       }
-      this.initialized = true;
-      console.log("[PaperTrader] Initialization complete.");
-      
-      // Start market status monitoring
-      this.startMarketMonitor();
-    } catch (err) {
-      console.error("[PaperTrader] Failed to initialize:", err);
-    }
+    })();
+
+    return this.initializationPromise;
   }
 
   private startMarketMonitor() {
@@ -94,6 +103,8 @@ export class PaperTrader extends EventEmitter {
   async squareOffAll() {
     const positions = this.getAllPositions();
     for (const pos of positions) {
+      if (this.exitingPositions.has(pos.symbol)) continue;
+      
       await this.placeOrder({
         symbol: pos.symbol,
         token: pos.token,
@@ -114,6 +125,13 @@ export class PaperTrader extends EventEmitter {
   }): Promise<TradeResponse> {
     await this.initialize();
 
+    if (params.side === "SELL") {
+      if (this.exitingPositions.has(params.symbol)) {
+        return { success: false, error: "Exit already in progress" };
+      }
+      this.exitingPositions.add(params.symbol);
+    }
+
     const orderId = `paper_${Math.random().toString(36).substr(2, 9)}`;
     
     const order: TradeOrder = {
@@ -129,7 +147,7 @@ export class PaperTrader extends EventEmitter {
     };
 
     this.orders.push(order);
-    await this.updatePosition(order);
+    await this.updatePosition(order, params.context);
 
     // PERSIST TO DATABASE
     if (order.side === "BUY") {
@@ -184,10 +202,14 @@ export class PaperTrader extends EventEmitter {
     this.emit("order_update", order);
     this.emit("portfolio_update", this.getAllPositions());
 
+    if (params.side === "SELL") {
+      this.exitingPositions.delete(params.symbol);
+    }
+
     return { success: true, orderId };
   }
 
-  private async updatePosition(order: TradeOrder) {
+  private async updatePosition(order: TradeOrder, context?: TradeContext) {
     const existing = this.positions.get(order.symbol);
 
     if (order.side === "BUY") {
@@ -196,6 +218,9 @@ export class PaperTrader extends EventEmitter {
         const totalCost = (existing.avgEntryPrice * existing.quantity) + (order.price! * order.quantity);
         existing.avgEntryPrice = totalCost / totalQty;
         existing.quantity = totalQty;
+        // Update SL/Target if new context provided
+        if (context?.aiStopLoss) existing.aiStopLoss = context.aiStopLoss;
+        if (context?.aiTarget) existing.aiTarget = context.aiTarget;
       } else {
         this.positions.set(order.symbol, {
           symbol: order.symbol,
@@ -206,6 +231,8 @@ export class PaperTrader extends EventEmitter {
           currentPrice: order.price!,
           unrealizedPnL: 0,
           realizedPnL: 0,
+          aiStopLoss: context?.aiStopLoss,
+          aiTarget: context?.aiTarget,
           timestamp: new Date(),
         });
       }
@@ -242,10 +269,10 @@ export class PaperTrader extends EventEmitter {
         changed = true;
 
         // Automated Exit Monitoring
-        if (pos.side === "BUY") {
+        if (pos.side === "BUY" && !this.exitingPositions.has(symbol)) {
           if (pos.aiStopLoss && price <= pos.aiStopLoss) {
             console.log(`[EXIT] Stop-Loss hit for ${symbol} @ ${price} (SL: ${pos.aiStopLoss})`);
-            this.placeOrder({
+            await this.placeOrder({
               symbol: pos.symbol,
               token: pos.token,
               side: "SELL",
@@ -254,7 +281,7 @@ export class PaperTrader extends EventEmitter {
             });
           } else if (pos.aiTarget && price >= pos.aiTarget) {
             console.log(`[EXIT] Target reached for ${symbol} @ ${price} (Target: ${pos.aiTarget})`);
-            this.placeOrder({
+            await this.placeOrder({
               symbol: pos.symbol,
               token: pos.token,
               side: "SELL",

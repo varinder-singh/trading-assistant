@@ -7,6 +7,7 @@ import { analyzeSentiment } from "./sentiment.js";
 import { getOptionChain } from "../data/kite-options.js";
 import { analyzeOptions } from "./kite-options.js";
 import { getIndiaVix } from "../data/vix.js";
+import { getYesterdayClosingOI } from "../data/kite-historical.js";
 import type { Analysis, TradePlan } from "../types/analysis.js"
 import type { MarketMode } from "../types/mode.js"
 
@@ -19,48 +20,10 @@ function logSection(title: string) {
   console.log(`${divider}\n`)
 }
 
-export function generateTradePlan(tf: FifteenMinuteCandle, mode: "intraday" | "swing") {
-  const { trend, price, vwap, resistance, support, rsi, vwapPosition } = tf;
+// Cache for baseline data
+let yesterdayOiCache: Map<number, number> | undefined = undefined;
+let lastCacheSymbol: string | null = null;
 
-  // Simplified logic, can be expanded
-  if (mode === "swing") {
-    if (trend === "up" && vwapPosition === "above") {
-      return {
-        decision: "BUY",
-        entry: price,
-        stopLoss: support,
-        targets: [resistance, resistance + (resistance - support)],
-      };
-    } else if (trend === "down" && vwapPosition === "below") {
-      return {
-        decision: "SELL",
-        entry: price,
-        stopLoss: resistance,
-        targets: [support, support - (resistance - support)],
-      };
-    }
-  } else { // Intraday
-    if (trend === "up" && rsi < 60) {
-      return {
-        decision: "BUY",
-        entry: price,
-        stopLoss: vwap,
-        targets: [resistance],
-      };
-    } else if (trend === "down" && rsi > 40) {
-      return {
-        decision: "SELL",
-        entry: price,
-        stopLoss: vwap,
-        targets: [support],
-      };
-    }
-  }
-  
-  return {
-    decision: "NEUTRAL"
-  }
-}
 export async function runAnalysis(symbol: string, mode: "intraday" | "swing", liveContext?: any, previousDecision?: any) {
   const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
 
@@ -83,15 +46,22 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
       ...tf15m
   }
 
-  generateTradePlan(full15mAnalysis, mode)
-
   const sentiment = await analyzeSentiment(headlines)
 
   const { quotes, finalOptions } = kiteData
-  const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price)
+
+  // Establish Baseline Yesterday OI
+  if (!yesterdayOiCache || lastCacheSymbol !== symbol) {
+    const tokens = finalOptions.map(opt => opt.instrument_token).filter((t): t is number => !!t)
+    yesterdayOiCache = await getYesterdayClosingOI(tokens)
+    lastCacheSymbol = symbol
+  }
+
+  // Analyze Options with 5m COI Shift and Buildup States
+  const intervalMins = Number(process.env.OI_SHIFT_INTERVAL_MINS || 5)
+  const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price, yesterdayOiCache, intervalMins)
   
   const aiDecision = await analyzeWithAI({
-...
     tf15m,
     tf5m,
     sentiment,
@@ -135,5 +105,5 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
   console.log(`Resistance: ${tf15m.resistance.toFixed(2)}`)
   console.log(`Support: ${tf15m.support.toFixed(2)}`)
 
-  return { tf15m, tf5m, aiDecision, vix, sentiment }
+  return { tf15m, tf5m, aiDecision, vix, sentiment, optionsAnalysis: optionsAnalysisZerodha }
 }
