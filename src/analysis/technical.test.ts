@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { analyzeTechnical, analyzeDualTimeframe } from './technical.js'
+import { analyzeTechnical, analyzeMultiTimeframe } from './technical.js'
 import * as trend from '../indicators/trend.js'
 import * as vwap from '../indicators/vwap.js'
 import * as rsi from '../indicators/rsi.js'
@@ -49,16 +49,19 @@ describe('analyzeTechnical', () => {
   })
 })
 
-describe('analyzeDualTimeframe', () => {
-  it('should analyze both timeframes', () => {
-    const c15 = [{ high: 100, low: 90, close: 95, volume: 10, time: 1, open: 95 }]
-    const c5 = [{ high: 50, low: 40, close: 45, volume: 5, time: 2, open: 45 }]
+describe('analyzeMultiTimeframe', () => {
+  it('should analyze all three timeframes', () => {
+    const c1h = [{ high: 200, low: 180, close: 190, volume: 100, time: 1, open: 185 }]
+    const c15m = [{ high: 100, low: 90, close: 95, volume: 10, time: 2, open: 95 }]
+    const c3m = [{ high: 50, low: 40, close: 45, volume: 5, time: 3, open: 45 }]
 
-    const result = analyzeDualTimeframe(c15, c5)
+    const result = analyzeMultiTimeframe(c1h, c15m, c3m)
 
+    expect(result.tf1h).toBeDefined()
     expect(result.tf15m).toBeDefined()
-    expect(result.tf5m).toBeDefined()
+    expect(result.tf3m).toBeDefined()
+    expect(result.tf1h.timeframe).toBe('1h')
     expect(result.tf15m.timeframe).toBe('15m')
-    expect(result.tf5m.timeframe).toBe('5m')
+    expect(result.tf3m.timeframe).toBe('3m')
   })
 })

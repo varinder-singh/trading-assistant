@@ -10,6 +10,7 @@ export interface TradeContext {
   trend15m?: string;
   aiStopLoss?: number;
   aiTarget?: number;
+  aiStrike?: number;
 }
 
 export class PaperTrader extends EventEmitter {
@@ -18,6 +19,7 @@ export class PaperTrader extends EventEmitter {
   private initialized = false;
   private initializationPromise: Promise<void> | null = null;
   private exitingPositions: Set<string> = new Set();
+  public maxConcurrentPositions = Number(process.env.MAX_PAPER_POSITIONS || 2);
 
   constructor() {
     super();
@@ -44,6 +46,7 @@ export class PaperTrader extends EventEmitter {
             this.positions.set(trade.symbol, {
               symbol: trade.symbol,
               token: trade.token || 0,
+              strike: trade.strike_price || undefined,
               side: "BUY",
               quantity: trade.quantity,
               avgEntryPrice: trade.entry_price,
@@ -111,6 +114,7 @@ export class PaperTrader extends EventEmitter {
         side: "SELL",
         quantity: pos.quantity,
         price: pos.currentPrice,
+        context: { aiReasoning: "Market Square-off" }
       });
     }
   }
@@ -118,12 +122,40 @@ export class PaperTrader extends EventEmitter {
   async placeOrder(params: {
     symbol: string;
     token: number;
+    strike?: number;
     side: OrderSide;
     quantity: number;
     price: number;
     context?: TradeContext;
   }): Promise<TradeResponse> {
     await this.initialize();
+
+    if (params.side === "BUY") {
+      // 1. Check Max Concurrent Positions
+      if (this.positions.size >= this.maxConcurrentPositions) {
+        const msg = `❌ [PAPER TRADE] Limit reached: ${this.positions.size}/${this.maxConcurrentPositions} active positions. Skipping ${params.symbol}`;
+        console.log(msg);
+        return { success: false, error: "Maximum concurrent positions reached" };
+      }
+
+      // 2. Check if already have a position for this symbol
+      if (this.positions.has(params.symbol)) {
+        const msg = `❌ [PAPER TRADE] Position already exists for ${params.symbol}. Skipping duplicate entry.`;
+        console.log(msg);
+        return { success: false, error: "Position already exists for this symbol" };
+      }
+
+      // 3. Check if already have a position for this strike level
+      const strike = params.strike || params.context?.aiStrike;
+      if (strike) {
+        const existingStrike = Array.from(this.positions.values()).find(p => p.strike === strike);
+        if (existingStrike) {
+          const msg = `❌ [PAPER TRADE] Position already exists for strike ${strike} (${existingStrike.symbol}). Skipping duplicate level entry.`;
+          console.log(msg);
+          return { success: false, error: `Position already exists for strike ${strike}` };
+        }
+      }
+    }
 
     if (params.side === "SELL") {
       if (this.exitingPositions.has(params.symbol)) {
@@ -138,6 +170,7 @@ export class PaperTrader extends EventEmitter {
       id: orderId,
       symbol: params.symbol,
       token: params.token,
+      strike: params.strike || params.context?.aiStrike,
       side: params.side,
       quantity: params.quantity,
       price: params.price,
@@ -157,6 +190,7 @@ export class PaperTrader extends EventEmitter {
         side: "BUY",
         quantity: order.quantity,
         entry_price: order.price!,
+        strike_price: order.strike || null,
         ai_reasoning: params.context?.aiReasoning || null,
         ai_confidence: params.context?.aiConfidence || null,
         vix_level: params.context?.vixLevel || null,
@@ -221,10 +255,12 @@ export class PaperTrader extends EventEmitter {
         // Update SL/Target if new context provided
         if (context?.aiStopLoss) existing.aiStopLoss = context.aiStopLoss;
         if (context?.aiTarget) existing.aiTarget = context.aiTarget;
+        if (order.strike) existing.strike = order.strike;
       } else {
         this.positions.set(order.symbol, {
           symbol: order.symbol,
           token: order.token,
+          strike: order.strike,
           side: "BUY",
           quantity: order.quantity,
           avgEntryPrice: order.price!,
@@ -248,7 +284,7 @@ export class PaperTrader extends EventEmitter {
         const openTrades = await tradeRepo.getOpenTrades();
         const targetTrade = openTrades.find(t => t.symbol === order.symbol);
         if (targetTrade) {
-          await tradeRepo.closeTrade(targetTrade.id, order.price!).catch(err => console.error("❌ Failed to close trade in DB:", err));
+          await tradeRepo.closeTrade(targetTrade.id, order.price!, context?.aiReasoning).catch(err => console.error("❌ Failed to close trade in DB:", err));
         }
 
         if (existing.quantity <= 0) {
@@ -277,7 +313,8 @@ export class PaperTrader extends EventEmitter {
               token: pos.token,
               side: "SELL",
               quantity: pos.quantity,
-              price: price
+              price: price,
+              context: { aiReasoning: "Stop-Loss hit" }
             });
           } else if (pos.aiTarget && price >= pos.aiTarget) {
             console.log(`[EXIT] Target reached for ${symbol} @ ${price} (Target: ${pos.aiTarget})`);
@@ -286,7 +323,8 @@ export class PaperTrader extends EventEmitter {
               token: pos.token,
               side: "SELL",
               quantity: pos.quantity,
-              price: price
+              price: price,
+              context: { aiReasoning: "Target reached" }
             });
           }
         }

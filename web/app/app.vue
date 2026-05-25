@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { Search, TrendingUp, TrendingDown, AlertCircle, Info, Activity, ShieldCheck, Target, Zap, X } from '@lucide/vue'
+import { Search, TrendingUp, TrendingDown, AlertCircle, Info, Activity, ShieldCheck, Target, Zap, X, LogOut } from '@lucide/vue'
 import { createChart, AreaSeries, CrosshairMode } from 'lightweight-charts'
 import type { IChartApi, ISeriesApi } from 'lightweight-charts'
 
@@ -561,6 +561,8 @@ onUnmounted(() => {
                   <th class="px-6 py-4">Symbol</th>
                   <th class="px-6 py-4">Side</th>
                   <th class="px-6 py-4 text-right">Entry</th>
+                  <th class="px-6 py-4 text-right">Target</th>
+                  <th class="px-6 py-4 text-right">SL</th>
                   <th class="px-6 py-4 text-right">Exit</th>
                   <th class="px-6 py-4 text-right">PnL</th>
                   <th class="px-6 py-4 text-center">Status</th>
@@ -585,6 +587,12 @@ onUnmounted(() => {
                     <td class="px-6 py-4 text-right font-mono text-sm font-bold text-gray-600">
                       {{ trade.entry_price.toFixed(2) }}
                     </td>
+                    <td class="px-6 py-4 text-right font-mono text-sm font-bold text-green-600">
+                      {{ trade.ai_target ? trade.ai_target.toFixed(2) : '—' }}
+                    </td>
+                    <td class="px-6 py-4 text-right font-mono text-sm font-bold text-red-600">
+                      {{ trade.ai_stop_loss ? trade.ai_stop_loss.toFixed(2) : '—' }}
+                    </td>
                     <td class="px-6 py-4 text-right font-mono text-sm font-bold text-gray-600">
                       {{ trade.exit_price ? trade.exit_price.toFixed(2) : '—' }}
                     </td>
@@ -605,16 +613,28 @@ onUnmounted(() => {
                   </tr>
                   <!-- Expandable AI Rationale Row -->
                   <tr v-if="expandedTradeId === trade.id" class="bg-indigo-50/30">
-                    <td colspan="8" class="px-8 py-6">
+                    <td colspan="10" class="px-8 py-6">
                       <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
-                        <div class="md:col-span-2 space-y-4">
-                          <h4 class="text-[10px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
-                            <ShieldCheck class="w-3 h-3" />
-                            AI Reasoning at Entry
-                          </h4>
-                          <p class="text-sm text-gray-700 leading-relaxed italic border-l-2 border-indigo-200 pl-4 bg-white/50 p-3 rounded-r-lg">
-                            "{{ trade.ai_reasoning || 'No reasoning recorded.' }}"
-                          </p>
+                        <div class="md:col-span-2 space-y-6">
+                          <div>
+                            <h4 class="text-[10px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2 mb-2">
+                              <ShieldCheck class="w-3 h-3" />
+                              AI Reasoning at Entry
+                            </h4>
+                            <p class="text-sm text-gray-700 leading-relaxed italic border-l-2 border-indigo-200 pl-4 bg-white/50 p-3 rounded-r-lg">
+                              "{{ trade.ai_reasoning || 'No reasoning recorded.' }}"
+                            </p>
+                          </div>
+                          
+                          <div v-if="trade.status === 'CLOSED'" class="pt-2 border-t border-indigo-100/50">
+                            <h4 class="text-[10px] font-black text-red-400 uppercase tracking-widest flex items-center gap-2 mb-2">
+                              <LogOut class="w-3 h-3" />
+                              Exit Reason
+                            </h4>
+                            <p class="text-sm font-bold text-gray-900 bg-white/50 p-3 rounded-lg inline-block border border-red-100/50">
+                              {{ trade.exit_reason || 'Manual Exit or unknown' }}
+                            </p>
+                          </div>
                         </div>
                         <div class="space-y-4">
                           <h4 class="text-[10px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">

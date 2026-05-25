@@ -1,6 +1,6 @@
 import type { FifteenMinuteCandle } from "../types/analysis.js";
-import { getDualTimeframeCandles } from "../data/yahoo.js";
-import { analyzeDualTimeframe } from "./technical.js";
+import { getMultiTimeframeCandles } from "../data/yahoo.js";
+import { analyzeMultiTimeframe } from "./technical.js";
 import { analyzeWithAI } from "../ai/llm.js";
 import { getNews } from "../data/news.js";
 import { analyzeSentiment } from "./sentiment.js";
@@ -28,17 +28,17 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
   const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
 
   const [candlesData, headlines, vix, kiteData] = await Promise.all([
-    getDualTimeframeCandles(ticker),
+    getMultiTimeframeCandles(ticker),
     getNews(symbol),
     getIndiaVix(),
     getOptionChain(symbol),
   ])
 
-  const { candles15m, candles5m } = candlesData
+  const { candles1h, candles15m, candles3m } = candlesData
   if (candles15m.length === 0) {
     throw new Error("No 15-minute candles found.")
   }
-  const { tf15m, tf5m } = analyzeDualTimeframe(candles15m, candles5m)
+  const { tf1h, tf15m, tf3m } = analyzeMultiTimeframe(candles1h, candles15m, candles3m)
 
   const last15mCandle = candles15m[candles15m.length - 1]!
   const full15mAnalysis: FifteenMinuteCandle = {
@@ -62,8 +62,9 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
   const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price, yesterdayOiCache, intervalMins)
   
   const aiDecision = await analyzeWithAI({
+    tf1h,
     tf15m,
-    tf5m,
+    tf3m,
     sentiment,
     optionsAnalysisZerodha,
     vix,
@@ -98,21 +99,24 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
   console.log(`SL: ${aiDecision.stopLoss}`)
   console.log(`Targets: ${aiDecision.targets?.join(", ")}`)
 
-  logSection("📊 Dual Timeframe Analysis")
+  logSection("📊 Multi Timeframe Analysis")
   console.log(`Current Price: ${tf15m.price}`)
-  console.log(`Trend: ${tf15m.trend}`)
-  console.log(`VWAP: ${tf15m.vwap.toFixed(2)} (${tf15m.vwapPosition})`)
-  console.log(`Resistance: ${tf15m.resistance.toFixed(2)}`)
-  console.log(`Support: ${tf15m.support.toFixed(2)}`)
+  console.log(`Macro Trend (1H): ${tf1h.trend}`)
+  console.log(`Intraday Trend (15m): ${tf15m.trend}`)
+  console.log(`VWAP (15m): ${tf15m.vwap.toFixed(2)} (${tf15m.vwapPosition})`)
+  console.log(`Resistance (15m): ${tf15m.resistance.toFixed(2)}`)
+  console.log(`Support (15m): ${tf15m.support.toFixed(2)}`)
 
   return { 
+    tf1h,
     tf15m, 
-    tf5m, 
+    tf3m, 
     aiDecision, 
     vix, 
     sentiment, 
     optionsAnalysis: optionsAnalysisZerodha,
-    candles15m: candles15m.slice(-100), // Return last 100 for context
-    candles5m: candles5m.slice(-100) 
+    candles1h: candles1h.slice(-100),
+    candles15m: candles15m.slice(-100),
+    candles3m: candles3m.slice(-100) 
   }
 }

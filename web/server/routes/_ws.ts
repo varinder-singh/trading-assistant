@@ -138,12 +138,14 @@ export default defineWebSocketHandler({
                 await paperTrader.placeOrder({
                   symbol: option.symbol,
                   token: option.token,
+                  strike: decision.strike,
                   side: "BUY",
                   quantity: 1,
                   price: entryPrice,
                   context: {
                     aiReasoning: decision.reason,
                     aiConfidence: decision.confidence,
+                    aiStrike: decision.strike,
                     vixLevel: vix.current,
                     rsiLevel: tf.rsi,
                     trend15m: tf.trend,
