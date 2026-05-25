@@ -6,6 +6,7 @@ export interface TradeOrder {
   id: string;
   symbol: string;
   token: number;
+  strike?: number;
   side: OrderSide;
   quantity: number;
   price?: number;
@@ -17,6 +18,7 @@ export interface TradeOrder {
 export interface PaperPosition {
   symbol: string;
   token: number;
+  strike?: number;
   side: OrderSide;
   quantity: number;
   avgEntryPrice: number;

@@ -17,6 +17,7 @@
     "dashboard:dev": "cd web && npm run dev",
     "dashboard:build": "cd web && npm run build",
     "db:migrate": "NODE_OPTIONS='--no-warnings' tsx src/db/migrate.ts",
+    "db:close-all": "NODE_OPTIONS='--no-warnings' tsx src/scripts/close-all-trades.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"

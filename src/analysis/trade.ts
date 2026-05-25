@@ -1,12 +1,13 @@
 import type { FifteenMinuteCandle } from "../types/analysis.js";
-import { getDualTimeframeCandles } from "../data/yahoo.js";
-import { analyzeDualTimeframe } from "./technical.js";
+import { getMultiTimeframeCandles } from "../data/yahoo.js";
+import { analyzeMultiTimeframe } from "./technical.js";
 import { analyzeWithAI } from "../ai/llm.js";
 import { getNews } from "../data/news.js";
 import { analyzeSentiment } from "./sentiment.js";
 import { getOptionChain } from "../data/kite-options.js";
 import { analyzeOptions } from "./kite-options.js";
 import { getIndiaVix } from "../data/vix.js";
+import { getYesterdayClosingOI } from "../data/kite-historical.js";
 import type { Analysis, TradePlan } from "../types/analysis.js"
 import type { MarketMode } from "../types/mode.js"
 
@@ -19,63 +20,25 @@ function logSection(title: string) {
   console.log(`${divider}\n`)
 }
 
-export function generateTradePlan(tf: FifteenMinuteCandle, mode: "intraday" | "swing") {
-  const { trend, price, vwap, resistance, support, rsi, vwapPosition } = tf;
+// Cache for baseline data
+let yesterdayOiCache: Map<number, number> | undefined = undefined;
+let lastCacheSymbol: string | null = null;
 
-  // Simplified logic, can be expanded
-  if (mode === "swing") {
-    if (trend === "up" && vwapPosition === "above") {
-      return {
-        decision: "BUY",
-        entry: price,
-        stopLoss: support,
-        targets: [resistance, resistance + (resistance - support)],
-      };
-    } else if (trend === "down" && vwapPosition === "below") {
-      return {
-        decision: "SELL",
-        entry: price,
-        stopLoss: resistance,
-        targets: [support, support - (resistance - support)],
-      };
-    }
-  } else { // Intraday
-    if (trend === "up" && rsi < 60) {
-      return {
-        decision: "BUY",
-        entry: price,
-        stopLoss: vwap,
-        targets: [resistance],
-      };
-    } else if (trend === "down" && rsi > 40) {
-      return {
-        decision: "SELL",
-        entry: price,
-        stopLoss: vwap,
-        targets: [support],
-      };
-    }
-  }
-  
-  return {
-    decision: "NEUTRAL"
-  }
-}
 export async function runAnalysis(symbol: string, mode: "intraday" | "swing", liveContext?: any, previousDecision?: any) {
   const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
 
   const [candlesData, headlines, vix, kiteData] = await Promise.all([
-    getDualTimeframeCandles(ticker),
+    getMultiTimeframeCandles(ticker),
     getNews(symbol),
     getIndiaVix(),
     getOptionChain(symbol),
   ])
 
-  const { candles15m, candles5m } = candlesData
+  const { candles1h, candles15m, candles3m } = candlesData
   if (candles15m.length === 0) {
     throw new Error("No 15-minute candles found.")
   }
-  const { tf15m, tf5m } = analyzeDualTimeframe(candles15m, candles5m)
+  const { tf1h, tf15m, tf3m } = analyzeMultiTimeframe(candles1h, candles15m, candles3m)
 
   const last15mCandle = candles15m[candles15m.length - 1]!
   const full15mAnalysis: FifteenMinuteCandle = {
@@ -83,17 +46,25 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
       ...tf15m
   }
 
-  generateTradePlan(full15mAnalysis, mode)
-
   const sentiment = await analyzeSentiment(headlines)
 
   const { quotes, finalOptions } = kiteData
-  const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price)
+
+  // Establish Baseline Yesterday OI
+  if (!yesterdayOiCache || lastCacheSymbol !== symbol) {
+    const tokens = finalOptions.map(opt => opt.instrument_token).filter((t): t is number => !!t)
+    yesterdayOiCache = await getYesterdayClosingOI(tokens)
+    lastCacheSymbol = symbol
+  }
+
+  // Analyze Options with 5m COI Shift and Buildup States
+  const intervalMins = Number(process.env.OI_SHIFT_INTERVAL_MINS || 5)
+  const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price, yesterdayOiCache, intervalMins)
   
   const aiDecision = await analyzeWithAI({
-...
+    tf1h,
     tf15m,
-    tf5m,
+    tf3m,
     sentiment,
     optionsAnalysisZerodha,
     vix,
@@ -128,12 +99,24 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
   console.log(`SL: ${aiDecision.stopLoss}`)
   console.log(`Targets: ${aiDecision.targets?.join(", ")}`)
 
-  logSection("📊 Dual Timeframe Analysis")
+  logSection("📊 Multi Timeframe Analysis")
   console.log(`Current Price: ${tf15m.price}`)
-  console.log(`Trend: ${tf15m.trend}`)
-  console.log(`VWAP: ${tf15m.vwap.toFixed(2)} (${tf15m.vwapPosition})`)
-  console.log(`Resistance: ${tf15m.resistance.toFixed(2)}`)
-  console.log(`Support: ${tf15m.support.toFixed(2)}`)
+  console.log(`Macro Trend (1H): ${tf1h.trend}`)
+  console.log(`Intraday Trend (15m): ${tf15m.trend}`)
+  console.log(`VWAP (15m): ${tf15m.vwap.toFixed(2)} (${tf15m.vwapPosition})`)
+  console.log(`Resistance (15m): ${tf15m.resistance.toFixed(2)}`)
+  console.log(`Support (15m): ${tf15m.support.toFixed(2)}`)
 
-  return { tf15m, tf5m, aiDecision, vix, sentiment }
+  return { 
+    tf1h,
+    tf15m, 
+    tf3m, 
+    aiDecision, 
+    vix, 
+    sentiment, 
+    optionsAnalysis: optionsAnalysisZerodha,
+    candles1h: candles1h.slice(-100),
+    candles15m: candles15m.slice(-100),
+    candles3m: candles3m.slice(-100) 
+  }
 }

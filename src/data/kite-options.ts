@@ -1,8 +1,9 @@
 import "dotenv/config"
 import { pathToFileURL } from "node:url"
 import type { Instrument } from "kiteconnect"
-import { analyzeOptions, type KiteOptionQuote } from "../analysis/kite-options.js"
+import { analyzeOptions, type KiteOptionQuote, type KiteOptionInstrumentForAnalysis } from "../analysis/kite-options.js"
 import kc from "./kite.js"
+import { getYesterdayClosingOI } from "./kite-historical.js"
 
 type KiteOptionInstrument = Instrument & {
   instrument_type: "CE" | "PE"
@@ -34,9 +35,14 @@ export async function getOptionChain(symbol: string = "NIFTY") {
   const mid = Math.floor(strikes.length / 2)
   const selectedStrikes = strikes.slice(mid - 10, mid + 10)
 
-  const finalOptions = filtered.filter((i) =>
-    selectedStrikes.includes(i.strike)
-  )
+  const finalOptions = filtered
+    .filter((i) => selectedStrikes.includes(i.strike))
+    .map(i => ({
+      instrument_type: i.instrument_type,
+      strike: i.strike,
+      tradingsymbol: i.tradingsymbol,
+      instrument_token: i.instrument_token
+    } as KiteOptionInstrumentForAnalysis))
 
   const symbols = finalOptions.map(
     (i) => `NFO:${i.tradingsymbol}`
@@ -58,19 +64,41 @@ function isDirectRun() {
 }
 
 async function runStandalone() {
-  const { quotes, finalOptions, nearestExpiry, selectedStrikes } = await getOptionChain("NIFTY")
-  const analysis = analyzeOptions(quotes, finalOptions)
+  const symbol = "NIFTY"
+  const underlyingTicker = symbol === "NIFTY" ? "NSE:NIFTY 50" : symbol === "BANKNIFTY" ? "NSE:NIFTY BANK" : symbol
+  
+  console.log(`[Test] Fetching ${symbol} chain and underlying price...`)
+  const [{ quotes, finalOptions, nearestExpiry }, underlyingQuote] = await Promise.all([
+    getOptionChain(symbol),
+    kc.getQuote([underlyingTicker])
+  ])
 
-  console.log("NIFTY option-chain PCR input from Kite")
+  const underlyingPrice = underlyingQuote[underlyingTicker]?.last_price || 0
+  const tokens = finalOptions.map(opt => opt.instrument_token).filter((t): t is number => !!t)
+  
+  console.log(`[Test] Fetching yesterday's closing OI for ${tokens.length} contracts...`)
+  const yesterdayOiMap = await getYesterdayClosingOI(tokens)
+
+  const analysis = analyzeOptions(quotes, finalOptions, underlyingPrice, yesterdayOiMap)
+
+  console.log("\n" + "=".repeat(50))
+  console.log(`${symbol} Option-Chain Analysis (Standalone Test)`)
+  console.log("=".repeat(50))
+  console.log(`Underlying Price: ${underlyingPrice.toFixed(2)}`)
   console.log(`Expiry: ${nearestExpiry}`)
-  console.log(`Selected strikes: ${selectedStrikes.join(", ")}`)
-  console.log(`Options fetched: ${finalOptions.length}`)
-  console.log(`Call OI: ${analysis.callOI}`)
-  console.log(`Put OI: ${analysis.putOI}`)
-  console.log(`PCR: ${analysis.pcr} (${analysis.sentiment})`)
-  console.log(`OI Support: ${analysis.support} (max PE OI: ${analysis.maxPutOI})`)
-  console.log(`OI Resistance: ${analysis.resistance} (max CE OI: ${analysis.maxCallOI})`)
-  console.table(analysis.rows)
+  console.log(`ATM Strike: ${analysis.atmStrike}`)
+  console.log(`PCR: ${analysis.pcr} (${analysis.sentiment.toUpperCase()})`)
+  console.log(`Support: ${analysis.support} | Resistance: ${analysis.resistance}`)
+  console.log("-".repeat(50))
+  console.table(analysis.rows.map(r => ({
+    Strike: r.strike,
+    Type: r.type,
+    OI: r.oi.toLocaleString(),
+    'Y-OI': r.yesterdayOi?.toLocaleString() || 'N/A',
+    'COI-Int': r.intervalOi || 0,
+    LTP: r.ltp,
+    State: r.buildup
+  })))
 }
 
 if (isDirectRun()) {

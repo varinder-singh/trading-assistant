@@ -3,6 +3,8 @@ import { detectTrend } from "../indicators/trend.js"
 import { calculateVWAP } from "../indicators/vwap.js"
 import { calculateRSI } from "../indicators/rsi.js"
 
+import { calculateEMA } from "../indicators/ema.js"
+
 export type TechnicalAnalysis = {
   trend: string
   support: number
@@ -12,9 +14,10 @@ export type TechnicalAnalysis = {
   price: number
   rsi: number
   timeframe?: string
+  ema?: Record<string, number>
 }
 
-export function analyzeTechnical(candles: Candle[], timeframe: string = "15m"): TechnicalAnalysis {
+export function analyzeTechnical(candles: Candle[], timeframe: string = "15m", emaPeriods: number[] = []): TechnicalAnalysis {
   if (candles.length === 0) {
     throw new Error("Cannot analyze technical indicators without candles")
   }
@@ -34,6 +37,11 @@ export function analyzeTechnical(candles: Candle[], timeframe: string = "15m"): 
 
   const vwapPosition = last > vwap ? "above" : "below"
 
+  const ema: Record<string, number> = {}
+  for (const period of emaPeriods) {
+    ema[period] = calculateEMA(candles, period)
+  }
+
   return {
     trend,
     support,
@@ -43,15 +51,18 @@ export function analyzeTechnical(candles: Candle[], timeframe: string = "15m"): 
     price: last,
     rsi,
     timeframe,
+    ema,
   }
 }
 
-export function analyzeDualTimeframe(candles15m: Candle[], candles5m: Candle[]) {
-  const analysis15m = analyzeTechnical(candles15m, "15m")
-  const analysis5m = analyzeTechnical(candles5m, "5m")
+export function analyzeMultiTimeframe(candles1h: Candle[], candles15m: Candle[], candles3m: Candle[]) {
+  const tf1h = analyzeTechnical(candles1h, "1h", [50, 200])
+  const tf15m = analyzeTechnical(candles15m, "15m", [9, 21])
+  const tf3m = analyzeTechnical(candles3m, "3m", [9]) // 9 EMA for trigger momentum
 
   return {
-    tf15m: analysis15m,
-    tf5m: analysis5m,
+    tf1h,
+    tf15m,
+    tf3m,
   }
 }

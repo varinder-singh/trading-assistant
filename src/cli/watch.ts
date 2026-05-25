@@ -96,12 +96,14 @@ export const watchCommand = new Command("watch")
           await paperTrader.placeOrder({
             symbol: option.symbol,
             token: option.token,
+            strike: lastDecision.strike,
             side: "BUY",
             quantity: 1, // Default to 1 lot for safety
             price: entryPrice,
             context: {
                 aiReasoning: lastDecision.reason,
                 aiConfidence: lastDecision.confidence,
+                aiStrike: lastDecision.strike,
                 vixLevel: vix.current,
                 rsiLevel: tf.rsi,
                 trend15m: tf.trend,

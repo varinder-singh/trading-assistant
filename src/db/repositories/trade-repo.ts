@@ -25,7 +25,7 @@ export class TradeRepository {
     return id;
   }
 
-  async closeTrade(id: string, exitPrice: number) {
+  async closeTrade(id: string, exitPrice: number, exitReason?: string) {
     const closedAt = new Date().toISOString();
     
     // Fetch the trade to calculate PnL
@@ -48,6 +48,7 @@ export class TradeRepository {
         pnl: pnl,
         status: "CLOSED",
         closed_at: closedAt,
+        exit_reason: exitReason || null,
       })
       .where("id", "=", id)
       .execute();
