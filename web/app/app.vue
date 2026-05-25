@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { Search, TrendingUp, TrendingDown, AlertCircle, Info, Activity, ShieldCheck, Target, Zap, X } from '@lucide/vue'
-import { createChart, LineSeries } from 'lightweight-charts'
+import { createChart, AreaSeries, CrosshairMode } from 'lightweight-charts'
 import type { IChartApi, ISeriesApi } from 'lightweight-charts'
 
 const symbol = ref('NIFTY')
@@ -54,7 +54,7 @@ function toggleTradeExpand(id: string) {
 // Chart Refs
 const chartContainer = ref<HTMLElement | null>(null)
 let chart: IChartApi | null = null
-let lineSeries: ISeriesApi<"Line"> | null = null
+let areaSeries: ISeriesApi<"Area"> | null = null
 let resistanceLine: any = null
 let supportLine: any = null
 
@@ -105,6 +105,20 @@ function connectWebSocket() {
       }
     } else if (msg.type === 'notification') {
       addNotification(msg.data)
+      
+      // Add marker to chart if it's a trade execution
+      if (msg.data.details && areaSeries) {
+        const { side, price } = msg.data.details
+        const markers = areaSeries.getMarkers() || []
+        markers.push({
+          time: Math.floor(Date.now() / 1000) as any,
+          position: side === 'BUY' ? 'belowBar' : 'aboveBar',
+          color: side === 'BUY' ? '#22c55e' : '#ef4444',
+          shape: side === 'BUY' ? 'arrowUp' : 'arrowDown',
+          text: side === 'BUY' ? 'BUY' : 'SELL'
+        })
+        areaSeries.setMarkers(markers)
+      }
     } else if (msg.type === 'market_closed') {
       addNotification({
         title: '🏁 Market Closed',
@@ -176,20 +190,48 @@ function initChart() {
       vertLines: { color: '#f0f0f0' },
       horzLines: { color: '#f0f0f0' },
     },
+    crosshair: {
+      mode: CrosshairMode.Normal,
+    },
+    rightPriceScale: {
+      borderColor: '#f0f0f0',
+      autoScale: true,
+    },
+    timeScale: {
+      borderColor: '#f0f0f0',
+      timeVisible: true,
+      secondsVisible: true,
+    },
     width: chartContainer.value.clientWidth,
-    height: 300,
+    height: 400,
   })
 
-  lineSeries = chart.addSeries(LineSeries, {
-    color: '#4f46e5',
+  areaSeries = chart.addSeries(AreaSeries, {
+    lineColor: '#4f46e5',
+    topColor: 'rgba(79, 70, 229, 0.4)',
+    bottomColor: 'rgba(79, 70, 229, 0.0)',
     lineWidth: 2,
+    priceFormat: {
+      type: 'price',
+      precision: 2,
+      minMove: 0.05,
+    },
   })
+
+  // Pre-load historical data
+  if (analysisResult.value?.candles5m) {
+    const historicalData = analysisResult.value.candles5m.map((c: any) => ({
+      time: c.time as any,
+      value: c.close
+    }))
+    areaSeries.setData(historicalData)
+  }
 
   if (analysisResult.value) {
     const { resistance, support } = analysisResult.value.tf15m
     
     // Custom price lines for levels
-    lineSeries.createPriceLine({
+    areaSeries.createPriceLine({
         price: resistance,
         color: '#ef4444',
         lineWidth: 1,
@@ -198,7 +240,7 @@ function initChart() {
         title: 'RESISTANCE',
     })
 
-    lineSeries.createPriceLine({
+    areaSeries.createPriceLine({
         price: support,
         color: '#22c55e',
         lineWidth: 1,
@@ -210,8 +252,8 @@ function initChart() {
 }
 
 function updateChart(price: number) {
-  if (lineSeries) {
-    lineSeries.update({
+  if (areaSeries) {
+    areaSeries.update({
       time: (Math.floor(Date.now() / 1000) as any),
       value: price
     })

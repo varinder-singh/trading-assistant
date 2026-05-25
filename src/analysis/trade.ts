@@ -105,5 +105,14 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
   console.log(`Resistance: ${tf15m.resistance.toFixed(2)}`)
   console.log(`Support: ${tf15m.support.toFixed(2)}`)
 
-  return { tf15m, tf5m, aiDecision, vix, sentiment, optionsAnalysis: optionsAnalysisZerodha }
+  return { 
+    tf15m, 
+    tf5m, 
+    aiDecision, 
+    vix, 
+    sentiment, 
+    optionsAnalysis: optionsAnalysisZerodha,
+    candles15m: candles15m.slice(-100), // Return last 100 for context
+    candles5m: candles5m.slice(-100) 
+  }
 }

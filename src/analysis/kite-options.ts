@@ -65,11 +65,15 @@ class OITracker {
   }
 
   getSnapshot(minutesAgo: number) {
-    if (this.snapshots.length === 0) return null
-    const targetTime = Date.now() - (minutesAgo * 60 * 1000)
+    if (this.snapshots.length === 0) return null;
+    const targetTime = Date.now() - (minutesAgo * 60 * 1000);
+    
+    // If the oldest snapshot we have is newer than our target, we don't have enough history
+    if (this.snapshots[0].timestamp > targetTime + 30000) return null; // 30s grace
+    
     return this.snapshots.reduce((prev, curr) => 
       Math.abs(curr.timestamp - targetTime) < Math.abs(prev.timestamp - targetTime) ? curr : prev
-    )
+    );
   }
 }
 
