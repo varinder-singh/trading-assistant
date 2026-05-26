@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { TradeOrder, PaperPosition, TradeResponse, OrderSide, OrderType } from "./types.js";
 import { tradeRepo } from "../db/repositories/trade-repo.js";
+import { evaluatePosition } from "../analysis/trade.js";
 
 export interface TradeContext {
   aiReasoning?: string;
@@ -64,6 +65,8 @@ export class PaperTrader extends EventEmitter {
         
         // Start market status monitoring
         this.startMarketMonitor();
+        // Start AI position management
+        this.startPositionManager();
       } catch (err) {
         console.error("[PaperTrader] Failed to initialize:", err);
       } finally {
@@ -78,6 +81,62 @@ export class PaperTrader extends EventEmitter {
     setInterval(() => {
       this.checkMarketStatus();
     }, 60 * 1000); // Check every minute
+  }
+
+  private startPositionManager() {
+    const intervalMins = Number(process.env.POSITION_EVAL_INTERVAL_MINS || 3);
+    console.log(`[Risk Manager] Starting periodic position re-evaluation every ${intervalMins} minutes...`);
+    
+    setInterval(async () => {
+      const positions = this.getAllPositions();
+      if (positions.length === 0) return;
+
+      console.log(`[Risk Manager] Re-evaluating ${positions.length} active positions...`);
+      
+      for (const pos of positions) {
+        try {
+          // Identify underlying symbol (e.g., from NIFTY24MAY24100CE to NIFTY)
+          const symbol = pos.symbol.startsWith("NIFTY") ? "NIFTY" : pos.symbol.startsWith("BANKNIFTY") ? "BANKNIFTY" : pos.symbol;
+          
+          const { decision, marketData } = await evaluatePosition(symbol, pos);
+          
+          if (decision.decision === "EXIT") {
+            console.log(`[Risk Manager] AI signaled EXIT for ${pos.symbol}. Reason: ${decision.reason}`);
+            await this.placeOrder({
+              symbol: pos.symbol,
+              token: pos.token,
+              side: "SELL",
+              quantity: pos.quantity,
+              price: pos.currentPrice,
+              context: { aiReasoning: decision.reason }
+            });
+          } else if (decision.decision === "UPDATE_SL" && decision.newIndexStopLoss) {
+            // TRANSLATE INDEX TRAILING STOP TO PREMIUM
+            const currentIndexPrice = marketData.tf15m.price;
+            
+            // Logic: Calculate how many points the Index SL moved, then apply 50% of that to Option Premium
+            const indexRiskPoints = Math.abs(currentIndexPrice - decision.newIndexStopLoss);
+            const optionRiskPoints = indexRiskPoints * 0.5;
+            
+            const newPremiumSl = pos.currentPrice - optionRiskPoints;
+            const newPremiumTarget = pos.currentPrice + (optionRiskPoints * (decision.riskRewardRatio || 1.5));
+
+            console.log(`[Risk Manager] AI signaled UPDATE_SL for ${pos.symbol}. Index SL: ${decision.newIndexStopLoss} -> Premium SL: ${newPremiumSl.toFixed(2)}`);
+            
+            pos.aiStopLoss = newPremiumSl;
+            pos.aiTarget = newPremiumTarget;
+            
+            this.emit("notification", {
+              title: "🛡️ Trailing Stop Updated",
+              message: `${pos.symbol}: SL moved to ${newPremiumSl.toFixed(2)} based on Index structure`,
+              type: "info"
+            });
+          }
+        } catch (err) {
+          console.error(`[Risk Manager] Failed to re-evaluate position ${pos.symbol}:`, err);
+        }
+      }
+    }, intervalMins * 60 * 1000);
   }
 
   private checkMarketStatus() {
@@ -203,6 +262,20 @@ export class PaperTrader extends EventEmitter {
 
     console.log(`📝 [PAPER TRADE] ${order.side} ${order.quantity}x ${order.symbol} @ ${order.price}`);
     
+    // Safety check: If AI provides an invalid SL (higher than entry for a BUY), 
+    // we should invalidate that SL to prevent an immediate exit loop.
+    const pos = this.positions.get(order.symbol);
+    if (pos && pos.side === "BUY") {
+      if (pos.aiStopLoss && pos.aiStopLoss >= order.price!) {
+        console.warn(`⚠️ [PAPER TRADE] Invalid SL (${pos.aiStopLoss}) for BUY at ${order.price}. Disabling SL for this position to prevent immediate exit.`);
+        pos.aiStopLoss = undefined;
+      }
+      if (pos.aiTarget && pos.aiTarget <= order.price!) {
+        console.warn(`⚠️ [PAPER TRADE] Invalid Target (${pos.aiTarget}) for BUY at ${order.price}. Disabling Target for this position.`);
+        pos.aiTarget = undefined;
+      }
+    }
+
     // Determine notification details
     let title = order.side === "BUY" ? "🚀 Trade Executed" : "✅ Position Closed";
     let type = order.side === "BUY" ? "success" : "info";

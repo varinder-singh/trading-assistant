@@ -1,7 +1,7 @@
 import type { FifteenMinuteCandle } from "../types/analysis.js";
 import { getMultiTimeframeCandles } from "../data/yahoo.js";
 import { analyzeMultiTimeframe } from "./technical.js";
-import { analyzeWithAI } from "../ai/llm.js";
+import { analyzeWithAI, managePositionWithAI } from "../ai/llm.js";
 import { getNews } from "../data/news.js";
 import { analyzeSentiment } from "./sentiment.js";
 import { getOptionChain } from "../data/kite-options.js";
@@ -10,6 +10,7 @@ import { getIndiaVix } from "../data/vix.js";
 import { getYesterdayClosingOI } from "../data/kite-historical.js";
 import type { Analysis, TradePlan } from "../types/analysis.js"
 import type { MarketMode } from "../types/mode.js"
+import type { PaperPosition } from "../execution/types.js"
 
 
 const divider = "═".repeat(50)
@@ -95,9 +96,8 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
   console.log(`Setup: ${aiDecision.setup ?? "N/A"}`)
   console.log(`Reason: ${aiDecision.reason}`)
   console.log(`Confidence: ${aiDecision.confidence}`)
-  console.log(`Entry: ${aiDecision.entry}`)
-  console.log(`SL: ${aiDecision.stopLoss}`)
-  console.log(`Targets: ${aiDecision.targets?.join(", ")}`)
+  console.log(`Index SL: ${aiDecision.indexStopLoss}`)
+  console.log(`R:R Ratio: ${aiDecision.riskRewardRatio}`)
 
   logSection("📊 Multi Timeframe Analysis")
   console.log(`Current Price: ${tf15m.price}`)
@@ -119,4 +119,39 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
     candles15m: candles15m.slice(-100),
     candles3m: candles3m.slice(-100) 
   }
+}
+
+export async function evaluatePosition(symbol: string, openPosition: PaperPosition) {
+  const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
+
+  const [candlesData, vix, kiteData] = await Promise.all([
+    getMultiTimeframeCandles(ticker),
+    getIndiaVix(),
+    getOptionChain(symbol),
+  ])
+
+  const { candles1h, candles15m, candles3m } = candlesData
+  const { tf1h, tf15m, tf3m } = analyzeMultiTimeframe(candles1h, candles15m, candles3m)
+
+  const { quotes, finalOptions } = kiteData
+
+  // Analyze Options
+  const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price, yesterdayOiCache, 5)
+
+  const marketData = {
+    tf1h,
+    tf15m,
+    tf3m,
+    optionsAnalysisZerodha,
+    vix,
+  }
+
+  const decision = await managePositionWithAI({
+    openPosition,
+    marketData,
+  })
+
+  console.log(`[Risk Manager] AI Decision for ${openPosition.symbol}: ${decision.decision} - ${decision.reason}`);
+  
+  return { decision, marketData };
 }

@@ -102,11 +102,12 @@ ${JSON.stringify(cleanedInput, null, 2)}
   "strike": <number or null>,
   "reason": "<2-3 sentences citing technicals AND specific OI/buildup signals>",
   "confidence": <0.0 to 1.0>,
-  "entry": <number or null>,
-  "stopLoss": <number or null>,
-  "targets": [<number>, <number>],
+  "indexStopLoss": <number - ACTUAL INDEX LEVEL FOR INVALIDATION>,
+  "riskRewardRatio": <number - e.g. 1.5 or 2.0>,
   "riskReward": <number or null>
 }
+
+IMPORTANT: Do NOT attempt to guess the option premium price. Identify the structural support/resistance on the INDEX chart (Tier 1/Tier 2) and use that as the indexStopLoss.
 `
     }
 
@@ -121,7 +122,7 @@ ${JSON.stringify(cleanedInput, null, 2)}
     ]);
 
     const cleanedText = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
-    
+
     try {
       return JSON.parse(cleanedText)
     } catch (parseError) {
@@ -133,3 +134,61 @@ ${JSON.stringify(cleanedInput, null, 2)}
     return { decision: "NO_TRADE", reason: "Internal AI error", confidence: 0 }
   }
 }
+
+const POSITION_MANAGEMENT_RULES = `
+## POSITION MANAGEMENT FRAMEWORK (RISK FIRST)
+
+You are managing an ACTIVE open position. Your goal is to protect capital and maximize gains using live market data.
+
+### EXIT CRITERIA (Decision: "EXIT")
+- Trend Reversal: Price breaks below 21 EMA or VWAP (for Longs) or above (for Shorts).
+- Liquidity Sweep: Price reaches a major resistance/support zone and shows a CHoCH (Change of Character) rejection.
+- Adverse OI Flow: Significant Long Unwinding (Price ↓, OI ↓) or Short Buildup (Price ↓, OI ↑) for Call options.
+- Momentum Fade: RSI shows clear bearish divergence at highs.
+
+### TRAILING CRITERIA (Decision: "UPDATE_SL")
+- Strong Momentum: If price moves significantly in favor, trail the Index Stop-Loss to the most recent 3m or 15m structural swing low/high.
+- Profit Protection: If price reaches Target 1, move Index Stop-Loss to Entry Price (Break-Even).
+- Dynamic Targets: If institutional flow (COI) remains extremely strong (Short Covering), revise R:R ratios higher.
+
+### HOLD CRITERIA (Decision: "HOLD")
+- Consolidation: Price is basing above key EMAs/VWAP with no adverse OI flow.
+- Trend Continuation: Market structure continues to make Higher Highs/Lows.
+`
+
+export async function managePositionWithAI(input: any) {
+  console.log("[AI] Starting managePositionWithAI...");
+  const systemMessage = "You are a professional NSE Risk Manager. Your sole task is to manage an OPEN options position based on live technicals and OI flow. You must decide whether to HOLD, EXIT, or UPDATE_SL. Respond with valid JSON only." + POSITION_MANAGEMENT_RULES;
+
+  const userPrompt = `Evaluate the following open position against current market data:
+
+## OPEN POSITION
+${JSON.stringify(input.openPosition, null, 2)}
+
+## CURRENT MARKET DATA
+${JSON.stringify(input.marketData, null, 2)}
+
+## Required Output (JSON only)
+{
+  "decision": "HOLD" | "EXIT" | "UPDATE_SL",
+  "reason": "<1-2 sentences explaining the risk/momentum shift>",
+  "newIndexStopLoss": <number or null>,
+  "riskRewardRatio": <number or null>,
+  "confidence": <0.0 to 1.0>
+}
+`;
+  try {
+  const provider = getLLMProvider();
+  const text = await provider.chat([
+    { role: "system", content: systemMessage },
+    { role: "user", content: userPrompt },
+  ]);
+
+  const cleanedText = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
+  return JSON.parse(cleanedText);
+  } catch (error: any) {
+  console.error("[AI] Error in managePositionWithAI:", error);
+  return { decision: "HOLD", reason: "AI re-evaluation failed, holding as safety fallback", confidence: 0 };
+  }
+  }
+
