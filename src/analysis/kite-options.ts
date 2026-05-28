@@ -69,7 +69,8 @@ class OITracker {
     const targetTime = Date.now() - (minutesAgo * 60 * 1000);
     
     // If the oldest snapshot we have is newer than our target, we don't have enough history
-    if (this.snapshots[0].timestamp > targetTime + 30000) return null; // 30s grace
+    const first = this.snapshots[0];
+    if (first && first.timestamp > targetTime + 30000) return null; // 30s grace
     
     return this.snapshots.reduce((prev, curr) => 
       Math.abs(curr.timestamp - targetTime) < Math.abs(prev.timestamp - targetTime) ? curr : prev
@@ -135,17 +136,18 @@ export function analyzeOptions(
     // 3. Yesterday's Comparison
     const yOi = inst.instrument_token ? yesterdayOiMap?.get(inst.instrument_token) : undefined
 
-    rows.push({
+    const row: KiteOptionOiRow = {
       strike: inst.strike,
       type: inst.instrument_type,
       symbol: inst.tradingsymbol,
       oi: currentOi,
       ltp: ltp,
       volume: q.volume ?? 0,
-      yesterdayOi: yOi,
       intervalOi: coi,
       buildup
-    })
+    }
+    if (yOi !== undefined) row.yesterdayOi = yOi;
+    rows.push(row)
 
     if (inst.instrument_type === "CE") {
       callOI += currentOi

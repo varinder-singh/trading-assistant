@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { TradeOrder, PaperPosition, TradeResponse, OrderSide, OrderType } from "./types.js";
 import { tradeRepo } from "../db/repositories/trade-repo.js";
+import { evaluatePosition } from "../analysis/trade.js";
 
 export interface TradeContext {
   aiReasoning?: string;
@@ -11,6 +12,8 @@ export interface TradeContext {
   aiStopLoss?: number;
   aiTarget?: number;
   aiStrike?: number;
+  aiSetup?: string;
+  strategyContext?: any;
 }
 
 export class PaperTrader extends EventEmitter {
@@ -43,20 +46,22 @@ export class PaperTrader extends EventEmitter {
             existing.avgEntryPrice = totalCost / totalQty;
             existing.quantity = totalQty;
           } else {
-            this.positions.set(trade.symbol, {
+            const pos: PaperPosition = {
               symbol: trade.symbol,
               token: trade.token || 0,
-              strike: trade.strike_price || undefined,
               side: "BUY",
               quantity: trade.quantity,
               avgEntryPrice: trade.entry_price,
               currentPrice: trade.entry_price,
               unrealizedPnL: 0,
               realizedPnL: 0,
-              aiStopLoss: trade.ai_stop_loss || undefined,
-              aiTarget: trade.ai_target || undefined,
               timestamp: new Date(trade.opened_at),
-            });
+            };
+            if (trade.strike_price) pos.strike = trade.strike_price;
+            if (trade.ai_stop_loss) pos.aiStopLoss = trade.ai_stop_loss;
+            if (trade.ai_target) pos.aiTarget = trade.ai_target;
+            
+            this.positions.set(trade.symbol, pos);
           }
         }
         this.initialized = true;
@@ -64,6 +69,8 @@ export class PaperTrader extends EventEmitter {
         
         // Start market status monitoring
         this.startMarketMonitor();
+        // Start AI position management
+        this.startPositionManager();
       } catch (err) {
         console.error("[PaperTrader] Failed to initialize:", err);
       } finally {
@@ -78,6 +85,62 @@ export class PaperTrader extends EventEmitter {
     setInterval(() => {
       this.checkMarketStatus();
     }, 60 * 1000); // Check every minute
+  }
+
+  private startPositionManager() {
+    const intervalMins = Number(process.env.POSITION_EVAL_INTERVAL_MINS || 3);
+    console.log(`[Risk Manager] Starting periodic position re-evaluation every ${intervalMins} minutes...`);
+    
+    setInterval(async () => {
+      const positions = this.getAllPositions();
+      if (positions.length === 0) return;
+
+      console.log(`[Risk Manager] Re-evaluating ${positions.length} active positions...`);
+      
+      for (const pos of positions) {
+        try {
+          // Identify underlying symbol (e.g., from NIFTY24MAY24100CE to NIFTY)
+          const symbol = pos.symbol.startsWith("NIFTY") ? "NIFTY" : pos.symbol.startsWith("BANKNIFTY") ? "BANKNIFTY" : pos.symbol;
+          
+          const { decision, marketData } = await evaluatePosition(symbol, pos);
+          
+          if (decision.decision === "EXIT") {
+            console.log(`[Risk Manager] AI signaled EXIT for ${pos.symbol}. Reason: ${decision.reason}`);
+            await this.placeOrder({
+              symbol: pos.symbol,
+              token: pos.token,
+              side: "SELL",
+              quantity: pos.quantity,
+              price: pos.currentPrice,
+              context: { aiReasoning: decision.reason }
+            });
+          } else if (decision.decision === "UPDATE_SL" && decision.newIndexStopLoss) {
+            // TRANSLATE INDEX TRAILING STOP TO PREMIUM
+            const currentIndexPrice = marketData.tf15m.price;
+            
+            // Logic: Calculate how many points the Index SL moved, then apply 50% of that to Option Premium
+            const indexRiskPoints = Math.abs(currentIndexPrice - decision.newIndexStopLoss);
+            const optionRiskPoints = indexRiskPoints * 0.5;
+            
+            const newPremiumSl = pos.currentPrice - optionRiskPoints;
+            const newPremiumTarget = pos.currentPrice + (optionRiskPoints * (decision.riskRewardRatio || 1.5));
+
+            console.log(`[Risk Manager] AI signaled UPDATE_SL for ${pos.symbol}. Index SL: ${decision.newIndexStopLoss} -> Premium SL: ${newPremiumSl.toFixed(2)}`);
+            
+            pos.aiStopLoss = newPremiumSl;
+            pos.aiTarget = newPremiumTarget;
+            
+            this.emit("notification", {
+              title: "🛡️ Trailing Stop Updated",
+              message: `${pos.symbol}: SL moved to ${newPremiumSl.toFixed(2)} based on Index structure`,
+              type: "info"
+            });
+          }
+        } catch (err) {
+          console.error(`[Risk Manager] Failed to re-evaluate position ${pos.symbol}:`, err);
+        }
+      }
+    }, intervalMins * 60 * 1000);
   }
 
   private checkMarketStatus() {
@@ -170,7 +233,6 @@ export class PaperTrader extends EventEmitter {
       id: orderId,
       symbol: params.symbol,
       token: params.token,
-      strike: params.strike || params.context?.aiStrike,
       side: params.side,
       quantity: params.quantity,
       price: params.price,
@@ -178,6 +240,8 @@ export class PaperTrader extends EventEmitter {
       status: "COMPLETE",
       timestamp: new Date(),
     };
+    const strike = params.strike || params.context?.aiStrike;
+    if (strike) order.strike = strike;
 
     this.orders.push(order);
     await this.updatePosition(order, params.context);
@@ -198,11 +262,28 @@ export class PaperTrader extends EventEmitter {
         trend_15m: params.context?.trend15m || null,
         ai_stop_loss: params.context?.aiStopLoss || null,
         ai_target: params.context?.aiTarget || null,
+        exit_reason: null,
+        setup: params.context?.aiSetup || null,
+        strategy_context: params.context?.strategyContext ? JSON.stringify(params.context.strategyContext) : null,
       }).catch(err => console.error("❌ Failed to save paper trade to DB:", err));
     }
 
     console.log(`📝 [PAPER TRADE] ${order.side} ${order.quantity}x ${order.symbol} @ ${order.price}`);
     
+    // Safety check: If AI provides an invalid SL (higher than entry for a BUY), 
+    // we should invalidate that SL to prevent an immediate exit loop.
+    const pos = this.positions.get(order.symbol);
+    if (pos && pos.side === "BUY") {
+      if (pos.aiStopLoss !== undefined && pos.aiStopLoss >= order.price!) {
+        console.warn(`⚠️ [PAPER TRADE] Invalid SL (${pos.aiStopLoss}) for BUY at ${order.price}. Disabling SL for this position to prevent immediate exit.`);
+        delete pos.aiStopLoss;
+      }
+      if (pos.aiTarget !== undefined && pos.aiTarget <= order.price!) {
+        console.warn(`⚠️ [PAPER TRADE] Invalid Target (${pos.aiTarget}) for BUY at ${order.price}. Disabling Target for this position.`);
+        delete pos.aiTarget;
+      }
+    }
+
     // Determine notification details
     let title = order.side === "BUY" ? "🚀 Trade Executed" : "✅ Position Closed";
     let type = order.side === "BUY" ? "success" : "info";
@@ -257,20 +338,24 @@ export class PaperTrader extends EventEmitter {
         if (context?.aiTarget) existing.aiTarget = context.aiTarget;
         if (order.strike) existing.strike = order.strike;
       } else {
-        this.positions.set(order.symbol, {
+        const pos: PaperPosition = {
           symbol: order.symbol,
           token: order.token,
-          strike: order.strike,
           side: "BUY",
           quantity: order.quantity,
           avgEntryPrice: order.price!,
           currentPrice: order.price!,
           unrealizedPnL: 0,
           realizedPnL: 0,
-          aiStopLoss: context?.aiStopLoss,
-          aiTarget: context?.aiTarget,
           timestamp: new Date(),
-        });
+        };
+        if (order.strike) pos.strike = order.strike;
+        if (context?.aiStopLoss) pos.aiStopLoss = context.aiStopLoss;
+        if (context?.aiTarget) pos.aiTarget = context.aiTarget;
+        if (context?.aiSetup) pos.aiSetup = context.aiSetup;
+        if (context?.strategyContext) pos.strategyContext = context.strategyContext;
+        
+        this.positions.set(order.symbol, pos);
       }
     } else {
       // Simple SELL logic: Close position

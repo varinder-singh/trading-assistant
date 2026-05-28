@@ -19,7 +19,9 @@ export function calculateEMA(candles: Candle[], period: number): number {
 
   // Iterate from there to calculate EMA
   for (let i = period; i < candles.length; i++) {
-    ema = (candles[i].close - ema) * multiplier + ema
+    const candle = candles[i];
+    if (!candle) continue;
+    ema = (candle.close - ema) * multiplier + ema
   }
 
   return ema

@@ -27,6 +27,8 @@ export interface PaperPosition {
   realizedPnL: number;
   aiStopLoss?: number;
   aiTarget?: number;
+  aiSetup?: string;
+  strategyContext?: any;
   timestamp: Date;
 }
 

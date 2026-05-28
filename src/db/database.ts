@@ -47,6 +47,8 @@ export interface PaperTradesTable {
   ai_stop_loss: number | null;
   ai_target: number | null;
   exit_reason: string | null;
+  setup: string | null;
+  strategy_context: string | null;
   strike_price: number | null;
   opened_at: string; // ISO string
   closed_at: string | null; // ISO string

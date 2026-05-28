@@ -3,7 +3,35 @@ import { detectTrend } from "../indicators/trend.js"
 import { calculateVWAP } from "../indicators/vwap.js"
 import { calculateRSI } from "../indicators/rsi.js"
 
+import { calculateATR } from "../indicators/atr.js"
 import { calculateEMA } from "../indicators/ema.js"
+
+export function analyzeDailyContext(candles1d: Candle[]) {
+  if (candles1d.length < 15) return null
+
+  const atr14 = calculateATR(candles1d, 14)
+  const prevDay = candles1d[candles1d.length - 2]
+  const currentDay = candles1d[candles1d.length - 1]
+
+  if (!prevDay || !currentDay) return null
+
+  const pdh = prevDay.high
+  const pdl = prevDay.low
+  const pdc = prevDay.close
+  const pdr = pdh - pdl
+
+  const isCompression = pdr < (0.7 * atr14)
+
+  return {
+    atr14,
+    pdh,
+    pdl,
+    pdc,
+    pdr,
+    isCompression,
+    currentDayOpen: currentDay.open
+  }
+}
 
 export type TechnicalAnalysis = {
   trend: string

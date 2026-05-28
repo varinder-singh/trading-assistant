@@ -135,6 +135,23 @@ export default defineWebSocketHandler({
                 const quote = await kc.getQuote([`NFO:${option.symbol}`])
                 const entryPrice = quote[`NFO:${option.symbol}`]?.last_price || 0
 
+                // DYNAMIC RISK CALCULATION: Index Market Structure -> Option Premium
+                // 1. Calculate Index Risk Points
+                const indexPriceAtEntry = tf.price;
+                const indexRiskPoints = Math.abs(indexPriceAtEntry - decision.indexStopLoss);
+                
+                // 2. Translate to Option Premium Risk using ATM Delta (~0.5)
+                // If Nifty moves 100 points, ATM option premium moves roughly 50 points.
+                const estimatedDelta = 0.5;
+                const optionRiskPoints = indexRiskPoints * estimatedDelta;
+                
+                // 3. Calculate Final Premium Exit Levels
+                const calculatedSl = entryPrice - optionRiskPoints;
+                const calculatedTarget = entryPrice + (optionRiskPoints * (decision.riskRewardRatio || 1.5));
+
+                console.log(`[ws] Risk Translation: Index Risk ${indexRiskPoints.toFixed(2)} pts -> Option Risk ${optionRiskPoints.toFixed(2)} pts`)
+                console.log(`[ws] Option Entry: ${entryPrice}, Calculated SL: ${calculatedSl.toFixed(2)}, Target: ${calculatedTarget.toFixed(2)} (R:R ${decision.riskRewardRatio || 1.5})`)
+
                 await paperTrader.placeOrder({
                   symbol: option.symbol,
                   token: option.token,
@@ -146,11 +163,18 @@ export default defineWebSocketHandler({
                     aiReasoning: decision.reason,
                     aiConfidence: decision.confidence,
                     aiStrike: decision.strike,
+                    aiSetup: decision.setup,
+                    strategyContext: {
+                      macroTrend: decision.macroTrend,
+                      isCompression: tf.dailyContext?.isCompression,
+                      atr14: tf.dailyContext?.atr14,
+                      indexSl: decision.indexStopLoss
+                    },
                     vixLevel: vix.current,
                     rsiLevel: tf.rsi,
                     trend15m: tf.trend,
-                    aiStopLoss: decision.stopLoss,
-                    aiTarget: decision.targets && decision.targets.length > 0 ? decision.targets[0] : undefined
+                    aiStopLoss: calculatedSl,
+                    aiTarget: calculatedTarget
                   }
                 })
               }

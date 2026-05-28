@@ -1,4 +1,6 @@
-import { analyzeWithAI } from "../ai/llm.js"
+import { LLMService } from "../ai/llm.js"
+
+const llmService = new LLMService();
 
 export async function analyzeSentiment(headlines: string[]) {
   if (headlines.length === 0) {
@@ -25,7 +27,7 @@ Required Output (JSON only — no code fences):
 }
 `
 
-  const result = await analyzeWithAI({ prompt, systemPrompt })
+  const result = await llmService.analyzeWithAI({ prompt, systemPrompt })
 
   return result
 }

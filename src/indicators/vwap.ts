@@ -3,7 +3,7 @@ import type { Candle } from "../types/analysis.js"
 export function calculateVWAP(candles: Candle[]): number {
   let cumulativePV = 0
   let cumulativeVolume = 0
-  let lastDate: string | null = null
+  let lastDate: string | undefined = undefined
 
   for (const c of candles) {
     const currentDate = new Date(c.time * 1000).toISOString().split('T')[0]
