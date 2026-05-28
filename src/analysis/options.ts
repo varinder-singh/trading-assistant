@@ -15,10 +15,7 @@ export function calculatePCR(data: any) {
 
   return {
     pcr: Number(pcr.toFixed(2)),
-    sentiment:
-      pcr > 1.2 ? "bullish" :
-        pcr < 0.8 ? "bearish" :
-          "neutral",
+    sentiment: pcr > 1.2 ? "bullish" : pcr < 0.8 ? "bearish" : "neutral",
   }
 }
 

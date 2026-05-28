@@ -4,10 +4,10 @@ export default defineEventHandler(async () => {
     const trades = await tradeRepo.getAllTrades()
     return trades
   } catch (error: any) {
-    console.error('History API Error:', error)
+    console.error("History API Error:", error)
     throw createError({
       statusCode: 500,
-      statusMessage: error.message || 'Failed to fetch trade history',
+      statusMessage: error.message || "Failed to fetch trade history",
     })
   }
 })

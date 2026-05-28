@@ -38,7 +38,7 @@ export class LiveAnalyzer extends EventEmitter {
 
   private cleanupOldTicks() {
     const now = Date.now()
-    this.ticks = this.ticks.filter(t => {
+    this.ticks = this.ticks.filter((t) => {
       const tickTime = t.received_at ?? now
       return now - tickTime < this.windowSizeMs
     })
@@ -66,7 +66,7 @@ export class LiveAnalyzer extends EventEmitter {
       if (firstTick) {
         const priceChange = Math.abs((last_price - firstTick.last_price) / firstTick.last_price)
         if (priceChange > 0.001) {
-          this.trigger(`Volatility Spike: ${ (priceChange * 100).toFixed(2) }% move in 1m`, tick)
+          this.trigger(`Volatility Spike: ${(priceChange * 100).toFixed(2)}% move in 1m`, tick)
         }
       }
     }
@@ -77,7 +77,7 @@ export class LiveAnalyzer extends EventEmitter {
     this.emit("breakout", {
       reason,
       tick,
-      recentTicks: [...this.ticks]
+      recentTicks: [...this.ticks],
     })
   }
 

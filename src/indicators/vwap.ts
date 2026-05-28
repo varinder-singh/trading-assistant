@@ -6,8 +6,8 @@ export function calculateVWAP(candles: Candle[]): number {
   let lastDate: string | undefined = undefined
 
   for (const c of candles) {
-    const currentDate = new Date(c.time * 1000).toISOString().split('T')[0]
-    
+    const currentDate = new Date(c.time * 1000).toISOString().split("T")[0]
+
     // Reset VWAP daily at start of market hours
     if (currentDate !== lastDate) {
       cumulativePV = 0

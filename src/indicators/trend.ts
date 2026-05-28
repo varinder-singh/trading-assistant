@@ -5,7 +5,7 @@ export function detectTrend(candles: Candle[]): "bullish" | "bearish" | "sideway
     return "sideways"
   }
 
-  const closes = candles.slice(-20).map(c => c.close)
+  const closes = candles.slice(-20).map((c) => c.close)
 
   const first = closes[0]
   const last = closes[closes.length - 1]

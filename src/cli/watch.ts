@@ -26,13 +26,13 @@ export const watchCommand = new Command("watch")
     // 2. Get Initial Levels
     const { tf15m, aiDecision } = await runAnalysis(symbol, mode)
     lastDecision = aiDecision
-    
+
     // 3. Setup Analyzer
     const analyzer = new LiveAnalyzer()
     analyzer.setLevels({
       resistance: tf15m.resistance,
       support: tf15m.support,
-      vwap: tf15m.vwap
+      vwap: tf15m.vwap,
     })
 
     // 4. Setup Ticker
@@ -43,16 +43,18 @@ export const watchCommand = new Command("watch")
       ticker.disconnect()
       process.exit(0)
     })
-    
+
     ticker.on("ticks", (ticks: any[]) => {
-      const targetTick = ticks.find(t => t.instrument_token === token)
+      const targetTick = ticks.find((t) => t.instrument_token === token)
       if (targetTick) {
         analyzer.addTick(targetTick)
-        process.stdout.write(`\rLive: ${targetTick.last_price.toFixed(2)} | RSI: ${tf15m.rsi.toFixed(2)} | Trend: ${tf15m.trend} `)
+        process.stdout.write(
+          `\rLive: ${targetTick.last_price.toFixed(2)} | RSI: ${tf15m.rsi.toFixed(2)} | Trend: ${tf15m.trend} `
+        )
       }
 
       // Update paper positions price
-      ticks.forEach(tick => {
+      ticks.forEach((tick) => {
         paperTrader.updatePrice(tick.instrument_token, tick.last_price)
       })
     })
@@ -74,7 +76,7 @@ export const watchCommand = new Command("watch")
     analyzer.on("breakout", async (context) => {
       console.log("\n" + "=".repeat(50))
       console.log("⚡ BREAKOUT DETECTED")
-      const { tf15m: tf, aiDecision: decision, vix, sentiment } = await runAnalysis(symbol, mode, context, lastDecision)
+      const { tf15m: tf, aiDecision: decision, vix } = await runAnalysis(symbol, mode, context, lastDecision)
       lastDecision = decision
 
       // --- Paper Trading Execution ---
@@ -101,15 +103,15 @@ export const watchCommand = new Command("watch")
             quantity: 1, // Default to 1 lot for safety
             price: entryPrice,
             context: {
-                aiReasoning: lastDecision.reason,
-                aiConfidence: lastDecision.confidence,
-                aiStrike: lastDecision.strike,
-                vixLevel: vix.current,
-                rsiLevel: tf.rsi,
-                trend15m: tf.trend,
-                aiStopLoss: lastDecision.stopLoss,
-                aiTarget: lastDecision.targets && lastDecision.targets.length > 0 ? lastDecision.targets[0] : undefined
-            }
+              aiReasoning: lastDecision.reason,
+              aiConfidence: lastDecision.confidence,
+              aiStrike: lastDecision.strike,
+              vixLevel: vix.current,
+              rsiLevel: tf.rsi,
+              trend15m: tf.trend,
+              aiStopLoss: lastDecision.stopLoss,
+              aiTarget: lastDecision.targets && lastDecision.targets.length > 0 ? lastDecision.targets[0] : undefined,
+            },
           })
         }
       }

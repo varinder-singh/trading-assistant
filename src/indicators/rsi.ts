@@ -12,12 +12,8 @@ export function calculateRSI(candles: Candle[], period = 14): number {
     return candle.close - previousCandle.close
   })
 
-  const gains = priceChanges
-    .filter((change) => change > 0)
-    .reduce((total, change) => total + change, 0)
-  const losses = priceChanges
-    .filter((change) => change < 0)
-    .reduce((total, change) => total + Math.abs(change), 0)
+  const gains = priceChanges.filter((change) => change > 0).reduce((total, change) => total + change, 0)
+  const losses = priceChanges.filter((change) => change < 0).reduce((total, change) => total + Math.abs(change), 0)
 
   const avgGain = gains / period
   const avgLoss = losses / period
@@ -27,4 +23,3 @@ export function calculateRSI(candles: Candle[], period = 14): number {
   const rs = avgGain / avgLoss
   return Number((100 - 100 / (1 + rs)).toFixed(2))
 }
-

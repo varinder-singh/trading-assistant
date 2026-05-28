@@ -1,19 +1,15 @@
-import type { FifteenMinuteCandle } from "../types/analysis.js";
-import { getMultiTimeframeCandles } from "../data/yahoo.js";
-import { analyzeMultiTimeframe, analyzeDailyContext } from "./technical.js";
-import { LLMService } from "../ai/llm.js";
-import { getNews } from "../data/news.js";
-import { analyzeSentiment } from "./sentiment.js";
-import { getOptionChain } from "../data/kite-options.js";
-import { analyzeOptions } from "./kite-options.js";
-import { getIndiaVix } from "../data/vix.js";
-import { getYesterdayClosingOI } from "../data/kite-historical.js";
-import type { Analysis, TradePlan } from "../types/analysis.js"
-import type { MarketMode } from "../types/mode.js"
+import { getMultiTimeframeCandles } from "../data/yahoo.js"
+import { analyzeMultiTimeframe, analyzeDailyContext } from "./technical.js"
+import { LLMService } from "../ai/llm.js"
+import { getNews } from "../data/news.js"
+import { analyzeSentiment } from "./sentiment.js"
+import { getOptionChain } from "../data/kite-options.js"
+import { analyzeOptions } from "./kite-options.js"
+import { getIndiaVix } from "../data/vix.js"
+import { getYesterdayClosingOI } from "../data/kite-historical.js"
 import type { PaperPosition } from "../execution/types.js"
 
-const llmService = new LLMService();
-
+const llmService = new LLMService()
 
 const divider = "═".repeat(50)
 
@@ -24,10 +20,15 @@ function logSection(title: string) {
 }
 
 // Cache for baseline data
-let yesterdayOiCache: Map<number, number> | undefined = undefined;
-let lastCacheSymbol: string | null = null;
+let yesterdayOiCache: Map<number, number> | undefined = undefined
+let lastCacheSymbol: string | null = null
 
-export async function runAnalysis(symbol: string, mode: "intraday" | "swing", liveContext?: any, previousDecision?: any) {
+export async function runAnalysis(
+  symbol: string,
+  mode: "intraday" | "swing",
+  liveContext?: any,
+  previousDecision?: any
+) {
   const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
 
   const [candlesData, headlines, vix, kiteData] = await Promise.all([
@@ -44,19 +45,13 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
   const { tf1h, tf15m, tf3m } = analyzeMultiTimeframe(candles1h, candles15m, candles3m)
   const dailyContext = analyzeDailyContext(candles1d)
 
-  const last15mCandle = candles15m[candles15m.length - 1]!
-  const full15mAnalysis: FifteenMinuteCandle = {
-      ...last15mCandle,
-      ...tf15m
-  }
-
   const sentiment = await analyzeSentiment(headlines)
 
   const { quotes, finalOptions } = kiteData
 
   // Establish Baseline Yesterday OI
   if (!yesterdayOiCache || lastCacheSymbol !== symbol) {
-    const tokens = finalOptions.map(opt => opt.instrument_token).filter((t): t is number => !!t)
+    const tokens = finalOptions.map((opt) => opt.instrument_token).filter((t): t is number => !!t)
     yesterdayOiCache = await getYesterdayClosingOI(tokens)
     lastCacheSymbol = symbol
   }
@@ -64,7 +59,7 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
   // Analyze Options with 5m COI Shift and Buildup States
   const intervalMins = Number(process.env.OI_SHIFT_INTERVAL_MINS || 5)
   const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price, yesterdayOiCache, intervalMins)
-  
+
   const aiDecision = await llmService.analyzeWithAI({
     tf1h,
     tf15m,
@@ -108,24 +103,26 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
   console.log(`Macro Trend (1H): ${tf1h.trend}`)
   console.log(`Intraday Trend (15m): ${tf15m.trend}`)
   if (dailyContext) {
-    console.log(`Macro Compression: ${dailyContext.isCompression ? 'YES' : 'No'} (PDR: ${dailyContext.pdr.toFixed(2)}, 70% ATR: ${(0.7 * dailyContext.atr14).toFixed(2)})`)
+    console.log(
+      `Macro Compression: ${dailyContext.isCompression ? "YES" : "No"} (PDR: ${dailyContext.pdr.toFixed(2)}, 70% ATR: ${(0.7 * dailyContext.atr14).toFixed(2)})`
+    )
   }
   console.log(`VWAP (15m): ${tf15m.vwap.toFixed(2)} (${tf15m.vwapPosition})`)
   console.log(`Resistance (15m): ${tf15m.resistance.toFixed(2)}`)
   console.log(`Support (15m): ${tf15m.support.toFixed(2)}`)
 
-  return { 
+  return {
     tf1h,
-    tf15m, 
-    tf3m, 
+    tf15m,
+    tf3m,
     dailyContext,
-    aiDecision, 
-    vix, 
-    sentiment, 
+    aiDecision,
+    vix,
+    sentiment,
     optionsAnalysis: optionsAnalysisZerodha,
     candles1h: candles1h.slice(-100),
     candles15m: candles15m.slice(-100),
-    candles3m: candles3m.slice(-100) 
+    candles3m: candles3m.slice(-100),
   }
 }
 
@@ -161,7 +158,7 @@ export async function evaluatePosition(symbol: string, openPosition: PaperPositi
     marketData,
   })
 
-  console.log(`[Risk Manager] AI Decision for ${openPosition.symbol}: ${decision.decision} - ${decision.reason}`);
-  
-  return { decision, marketData };
+  console.log(`[Risk Manager] AI Decision for ${openPosition.symbol}: ${decision.decision} - ${decision.reason}`)
+
+  return { decision, marketData }
 }
