@@ -1,13 +1,14 @@
 import { LLMService } from "../ai/llm.js"
 
-const llmService = new LLMService();
+const llmService = new LLMService()
 
 export async function analyzeSentiment(headlines: string[]) {
   if (headlines.length === 0) {
     return { sentiment: "neutral", confidence: 0.5, reason: "No headlines available" }
   }
 
-  const systemPrompt = "You are a financial news sentiment analyst specializing in Indian equity markets (NSE/BSE). You assess the directional market impact of news on index-level sentiment and respond with valid JSON only — no markdown, no prose."
+  const systemPrompt =
+    "You are a financial news sentiment analyst specializing in Indian equity markets (NSE/BSE). You assess the directional market impact of news on index-level sentiment and respond with valid JSON only — no markdown, no prose."
 
   const prompt = `Assess the overall market sentiment for Indian equities based on these news headlines.
 

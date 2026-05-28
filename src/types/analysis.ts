@@ -1,10 +1,10 @@
 export type Analysis = {
-  trend: string,
-  support: number,
-  resistance: number,
-  vwap: number,
-  vwapPosition: string,
-  price: number,
+  trend: string
+  support: number
+  resistance: number
+  vwap: number
+  vwapPosition: string
+  price: number
 }
 
 export type TradePlan = {

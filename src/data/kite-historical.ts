@@ -25,7 +25,7 @@ export async function getYesterdayClosingOI(tokens: number[]): Promise<Map<numbe
   // Kite allows 3 requests per second for historical data, so we fetch in sequence
   for (const token of tokens) {
     try {
-      // @ts-ignore - 'oi' is supported in the underlying API
+      // @ts-expect-error - 'oi' is supported in the underlying API
       const data = await kc.getHistoricalData(token, "day", from, to, false, true)
       if (data && data.length > 0) {
         const lastCandle = data[data.length - 1]

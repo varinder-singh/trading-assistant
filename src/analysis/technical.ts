@@ -20,7 +20,7 @@ export function analyzeDailyContext(candles1d: Candle[]) {
   const pdc = prevDay.close
   const pdr = pdh - pdl
 
-  const isCompression = pdr < (0.7 * atr14)
+  const isCompression = pdr < 0.7 * atr14
 
   return {
     atr14,
@@ -29,7 +29,7 @@ export function analyzeDailyContext(candles1d: Candle[]) {
     pdc,
     pdr,
     isCompression,
-    currentDayOpen: currentDay.open
+    currentDayOpen: currentDay.open,
   }
 }
 
@@ -45,7 +45,11 @@ export type TechnicalAnalysis = {
   ema?: Record<string, number>
 }
 
-export function analyzeTechnical(candles: Candle[], timeframe: string = "15m", emaPeriods: number[] = []): TechnicalAnalysis {
+export function analyzeTechnical(
+  candles: Candle[],
+  timeframe: string = "15m",
+  emaPeriods: number[] = []
+): TechnicalAnalysis {
   if (candles.length === 0) {
     throw new Error("Cannot analyze technical indicators without candles")
   }
@@ -57,8 +61,8 @@ export function analyzeTechnical(candles: Candle[], timeframe: string = "15m", e
   const lastCandle = candles[candles.length - 1]!
   const last = lastCandle.close
 
-  const highs = candles.slice(-20).map(c => c.high)
-  const lows = candles.slice(-20).map(c => c.low)
+  const highs = candles.slice(-20).map((c) => c.high)
+  const lows = candles.slice(-20).map((c) => c.low)
 
   const resistance = Math.max(...highs)
   const support = Math.min(...lows)

@@ -13,14 +13,14 @@ export function calculateEMA(candles: Candle[], period: number): number {
   }
 
   const multiplier = 2 / (period + 1)
-  
+
   // Start with SMA for the first 'period' candles
   let ema = candles.slice(0, period).reduce((acc, c) => acc + c.close, 0) / period
 
   // Iterate from there to calculate EMA
   for (let i = period; i < candles.length; i++) {
-    const candle = candles[i];
-    if (!candle) continue;
+    const candle = candles[i]
+    if (!candle) continue
     ema = (candle.close - ema) * multiplier + ema
   }
 

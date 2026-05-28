@@ -1,4 +1,4 @@
-import { Kysely, sql } from "kysely";
+import { Kysely } from "kysely"
 
 export async function up(db: Kysely<any>): Promise<void> {
   await db.schema
@@ -18,9 +18,9 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn("trend_15m", "text")
     .addColumn("opened_at", "text", (col) => col.notNull())
     .addColumn("closed_at", "text")
-    .execute();
+    .execute()
 }
 
 export async function down(db: Kysely<any>): Promise<void> {
-  await db.schema.dropTable("paper_trades").execute();
+  await db.schema.dropTable("paper_trades").execute()
 }

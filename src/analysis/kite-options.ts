@@ -47,34 +47,34 @@ export type KiteOptionsAnalysis = {
 
 // Singleton for tracking OI snapshots
 class OITracker {
-  private snapshots: { timestamp: number, data: Map<string, { oi: number, ltp: number }> }[] = []
+  private snapshots: { timestamp: number; data: Map<string, { oi: number; ltp: number }> }[] = []
   private readonly maxWindowMs = 60 * 60 * 1000 // Keep 1 hour of snapshots
 
   addSnapshot(quotes: Record<string, KiteOptionQuote>) {
-    const data = new Map<string, { oi: number, ltp: number }>()
+    const data = new Map<string, { oi: number; ltp: number }>()
     for (const [key, q] of Object.entries(quotes)) {
       if (q.oi !== undefined) {
         data.set(key, { oi: q.oi, ltp: q.last_price || 0 })
       }
     }
     this.snapshots.push({ timestamp: Date.now(), data })
-    
+
     // Cleanup old snapshots
     const cutoff = Date.now() - this.maxWindowMs
-    this.snapshots = this.snapshots.filter(s => s.timestamp > cutoff)
+    this.snapshots = this.snapshots.filter((s) => s.timestamp > cutoff)
   }
 
   getSnapshot(minutesAgo: number) {
-    if (this.snapshots.length === 0) return null;
-    const targetTime = Date.now() - (minutesAgo * 60 * 1000);
-    
+    if (this.snapshots.length === 0) return null
+    const targetTime = Date.now() - minutesAgo * 60 * 1000
+
     // If the oldest snapshot we have is newer than our target, we don't have enough history
-    const first = this.snapshots[0];
-    if (first && first.timestamp > targetTime + 30000) return null; // 30s grace
-    
-    return this.snapshots.reduce((prev, curr) => 
+    const first = this.snapshots[0]
+    if (first && first.timestamp > targetTime + 30000) return null // 30s grace
+
+    return this.snapshots.reduce((prev, curr) =>
       Math.abs(curr.timestamp - targetTime) < Math.abs(prev.timestamp - targetTime) ? curr : prev
-    );
+    )
   }
 }
 
@@ -104,7 +104,7 @@ export function analyzeOptions(
   let atmPutOI = 0
 
   if (underlyingPrice && instruments.length > 0) {
-    const uniqueStrikes = [...new Set(instruments.map(i => i.strike))]
+    const uniqueStrikes = [...new Set(instruments.map((i) => i.strike))]
     if (uniqueStrikes.length > 0) {
       atmStrike = uniqueStrikes.reduce((closest, strike) =>
         Math.abs(strike - underlyingPrice) < Math.abs(closest - underlyingPrice) ? strike : closest
@@ -122,8 +122,8 @@ export function analyzeOptions(
 
     // 1. Calculate Shift since intervalMins ago
     const snapshot = windowSnapshot?.data.get(key)
-    const coi = snapshot ? (currentOi - snapshot.oi) : 0
-    const priceChange = snapshot ? (ltp - snapshot.ltp) : 0
+    const coi = snapshot ? currentOi - snapshot.oi : 0
+    const priceChange = snapshot ? ltp - snapshot.ltp : 0
 
     // 2. Determine Buildup State
     let buildup: KiteOptionOiRow["buildup"] = "Neutral"
@@ -144,9 +144,9 @@ export function analyzeOptions(
       ltp: ltp,
       volume: q.volume ?? 0,
       intervalOi: coi,
-      buildup
+      buildup,
     }
-    if (yOi !== undefined) row.yesterdayOi = yOi;
+    if (yOi !== undefined) row.yesterdayOi = yOi
     rows.push(row)
 
     if (inst.instrument_type === "CE") {
@@ -191,10 +191,16 @@ export function analyzeOptions(
     resistance,
     rows: rows.sort((a, b) => a.strike - b.strike || a.type.localeCompare(b.type)),
     windowStats: {
-      topShortCovering: [...rows].filter(r => r.buildup === "Short Covering").sort((a, b) => (a.intervalOi || 0) - (b.intervalOi || 0)).slice(0, 3),
-      topLongBuildup: [...rows].filter(r => r.buildup === "Long Buildup").sort((a, b) => (b.intervalOi || 0) - (a.intervalOi || 0)).slice(0, 3),
-      intervalMins
-    }
+      topShortCovering: [...rows]
+        .filter((r) => r.buildup === "Short Covering")
+        .sort((a, b) => (a.intervalOi || 0) - (b.intervalOi || 0))
+        .slice(0, 3),
+      topLongBuildup: [...rows]
+        .filter((r) => r.buildup === "Long Buildup")
+        .sort((a, b) => (b.intervalOi || 0) - (a.intervalOi || 0))
+        .slice(0, 3),
+      intervalMins,
+    },
   }
 }
 
@@ -213,7 +219,7 @@ export type KiteOptionsLogRow = {
 export function formatOptionsAnalysisForLog(analysis: KiteOptionsAnalysis): string[] {
   const formatNumber = (value: number) => value.toLocaleString("en-IN")
   const formatPrice = (value: number) => value.toFixed(2)
-  const formatLevel = (value: number) => value > 0 ? formatNumber(value) : "N/A"
+  const formatLevel = (value: number) => (value > 0 ? formatNumber(value) : "N/A")
 
   const rowsByStrike = new Map<number, KiteOptionsLogRow>()
 
@@ -246,26 +252,6 @@ export function formatOptionsAnalysisForLog(analysis: KiteOptionsAnalysis): stri
   }
 
   const strikeRows = Array.from(rowsByStrike.values()).sort((first, second) => first.strike - second.strike)
-  const topCallRows = analysis.rows
-    .filter((row) => row.type === "CE")
-    .sort((first, second) => second.oi - first.oi)
-    .slice(0, 3)
-  const topPutRows = analysis.rows
-    .filter((row) => row.type === "PE")
-    .sort((first, second) => second.oi - first.oi)
-    .slice(0, 3)
-
-  const formatTopRows = (rows: KiteOptionOiRow[]) => rows.length > 0
-    ? rows
-      .map((row) => [
-        `${formatNumber(row.strike)} ${row.type}`,
-        row.symbol,
-        `OI ${formatNumber(row.oi)}`,
-        `LTP ${formatPrice(row.ltp)}`,
-        `Vol ${formatNumber(row.volume)}`,
-      ].join(" | "))
-      .join("; ")
-    : "N/A"
 
   const log = [
     `PCR (Aggregate): ${analysis.pcr.toFixed(2)} (${analysis.sentiment.toUpperCase()}) | PCR (ATM ${analysis.atmStrike}): ${analysis.pcrAtm.toFixed(2)} (${analysis.atmSentiment.toUpperCase()})`,
@@ -279,20 +265,28 @@ export function formatOptionsAnalysisForLog(analysis: KiteOptionsAnalysis): stri
 
   if (analysis.windowStats) {
     log.push(`Window Stats (${analysis.windowStats.intervalMins}m):`)
-    log.push(`  Top Short Covering: ${analysis.windowStats.topShortCovering.map(r => `${r.strike} ${r.type} (${r.intervalOi})`).join(", ")}`)
-    log.push(`  Top Long Buildup: ${analysis.windowStats.topLongBuildup.map(r => `${r.strike} ${r.type} (+${r.intervalOi})`).join(", ")}`)
+    log.push(
+      `  Top Short Covering: ${analysis.windowStats.topShortCovering.map((r) => `${r.strike} ${r.type} (${r.intervalOi})`).join(", ")}`
+    )
+    log.push(
+      `  Top Long Buildup: ${analysis.windowStats.topLongBuildup.map((r) => `${r.strike} ${r.type} (+${r.intervalOi})`).join(", ")}`
+    )
   }
 
   log.push("Strike OI Snapshot:")
-  log.push(...strikeRows.map((row) => [
-    `  ${formatNumber(row.strike)}`,
-    `CE ${row.ceSymbol}`,
-    `CE OI ${formatNumber(row.ceOi)}`,
-    `CE LTP ${formatPrice(row.ceLtp)}`,
-    `PE ${row.peSymbol}`,
-    `PE OI ${formatNumber(row.peOi)}`,
-    `PE LTP ${formatPrice(row.peLtp)}`,
-  ].join(" | ")))
+  log.push(
+    ...strikeRows.map((row) =>
+      [
+        `  ${formatNumber(row.strike)}`,
+        `CE ${row.ceSymbol}`,
+        `CE OI ${formatNumber(row.ceOi)}`,
+        `CE LTP ${formatPrice(row.ceLtp)}`,
+        `PE ${row.peSymbol}`,
+        `PE OI ${formatNumber(row.peOi)}`,
+        `PE LTP ${formatPrice(row.peLtp)}`,
+      ].join(" | ")
+    )
+  )
 
   return log
 }
