@@ -163,6 +163,13 @@ export default defineWebSocketHandler({
                     aiReasoning: decision.reason,
                     aiConfidence: decision.confidence,
                     aiStrike: decision.strike,
+                    aiSetup: decision.setup,
+                    strategyContext: {
+                      macroTrend: decision.macroTrend,
+                      isCompression: tf.dailyContext?.isCompression,
+                      atr14: tf.dailyContext?.atr14,
+                      indexSl: decision.indexStopLoss
+                    },
                     vixLevel: vix.current,
                     rsiLevel: tf.rsi,
                     trend15m: tf.trend,

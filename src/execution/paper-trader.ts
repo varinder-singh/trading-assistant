@@ -12,6 +12,8 @@ export interface TradeContext {
   aiStopLoss?: number;
   aiTarget?: number;
   aiStrike?: number;
+  aiSetup?: string;
+  strategyContext?: any;
 }
 
 export class PaperTrader extends EventEmitter {
@@ -257,6 +259,8 @@ export class PaperTrader extends EventEmitter {
         trend_15m: params.context?.trend15m || null,
         ai_stop_loss: params.context?.aiStopLoss || null,
         ai_target: params.context?.aiTarget || null,
+        setup: params.context?.aiSetup || null,
+        strategy_context: params.context?.strategyContext ? JSON.stringify(params.context.strategyContext) : null,
       }).catch(err => console.error("❌ Failed to save paper trade to DB:", err));
     }
 
@@ -342,6 +346,8 @@ export class PaperTrader extends EventEmitter {
           realizedPnL: 0,
           aiStopLoss: context?.aiStopLoss,
           aiTarget: context?.aiTarget,
+          aiSetup: context?.aiSetup,
+          strategyContext: context?.strategyContext,
           timestamp: new Date(),
         });
       }

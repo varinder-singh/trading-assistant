@@ -23,8 +23,9 @@ export async function getCandles(symbol: string, interval: string = "15m", range
 }
 
 export async function getMultiTimeframeCandles(symbol: string) {
-  // Fetch 1h (1 month) for macro, 15-min (5 days) for trend, and 1-min (2 days) for 3m execution
-  const [candles1h, candles15m, candles1m] = await Promise.all([
+  // Fetch 1h (1 month) for macro, 15-min (5 days) for trend, 1-min (2 days) for 3m execution, and 1d (2 months) for ATR14
+  const [candles1d, candles1h, candles15m, candles1m] = await Promise.all([
+    getCandles(symbol, "1d", "60d"),
     getCandles(symbol, "1h", "1mo"),
     getCandles(symbol, "15m", "5d"),
     getCandles(symbol, "1m", "2d"),
@@ -46,5 +47,5 @@ export async function getMultiTimeframeCandles(symbol: string) {
     })
   }
 
-  return { candles1h, candles15m, candles3m }
+  return { candles1d, candles1h, candles15m, candles3m }
 }

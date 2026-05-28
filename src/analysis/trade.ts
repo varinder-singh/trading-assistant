@@ -1,7 +1,7 @@
 import type { FifteenMinuteCandle } from "../types/analysis.js";
 import { getMultiTimeframeCandles } from "../data/yahoo.js";
-import { analyzeMultiTimeframe } from "./technical.js";
-import { analyzeWithAI, managePositionWithAI } from "../ai/llm.js";
+import { analyzeMultiTimeframe, analyzeDailyContext } from "./technical.js";
+import { LLMService } from "../ai/llm.js";
 import { getNews } from "../data/news.js";
 import { analyzeSentiment } from "./sentiment.js";
 import { getOptionChain } from "../data/kite-options.js";
@@ -11,6 +11,8 @@ import { getYesterdayClosingOI } from "../data/kite-historical.js";
 import type { Analysis, TradePlan } from "../types/analysis.js"
 import type { MarketMode } from "../types/mode.js"
 import type { PaperPosition } from "../execution/types.js"
+
+const llmService = new LLMService();
 
 
 const divider = "═".repeat(50)
@@ -35,11 +37,12 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
     getOptionChain(symbol),
   ])
 
-  const { candles1h, candles15m, candles3m } = candlesData
+  const { candles1d, candles1h, candles15m, candles3m } = candlesData
   if (candles15m.length === 0) {
     throw new Error("No 15-minute candles found.")
   }
   const { tf1h, tf15m, tf3m } = analyzeMultiTimeframe(candles1h, candles15m, candles3m)
+  const dailyContext = analyzeDailyContext(candles1d)
 
   const last15mCandle = candles15m[candles15m.length - 1]!
   const full15mAnalysis: FifteenMinuteCandle = {
@@ -62,10 +65,11 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
   const intervalMins = Number(process.env.OI_SHIFT_INTERVAL_MINS || 5)
   const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price, yesterdayOiCache, intervalMins)
   
-  const aiDecision = await analyzeWithAI({
+  const aiDecision = await llmService.analyzeWithAI({
     tf1h,
     tf15m,
     tf3m,
+    dailyContext,
     sentiment,
     optionsAnalysisZerodha,
     vix,
@@ -103,6 +107,9 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
   console.log(`Current Price: ${tf15m.price}`)
   console.log(`Macro Trend (1H): ${tf1h.trend}`)
   console.log(`Intraday Trend (15m): ${tf15m.trend}`)
+  if (dailyContext) {
+    console.log(`Macro Compression: ${dailyContext.isCompression ? 'YES' : 'No'} (PDR: ${dailyContext.pdr.toFixed(2)}, 70% ATR: ${(0.7 * dailyContext.atr14).toFixed(2)})`)
+  }
   console.log(`VWAP (15m): ${tf15m.vwap.toFixed(2)} (${tf15m.vwapPosition})`)
   console.log(`Resistance (15m): ${tf15m.resistance.toFixed(2)}`)
   console.log(`Support (15m): ${tf15m.support.toFixed(2)}`)
@@ -111,6 +118,7 @@ export async function runAnalysis(symbol: string, mode: "intraday" | "swing", li
     tf1h,
     tf15m, 
     tf3m, 
+    dailyContext,
     aiDecision, 
     vix, 
     sentiment, 
@@ -130,8 +138,9 @@ export async function evaluatePosition(symbol: string, openPosition: PaperPositi
     getOptionChain(symbol),
   ])
 
-  const { candles1h, candles15m, candles3m } = candlesData
+  const { candles1d, candles1h, candles15m, candles3m } = candlesData
   const { tf1h, tf15m, tf3m } = analyzeMultiTimeframe(candles1h, candles15m, candles3m)
+  const dailyContext = analyzeDailyContext(candles1d)
 
   const { quotes, finalOptions } = kiteData
 
@@ -142,11 +151,12 @@ export async function evaluatePosition(symbol: string, openPosition: PaperPositi
     tf1h,
     tf15m,
     tf3m,
+    dailyContext,
     optionsAnalysisZerodha,
     vix,
   }
 
-  const decision = await managePositionWithAI({
+  const decision = await llmService.managePositionWithAI({
     openPosition,
     marketData,
   })

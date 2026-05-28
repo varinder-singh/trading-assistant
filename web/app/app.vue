@@ -636,6 +636,30 @@ onUnmounted(() => {
                             </p>
                           </div>
                         </div>
+
+                        <!-- Strategy Context & Setup Type -->
+                        <div class="space-y-4">
+                          <h4 class="text-[10px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
+                            <Activity class="w-3 h-3" />
+                            NCLS Strategy Context
+                          </h4>
+                          <div class="space-y-3">
+                            <div class="bg-white/80 p-3 rounded-lg border border-indigo-100/50">
+                              <div class="text-[9px] text-gray-400 font-bold uppercase">Setup Type</div>
+                              <span class="text-xs font-black uppercase tracking-tight text-indigo-600">
+                                {{ trade.setup?.replace('_', ' ') || 'STANDARD MTF' }}
+                              </span>
+                            </div>
+                            
+                            <div v-if="trade.strategy_context" class="bg-gray-900 p-3 rounded-lg border border-gray-800 shadow-inner">
+                              <div class="text-[9px] text-gray-500 font-bold uppercase mb-2">Market Snapshot (JSON)</div>
+                              <pre class="text-[10px] text-indigo-300 font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed">
+                                {{ JSON.parse(trade.strategy_context) }}
+                              </pre>
+                            </div>
+                          </div>
+                        </div>
+
                         <div class="space-y-4">
                           <h4 class="text-[10px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
                             <Target class="w-3 h-3" />

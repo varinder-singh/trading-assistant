@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { runAnalysis } from './trade.js'
 import * as yahoo from '../data/yahoo.js'
-import * as llm from '../ai/llm.js'
+import { LLMService } from '../ai/llm.js'
 import * as news from '../data/news.js'
 import * as vix from '../data/vix.js'
 import * as kiteOptions from '../data/kite-options.js'
@@ -25,6 +25,7 @@ describe('runAnalysis', () => {
     // Setup mocks
     const mockCandle = { time: 1, open: 100, high: 110, low: 90, close: 105, volume: 1000 };
     vi.mocked(yahoo.getMultiTimeframeCandles).mockResolvedValue({
+      candles1d: Array(20).fill(mockCandle),
       candles1h: [mockCandle],
       candles15m: [mockCandle],
       candles3m: [mockCandle]
@@ -32,7 +33,7 @@ describe('runAnalysis', () => {
     vi.mocked(news.getNews).mockResolvedValue([]);
     vi.mocked(vix.getIndiaVix).mockResolvedValue({ current: 15, change: 0, sentiment: 'normal' });
     vi.mocked(kiteOptions.getOptionChain).mockResolvedValue({ quotes: {}, finalOptions: [] });
-    vi.mocked(llm.analyzeWithAI).mockResolvedValue({
+    vi.mocked(LLMService.prototype.analyzeWithAI).mockResolvedValue({
       decision: 'BUY',
       reason: 'test',
       confidence: 0.9,
@@ -47,7 +48,7 @@ describe('runAnalysis', () => {
     expect(result.tf15m).toBeDefined();
     expect(result.tf3m).toBeDefined();
     expect(result.aiDecision.decision).toBe('BUY');
-    expect(llm.analyzeWithAI).toHaveBeenCalledWith(expect.objectContaining({
+    expect(LLMService.prototype.analyzeWithAI).toHaveBeenCalledWith(expect.objectContaining({
       tf1h: expect.any(Object),
       tf15m: expect.any(Object),
       tf3m: expect.any(Object),
