@@ -10,10 +10,10 @@ export function analyzeDailyContext(candles1d: Candle[]) {
   if (candles1d.length < 15) return null
 
   const atr14 = calculateATR(candles1d, 14)
-  const prevDay = candles1d[candles1d.length - 2] // Current day is last, previous is -2
+  const prevDay = candles1d[candles1d.length - 2]
   const currentDay = candles1d[candles1d.length - 1]
 
-  if (!prevDay) return null
+  if (!prevDay || !currentDay) return null
 
   const pdh = prevDay.high
   const pdl = prevDay.low

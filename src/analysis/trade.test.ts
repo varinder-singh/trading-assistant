@@ -32,7 +32,12 @@ describe('runAnalysis', () => {
     });
     vi.mocked(news.getNews).mockResolvedValue([]);
     vi.mocked(vix.getIndiaVix).mockResolvedValue({ current: 15, change: 0, sentiment: 'normal' });
-    vi.mocked(kiteOptions.getOptionChain).mockResolvedValue({ quotes: {}, finalOptions: [] });
+    vi.mocked(kiteOptions.getOptionChain).mockResolvedValue({ 
+      quotes: {}, 
+      finalOptions: [], 
+      nearestExpiry: '2024-05-30', 
+      selectedStrikes: [] 
+    });
     vi.mocked(LLMService.prototype.analyzeWithAI).mockResolvedValue({
       decision: 'BUY',
       reason: 'test',

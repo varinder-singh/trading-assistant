@@ -11,9 +11,13 @@ export function calculateATR(candles: Candle[], period: number = 14): number {
   const trueRanges: number[] = []
 
   for (let i = 1; i < candles.length; i++) {
-    const high = candles[i].high
-    const low = candles[i].low
-    const prevClose = candles[i - 1].close
+    const current = candles[i];
+    const previous = candles[i - 1];
+    if (!current || !previous) continue;
+
+    const high = current.high
+    const low = current.low
+    const prevClose = previous.close
 
     const tr = Math.max(
       high - low,
@@ -29,7 +33,10 @@ export function calculateATR(candles: Candle[], period: number = 14): number {
   // Use the RMA formula for the rest: 
   // currentATR = (prevATR * (period - 1) + currentTR) / period
   for (let i = period; i < trueRanges.length; i++) {
-    atr = (atr * (period - 1) + trueRanges[i]) / period
+    const tr = trueRanges[i];
+    if (tr !== undefined) {
+      atr = (atr * (period - 1) + tr) / period
+    }
   }
 
   return atr

@@ -41,7 +41,7 @@ export async function getOptionChain(symbol: string = "NIFTY") {
       instrument_type: i.instrument_type,
       strike: i.strike,
       tradingsymbol: i.tradingsymbol,
-      instrument_token: i.instrument_token
+      instrument_token: Number(i.instrument_token)
     } as KiteOptionInstrumentForAnalysis))
 
   const symbols = finalOptions.map(

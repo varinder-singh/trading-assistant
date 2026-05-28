@@ -29,7 +29,7 @@ export async function getYesterdayClosingOI(tokens: number[]): Promise<Map<numbe
       const data = await kc.getHistoricalData(token, "day", from, to, false, true)
       if (data && data.length > 0) {
         const lastCandle = data[data.length - 1]
-        if (lastCandle.oi !== undefined) {
+        if (lastCandle && lastCandle.oi !== undefined) {
           oiMap.set(token, lastCandle.oi)
         }
       }

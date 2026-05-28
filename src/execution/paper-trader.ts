@@ -46,20 +46,22 @@ export class PaperTrader extends EventEmitter {
             existing.avgEntryPrice = totalCost / totalQty;
             existing.quantity = totalQty;
           } else {
-            this.positions.set(trade.symbol, {
+            const pos: PaperPosition = {
               symbol: trade.symbol,
               token: trade.token || 0,
-              strike: trade.strike_price || undefined,
               side: "BUY",
               quantity: trade.quantity,
               avgEntryPrice: trade.entry_price,
               currentPrice: trade.entry_price,
               unrealizedPnL: 0,
               realizedPnL: 0,
-              aiStopLoss: trade.ai_stop_loss || undefined,
-              aiTarget: trade.ai_target || undefined,
               timestamp: new Date(trade.opened_at),
-            });
+            };
+            if (trade.strike_price) pos.strike = trade.strike_price;
+            if (trade.ai_stop_loss) pos.aiStopLoss = trade.ai_stop_loss;
+            if (trade.ai_target) pos.aiTarget = trade.ai_target;
+            
+            this.positions.set(trade.symbol, pos);
           }
         }
         this.initialized = true;
@@ -231,7 +233,6 @@ export class PaperTrader extends EventEmitter {
       id: orderId,
       symbol: params.symbol,
       token: params.token,
-      strike: params.strike || params.context?.aiStrike,
       side: params.side,
       quantity: params.quantity,
       price: params.price,
@@ -239,6 +240,8 @@ export class PaperTrader extends EventEmitter {
       status: "COMPLETE",
       timestamp: new Date(),
     };
+    const strike = params.strike || params.context?.aiStrike;
+    if (strike) order.strike = strike;
 
     this.orders.push(order);
     await this.updatePosition(order, params.context);
@@ -259,6 +262,7 @@ export class PaperTrader extends EventEmitter {
         trend_15m: params.context?.trend15m || null,
         ai_stop_loss: params.context?.aiStopLoss || null,
         ai_target: params.context?.aiTarget || null,
+        exit_reason: null,
         setup: params.context?.aiSetup || null,
         strategy_context: params.context?.strategyContext ? JSON.stringify(params.context.strategyContext) : null,
       }).catch(err => console.error("❌ Failed to save paper trade to DB:", err));
@@ -270,13 +274,13 @@ export class PaperTrader extends EventEmitter {
     // we should invalidate that SL to prevent an immediate exit loop.
     const pos = this.positions.get(order.symbol);
     if (pos && pos.side === "BUY") {
-      if (pos.aiStopLoss && pos.aiStopLoss >= order.price!) {
+      if (pos.aiStopLoss !== undefined && pos.aiStopLoss >= order.price!) {
         console.warn(`⚠️ [PAPER TRADE] Invalid SL (${pos.aiStopLoss}) for BUY at ${order.price}. Disabling SL for this position to prevent immediate exit.`);
-        pos.aiStopLoss = undefined;
+        delete pos.aiStopLoss;
       }
-      if (pos.aiTarget && pos.aiTarget <= order.price!) {
+      if (pos.aiTarget !== undefined && pos.aiTarget <= order.price!) {
         console.warn(`⚠️ [PAPER TRADE] Invalid Target (${pos.aiTarget}) for BUY at ${order.price}. Disabling Target for this position.`);
-        pos.aiTarget = undefined;
+        delete pos.aiTarget;
       }
     }
 
@@ -334,22 +338,24 @@ export class PaperTrader extends EventEmitter {
         if (context?.aiTarget) existing.aiTarget = context.aiTarget;
         if (order.strike) existing.strike = order.strike;
       } else {
-        this.positions.set(order.symbol, {
+        const pos: PaperPosition = {
           symbol: order.symbol,
           token: order.token,
-          strike: order.strike,
           side: "BUY",
           quantity: order.quantity,
           avgEntryPrice: order.price!,
           currentPrice: order.price!,
           unrealizedPnL: 0,
           realizedPnL: 0,
-          aiStopLoss: context?.aiStopLoss,
-          aiTarget: context?.aiTarget,
-          aiSetup: context?.aiSetup,
-          strategyContext: context?.strategyContext,
           timestamp: new Date(),
-        });
+        };
+        if (order.strike) pos.strike = order.strike;
+        if (context?.aiStopLoss) pos.aiStopLoss = context.aiStopLoss;
+        if (context?.aiTarget) pos.aiTarget = context.aiTarget;
+        if (context?.aiSetup) pos.aiSetup = context.aiSetup;
+        if (context?.strategyContext) pos.strategyContext = context.strategyContext;
+        
+        this.positions.set(order.symbol, pos);
       }
     } else {
       // Simple SELL logic: Close position

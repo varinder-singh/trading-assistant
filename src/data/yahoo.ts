@@ -37,13 +37,17 @@ export async function getMultiTimeframeCandles(symbol: string) {
     const chunk = candles1m.slice(i, i + 3)
     if (chunk.length === 0) continue
 
+    const first = chunk[0];
+    const last = chunk[chunk.length - 1];
+    if (!first || !last) continue;
+
     candles3m.push({
-      time: chunk[0].time,
-      open: chunk[0].open,
+      time: first.time,
+      open: first.open,
       high: Math.max(...chunk.map(c => c.high)),
       low: Math.min(...chunk.map(c => c.low)),
-      close: chunk[chunk.length - 1].close,
-      volume: chunk.reduce((sum, c) => sum + c.volume, 0),
+      close: last.close,
+      volume: chunk.reduce((sum, c) => sum + (c.volume || 0), 0),
     })
   }
 
