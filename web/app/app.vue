@@ -30,6 +30,10 @@ const expandedTradeId = ref<string | null>(null)
 const notifications = ref<any[]>([])
 
 function addNotification(notif: any) {
+  // Prevent duplicate notifications
+  const exists = notifications.value.some((n) => n.title === notif.title && n.message === notif.message)
+  if (exists) return
+
   const id = Math.random().toString(36).substr(2, 9)
   notifications.value.push({ id, ...notif })
   setTimeout(() => {
@@ -502,9 +506,8 @@ onUnmounted(() => {
                       class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
                       :class="pos.unrealizedPnL >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'"
                     >
-                      {{ pos.unrealizedPnL >= 0 ? "+" : "" }}{{ pos.unrealizedPnL.toFixed(2) }}
-                    </span>
-                  </div>
+                      {{ pos.unrealizedPnL >= 0 ? "+" : "" }}{{ (pos.unrealizedPnL * 65).toFixed(2) }}
+                    </span>                  </div>
                   <div class="grid grid-cols-2 gap-2 text-[10px]">
                     <div>
                       <div class="text-gray-400 uppercase font-bold">Qty</div>
@@ -627,7 +630,7 @@ onUnmounted(() => {
                 <tr
                   class="bg-gray-50/50 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100"
                 >
-                  <th class="px-6 py-4">Date</th>
+                  <th class="px-6 py-4">Date (In/Out)</th>
                   <th class="px-6 py-4">Symbol</th>
                   <th class="px-6 py-4">Side</th>
                   <th class="px-6 py-4 text-right">Entry</th>
@@ -646,9 +649,17 @@ onUnmounted(() => {
                     @click="toggleTradeExpand(trade.id)"
                   >
                     <td class="px-6 py-4 text-xs text-gray-500 font-medium">
-                      {{ new Date(trade.opened_at).toLocaleDateString() }}
-                      <div class="text-[10px] opacity-50">
-                        {{ new Date(trade.opened_at).toLocaleTimeString() }}
+                      <div class="space-y-1">
+                        <div class="whitespace-nowrap">
+                          <span class="text-[9px] font-black text-gray-400 mr-1 uppercase">In:</span>
+                          {{ new Date(trade.opened_at).toLocaleDateString() }}
+                          <span class="text-[10px] opacity-50 ml-1">{{ new Date(trade.opened_at).toLocaleTimeString() }}</span>
+                        </div>
+                        <div v-if="trade.closed_at" class="whitespace-nowrap">
+                          <span class="text-[9px] font-black text-indigo-400 mr-1 uppercase">Out:</span>
+                          {{ new Date(trade.closed_at).toLocaleDateString() }}
+                          <span class="text-[10px] opacity-50 ml-1">{{ new Date(trade.closed_at).toLocaleTimeString() }}</span>
+                        </div>
                       </div>
                     </td>
                     <td class="px-6 py-4">
@@ -680,7 +691,7 @@ onUnmounted(() => {
                         class="font-mono text-sm font-black"
                         :class="trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'"
                       >
-                        {{ trade.pnl >= 0 ? "+" : "" }}{{ trade.pnl.toFixed(2) }}
+                        {{ trade.pnl >= 0 ? "+" : "" }}{{ (trade.pnl * 65).toFixed(2) }}
                       </span>
                       <span v-else class="text-gray-300">—</span>
                     </td>

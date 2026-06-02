@@ -41,6 +41,11 @@ describe("runAnalysis", () => {
       nearestExpiry: "2024-05-30",
       selectedStrikes: [],
     })
+    vi.mocked(LLMService.prototype.evaluateMarketState).mockResolvedValue({
+      activeAgent: "SCALPER",
+      confidence: 100,
+      rationale: "test",
+    })
     vi.mocked(LLMService.prototype.analyzeWithAI).mockResolvedValue({
       decision: "BUY",
       reason: "test",
@@ -61,7 +66,8 @@ describe("runAnalysis", () => {
         tf1h: expect.any(Object),
         tf15m: expect.any(Object),
         tf3m: expect.any(Object),
-      })
+      }),
+      "SCALPER"
     )
   })
 })

@@ -130,6 +130,7 @@ export default defineWebSocketHandler({
               tf15m: tf,
               aiDecision: decision,
               vix,
+              agentType,
             } = await runAnalysis(symbol, client.mode, context, client.lastDecision)
             client.lastDecision = decision
 
@@ -139,7 +140,7 @@ export default defineWebSocketHandler({
               const option = await getOptionToken(symbol, decision.strike, type)
 
               if (option) {
-                console.log(`[ws] Executing Paper Trade for ${option.symbol}...`)
+                console.log(`[ws] Executing Paper Trade for ${option.symbol} (${agentType} Agent)...`)
                 const ticker = getTicker()
                 ticker.subscribe([option.token])
                 ticker.setMode(ticker.modeFull, [option.token])
@@ -158,8 +159,19 @@ export default defineWebSocketHandler({
                 const optionRiskPoints = indexRiskPoints * estimatedDelta
 
                 // 3. Calculate Final Premium Exit Levels
-                const calculatedSl = entryPrice - optionRiskPoints
+                let calculatedSl = entryPrice - optionRiskPoints
                 const calculatedTarget = entryPrice + optionRiskPoints * (decision.riskRewardRatio || 1.5)
+
+                // SAFETY FLOOR: Prevent negative SL.
+                // TREND agent is allowed more breathing room (down to tick size) to avoid SL hunting.
+                // SCALPER and others are capped at 20% to prevent disaster drawdown.
+                const floorPercentage = agentType === "TREND" ? 0 : 0.2
+                const minAllowedSl = Math.max(entryPrice * floorPercentage, 0.05)
+                
+                if (calculatedSl < minAllowedSl) {
+                  console.warn(`⚠️ [ws] Calculated SL (${calculatedSl.toFixed(2)}) is below safety floor for ${agentType}. Capping at: ${minAllowedSl.toFixed(2)}`)
+                  calculatedSl = minAllowedSl
+                }
 
                 console.log(
                   `[ws] Risk Translation: Index Risk ${indexRiskPoints.toFixed(2)} pts -> Option Risk ${optionRiskPoints.toFixed(2)} pts`
@@ -185,6 +197,7 @@ export default defineWebSocketHandler({
                       isCompression: tf.dailyContext?.isCompression,
                       atr14: tf.dailyContext?.atr14,
                       indexSl: decision.indexStopLoss,
+                      agentType,
                     },
                     vixLevel: vix.current,
                     rsiLevel: tf.rsi,

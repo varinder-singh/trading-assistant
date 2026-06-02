@@ -107,10 +107,17 @@ export class PaperTrader extends EventEmitter {
                 ? "BANKNIFTY"
                 : pos.symbol
 
-            const { decision, marketData } = await evaluatePosition(symbol, pos)
+            const { decision, marketData, agentType } = await evaluatePosition(symbol, pos)
+
+            // Update stored agent type if upgraded
+            if (!pos.strategyContext) pos.strategyContext = {}
+            if (pos.strategyContext.agentType !== agentType) {
+              console.log(`[Risk Manager] Agent for ${pos.symbol} updated to ${agentType}`)
+              pos.strategyContext.agentType = agentType
+            }
 
             if (decision.decision === "EXIT") {
-              console.log(`[Risk Manager] AI signaled EXIT for ${pos.symbol}. Reason: ${decision.reason}`)
+              console.log(`[Risk Manager] AI (${agentType} Agent) signaled EXIT for ${pos.symbol}. Reason: ${decision.reason}`)
               await this.placeOrder({
                 symbol: pos.symbol,
                 token: pos.token,
@@ -123,23 +130,36 @@ export class PaperTrader extends EventEmitter {
               // TRANSLATE INDEX TRAILING STOP TO PREMIUM
               const currentIndexPrice = marketData.tf15m.price
 
-              // Logic: Calculate how many points the Index SL moved, then apply 50% of that to Option Premium
+              // Logic: Calculate how many points the Index SL moved, then apply delta to Option Premium
               const indexRiskPoints = Math.abs(currentIndexPrice - decision.newIndexStopLoss)
-              const optionRiskPoints = indexRiskPoints * 0.5
 
-              const newPremiumSl = pos.currentPrice - optionRiskPoints
+              // TREND Agent uses wider stops / different multiplier if needed
+              const estimatedDelta = agentType === "TREND" ? 0.4 : 0.5 // Trend agent might use slightly OTM/Lower delta for wider room
+              const optionRiskPoints = indexRiskPoints * estimatedDelta
+
+              let newPremiumSl = pos.currentPrice - optionRiskPoints
               const newPremiumTarget = pos.currentPrice + optionRiskPoints * (decision.riskRewardRatio || 1.5)
 
+              // SAFETY FLOOR: Prevent negative SL
+              // TREND agent is allowed more breathing room to avoid SL hunting
+              const floorPercentage = agentType === "TREND" ? 0 : 0.2
+              const minAllowedSl = Math.max(pos.currentPrice * floorPercentage, 0.05)
+              
+              if (newPremiumSl < minAllowedSl) {
+                console.warn(`[Risk Manager] Capping SL for ${pos.symbol} at ${agentType} safety floor: ${minAllowedSl.toFixed(2)}`)
+                newPremiumSl = minAllowedSl
+              }
+
               console.log(
-                `[Risk Manager] AI signaled UPDATE_SL for ${pos.symbol}. Index SL: ${decision.newIndexStopLoss} -> Premium SL: ${newPremiumSl.toFixed(2)}`
+                `[Risk Manager] AI (${agentType} Agent) signaled UPDATE_SL for ${pos.symbol}. Index SL: ${decision.newIndexStopLoss} -> Premium SL: ${newPremiumSl.toFixed(2)}`
               )
 
               pos.aiStopLoss = newPremiumSl
               pos.aiTarget = newPremiumTarget
 
               this.emit("notification", {
-                title: "🛡️ Trailing Stop Updated",
-                message: `${pos.symbol}: SL moved to ${newPremiumSl.toFixed(2)} based on Index structure`,
+                title: `🛡️ Trailing SL (${agentType})`,
+                message: `${pos.symbol}: SL moved to ${newPremiumSl.toFixed(2)}`,
                 type: "info",
               })
             }
@@ -153,11 +173,11 @@ export class PaperTrader extends EventEmitter {
   }
 
   private checkMarketStatus() {
-    const now = new Date()
-    // Convert to IST (UTC+5:30)
-    const istTime = new Date(now.getTime() + 5.5 * 60 * 60 * 1000)
-    const hours = istTime.getUTCHours()
-    const minutes = istTime.getUTCMinutes()
+    const istTime = new Date().toLocaleTimeString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      hour12: false,
+    })
+    const [hours, minutes] = istTime.split(":").map(Number)
 
     // 1. Square-off at 3:25 PM IST (15:25)
     if (hours === 15 && minutes === 25) {
@@ -387,6 +407,8 @@ export class PaperTrader extends EventEmitter {
           await tradeRepo
             .closeTrade(targetTrade.id, order.price!, context?.aiReasoning)
             .catch((err) => console.error("❌ Failed to close trade in DB:", err))
+        } else {
+          console.warn(`⚠️ [DB SYNC ISSUE] Could not find OPEN trade in database for ${order.symbol} to close it.`)
         }
 
         if (existing.quantity <= 0) {
