@@ -1,13 +1,51 @@
 import { getLLMProvider } from "./factory.js"
-import { STATIC_TRADING_RULES, POSITION_MANAGEMENT_RULES } from "./prompts.js"
+import { SCALPER_RULES, TREND_RULES, POSITION_MANAGEMENT_RULES, ORCHESTRATOR_PROMPT } from "./prompts.js"
+import type { TradingAgentType, OrchestratorResponse } from "./types.js"
 
 export class LLMService {
-  public async analyzeWithAI(input: any) {
-    console.log("[AI] Starting analyzeWithAI...")
+  public async evaluateMarketState(input: any): Promise<OrchestratorResponse> {
+    console.log("[AI] Starting evaluateMarketState (Orchestrator)...")
+    const systemMessage = ORCHESTRATOR_PROMPT
+    const userPrompt = `Evaluate the current macro context to decide the active trading agent:
+## MARKET DATA
+${JSON.stringify(input, null, 2)}
+`
+    try {
+      const provider = getLLMProvider()
+      const text = await provider.chat(
+        [
+          { role: "system", content: systemMessage },
+          { role: "user", content: userPrompt },
+        ],
+        { temperature: 0.2 }
+      )
+
+      const cleanedText = text
+        .replace(/^```(?:json)?\n?/, "")
+        .replace(/\n?```$/, "")
+        .trim()
+      return JSON.parse(cleanedText)
+    } catch (error: any) {
+      console.error("[AI] Error in evaluateMarketState:", error)
+      return {
+        activeAgent: "SCALPER",
+        confidence: 0,
+        rationale: "Orchestrator failed, falling back to SCALPER",
+      }
+    }
+  }
+
+  public async analyzeWithAI(input: any, agentType: TradingAgentType = "SCALPER") {
+    console.log(`[AI] Starting analyzeWithAI using ${agentType} agent...`)
     let userPrompt = ""
     let systemMessage =
       "You are a professional NSE options trader and technical analyst specializing in NIFTY intraday and swing trades. You produce precise, actionable trade plans based on technical indicators, options flow data (OI/COI), and market sentiment. You always respond with valid JSON only."
-    systemMessage += STATIC_TRADING_RULES
+
+    if (agentType === "TREND") {
+      systemMessage += TREND_RULES
+    } else {
+      systemMessage += SCALPER_RULES
+    }
 
     try {
       if (input.prompt) {
@@ -106,11 +144,16 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
     }
   }
 
-  public async managePositionWithAI(input: any) {
-    console.log("[AI] Starting managePositionWithAI...")
-    const systemMessage =
-      "You are a professional NSE Risk Manager. Your sole task is to manage an OPEN options position based on live technicals and OI flow. You must decide whether to HOLD, EXIT, or UPDATE_SL. Respond with valid JSON only." +
-      POSITION_MANAGEMENT_RULES
+  public async managePositionWithAI(input: any, agentType: TradingAgentType = "SCALPER") {
+    console.log(`[AI] Starting managePositionWithAI using ${agentType} agent...`)
+    let systemMessage =
+      "You are a professional NSE Risk Manager. Your sole task is to manage an OPEN options position based on live technicals and OI flow. You must decide whether to HOLD, EXIT, or UPDATE_SL. Respond with valid JSON only."
+
+    if (agentType === "TREND") {
+      systemMessage += TREND_RULES
+    } else {
+      systemMessage += POSITION_MANAGEMENT_RULES
+    }
 
     const userPrompt = `Evaluate the following open position against current market data:
 

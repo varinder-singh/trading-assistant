@@ -76,7 +76,12 @@ export const watchCommand = new Command("watch")
     analyzer.on("breakout", async (context) => {
       console.log("\n" + "=".repeat(50))
       console.log("⚡ BREAKOUT DETECTED")
-      const { tf15m: tf, aiDecision: decision, vix } = await runAnalysis(symbol, mode, context, lastDecision)
+      const {
+        tf15m: tf,
+        aiDecision: decision,
+        vix,
+        agentType,
+      } = await runAnalysis(symbol, mode, context, lastDecision)
       lastDecision = decision
 
       // --- Paper Trading Execution ---
@@ -111,6 +116,7 @@ export const watchCommand = new Command("watch")
               trend15m: tf.trend,
               aiStopLoss: lastDecision.stopLoss,
               aiTarget: lastDecision.targets && lastDecision.targets.length > 0 ? lastDecision.targets[0] : undefined,
+              agentType,
             },
           })
         }

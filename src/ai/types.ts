@@ -12,3 +12,11 @@ export interface LLMProvider {
   name: string
   chat(messages: LLMMessage[], options?: LLMOptions): Promise<string>
 }
+
+export type TradingAgentType = "SCALPER" | "TREND"
+
+export interface OrchestratorResponse {
+  activeAgent: TradingAgentType
+  confidence: number
+  rationale: string
+}

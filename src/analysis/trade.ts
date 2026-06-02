@@ -8,6 +8,7 @@ import { analyzeOptions } from "./kite-options.js"
 import { getIndiaVix } from "../data/vix.js"
 import { getYesterdayClosingOI } from "../data/kite-historical.js"
 import type { PaperPosition } from "../execution/types.js"
+import type { TradingAgentType } from "../ai/types.js"
 
 const llmService = new LLMService()
 
@@ -60,18 +61,37 @@ export async function runAnalysis(
   const intervalMins = Number(process.env.OI_SHIFT_INTERVAL_MINS || 5)
   const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price, yesterdayOiCache, intervalMins)
 
-  const aiDecision = await llmService.analyzeWithAI({
+  // 1. Call Orchestrator to decide agent
+  const marketContext = {
     tf1h,
     tf15m,
     tf3m,
     dailyContext,
-    sentiment,
     optionsAnalysisZerodha,
     vix,
     mode,
-    liveContext,
-    previousDecision,
-  })
+    time: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }),
+  }
+  const orchestrator = await llmService.evaluateMarketState(marketContext)
+  console.log(`[Orchestrator] Active Agent: ${orchestrator.activeAgent} (${orchestrator.confidence}%)`)
+  console.log(`[Orchestrator] Rationale: ${orchestrator.rationale}`)
+
+  // 2. Run analysis with the selected agent
+  const aiDecision = await llmService.analyzeWithAI(
+    {
+      tf1h,
+      tf15m,
+      tf3m,
+      dailyContext,
+      sentiment,
+      optionsAnalysisZerodha,
+      vix,
+      mode,
+      liveContext,
+      previousDecision,
+    },
+    orchestrator.activeAgent
+  )
 
   if (aiDecision.optionAction && aiDecision.optionAction !== "NONE") {
     console.log(`🎯 AI EXECUTION SIGNAL: ${aiDecision.optionAction} at strike ${aiDecision.strike}`)
@@ -123,6 +143,7 @@ export async function runAnalysis(
     candles1h: candles1h.slice(-100),
     candles15m: candles15m.slice(-100),
     candles3m: candles3m.slice(-100),
+    agentType: orchestrator.activeAgent,
   }
 }
 
@@ -151,14 +172,30 @@ export async function evaluatePosition(symbol: string, openPosition: PaperPositi
     dailyContext,
     optionsAnalysisZerodha,
     vix,
+    time: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }),
   }
 
-  const decision = await llmService.managePositionWithAI({
-    openPosition,
-    marketData,
-  })
+  // Determine agent type for management
+  // If the position was opened by SCALPER, check if orchestrator wants to upgrade to TREND
+  let agentType: TradingAgentType = openPosition.strategyContext?.agentType || "SCALPER"
 
-  console.log(`[Risk Manager] AI Decision for ${openPosition.symbol}: ${decision.decision} - ${decision.reason}`)
+  const orchestrator = await llmService.evaluateMarketState(marketData)
+  if (orchestrator.activeAgent === "TREND" && agentType === "SCALPER") {
+    console.log(`[Orchestrator] UPGRADING position management to TREND agent for ${openPosition.symbol}`)
+    agentType = "TREND"
+  }
 
-  return { decision, marketData }
+  const decision = await llmService.managePositionWithAI(
+    {
+      openPosition,
+      marketData,
+    },
+    agentType
+  )
+
+  console.log(
+    `[Risk Manager] AI Decision for ${openPosition.symbol}: ${decision.decision} (${agentType} Agent) - ${decision.reason}`
+  )
+
+  return { decision, marketData, agentType }
 }

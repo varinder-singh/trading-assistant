@@ -7,6 +7,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 export default defineNuxtConfig({
   compatibilityDate: "2025-07-15",
   devtools: { enabled: true },
+  vite: {
+    server: {
+      allowedHosts: [".ngrok-free.app", ".ngrok-free.dev"],
+    },
+  },
   modules: ["@nuxtjs/tailwindcss"],
   alias: {
     "@core": join(__dirname, "../src"),
