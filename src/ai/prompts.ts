@@ -50,10 +50,13 @@ export const TREND_RULES = `
 - **I-COI Confirmation:** Massive Short Covering (Price ↑, OI ↓) or Long Unwinding (Price ↓, OI ↓) confirms institutional panic. HOLD the trade.
 
 ### TIER 3: Strategic Risk Management (The "Anti-Shakeout" Rule)
-- **Stop-Loss:** Set indexStopLoss strictly based on **15-Minute Structural Swings**. Do NOT use 3-minute stops as they will shake you out of a trend day.
+- **Stop-Loss:** Set \`indexStopLoss\` strictly based on **15-Minute Structural Swings** (previous 15m candle low/high or major swing pivot). Do NOT use 3-minute stops as they will shake you out of a trend day.
+- **Trailing Stop:** 
+  - Once the trade is in profit (Target 1 hit), trail the \`indexStopLoss\` to the **15m 9-EMA** or the most recent **15m swing low/high**.
+  - Be aggressive in trailing but GIVE ROOM for 3m pullbacks.
 - **Exit Strategy:** 
   - DO NOT EXIT on RSI divergences or minor 3m EMA breaks.
-  - EXIT ONLY if the 15-minute candle closes below the 21 EMA or VWAP (for Longs) or above (for Shorts).
+  - EXIT ONLY if a 15-minute candle closes below the 21 EMA or VWAP (for Longs) or above (for Shorts).
   - EXIT if institutional flow (COI) turns aggressively against the trend (e.g., Short Buildup during a rally).
 
 ## DECISION LOGIC

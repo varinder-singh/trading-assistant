@@ -22,7 +22,9 @@ export class PaperTrader extends EventEmitter {
   private initialized = false
   private initializationPromise: Promise<void> | null = null
   private exitingPositions: Set<string> = new Set()
+  private recentExits: Map<string, Date> = new Map()
   public maxConcurrentPositions = Number(process.env.MAX_PAPER_POSITIONS || 2)
+  public entryCooldownMins = Number(process.env.ENTRY_COOLDOWN_MINS || 5)
 
   constructor() {
     super()
@@ -134,15 +136,31 @@ export class PaperTrader extends EventEmitter {
               const indexRiskPoints = Math.abs(currentIndexPrice - decision.newIndexStopLoss)
 
               // TREND Agent uses wider stops / different multiplier if needed
-              const estimatedDelta = agentType === "TREND" ? 0.4 : 0.5 // Trend agent might use slightly OTM/Lower delta for wider room
+              // Trend trades often use deep ITM or further ATM, so delta varies.
+              // For TREND, we assume a slightly lower delta to give it more breathing room on premium swings.
+              const estimatedDelta = agentType === "TREND" ? 0.45 : 0.6 
               const optionRiskPoints = indexRiskPoints * estimatedDelta
 
               let newPremiumSl = pos.currentPrice - optionRiskPoints
-              const newPremiumTarget = pos.currentPrice + optionRiskPoints * (decision.riskRewardRatio || 1.5)
+              
+              // Base target calculation
+              let newPremiumTarget = pos.currentPrice + optionRiskPoints * (decision.riskRewardRatio || 2.0)
+              
+              // TREND agents should let winners run: expand the target aggressively
+              if (agentType === "TREND") {
+                newPremiumTarget = pos.currentPrice + optionRiskPoints * (decision.riskRewardRatio ? decision.riskRewardRatio * 1.5 : 4.0)
+              }
+
+              // Dynamic Target Trailing: Only update target if it moves higher (never shrink the target)
+              if (pos.aiTarget && newPremiumTarget < pos.aiTarget) {
+                newPremiumTarget = pos.aiTarget
+              } else {
+                pos.aiTarget = newPremiumTarget
+              }
 
               // SAFETY FLOOR: Prevent negative SL
               // TREND agent is allowed more breathing room to avoid SL hunting
-              const floorPercentage = agentType === "TREND" ? 0 : 0.2
+              const floorPercentage = agentType === "TREND" ? 0.02 : 0.2 // Minimal floor for TREND to stay in the game
               const minAllowedSl = Math.max(pos.currentPrice * floorPercentage, 0.05)
               
               if (newPremiumSl < minAllowedSl) {
@@ -246,6 +264,19 @@ export class PaperTrader extends EventEmitter {
           console.log(msg)
           return { success: false, error: `Position already exists for strike ${strike}` }
         }
+
+        // 4. CHECK COOLDOWN (PREVENT RE-ENTRY)
+        const exitKey = `${params.symbol}_${strike}`
+        const lastExit = this.recentExits.get(exitKey)
+        if (lastExit) {
+          const diffMs = new Date().getTime() - lastExit.getTime()
+          const diffMins = diffMs / (60 * 1000)
+          if (diffMins < this.entryCooldownMins) {
+            const msg = `⏳ [PAPER TRADE] Re-entry blocked for ${params.symbol} (Strike: ${strike}). Cooldown: ${diffMins.toFixed(1)}/${this.entryCooldownMins} mins.`
+            console.log(msg)
+            return { success: false, error: "Re-entry cooldown active" }
+          }
+        }
       }
     }
 
@@ -254,6 +285,12 @@ export class PaperTrader extends EventEmitter {
         return { success: false, error: "Exit already in progress" }
       }
       this.exitingPositions.add(params.symbol)
+
+      // Record exit for cooldown
+      const strike = params.strike || this.positions.get(params.symbol)?.strike
+      if (strike) {
+        this.recentExits.set(`${params.symbol}_${strike}`, new Date())
+      }
     }
 
     const orderId = `paper_${Math.random().toString(36).substr(2, 9)}`

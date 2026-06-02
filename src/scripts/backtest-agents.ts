@@ -20,8 +20,9 @@ async function runBacktest() {
     const allTrades = await tradeRepo.getAllTrades()
     // Support both ISO (2026-05-29T...) and Locale (29/05/2026, ...) formats
     const targetTrades = allTrades.filter((t) => {
-      return t.opened_at.includes(dateArg) || 
-             new Date(t.opened_at).toLocaleDateString('en-CA') === dateArg // en-CA gives YYYY-MM-DD
+      const openedAt = t.opened_at || ""
+      return openedAt.includes(dateArg) || 
+             new Date(openedAt).toLocaleDateString('en-CA') === dateArg // en-CA gives YYYY-MM-DD
     })
 
     if (targetTrades.length === 0) {

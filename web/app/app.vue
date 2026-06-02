@@ -25,9 +25,11 @@ const livePrice = ref<number | null>(null)
 const breakouts = ref<any[]>([])
 const portfolio = ref<any[]>([])
 const tradeHistory = ref<any[]>([])
-const currentView = ref<"live" | "history">("live")
+const currentView = ref<"live" | "history" | "logs">("live")
 const expandedTradeId = ref<string | null>(null)
 const notifications = ref<any[]>([])
+const serverLogs = ref<string[]>([])
+const logsContainer = ref<HTMLElement | null>(null)
 
 function addNotification(notif: any) {
   // Prevent duplicate notifications
@@ -50,7 +52,15 @@ async function fetchHistory() {
   }
 }
 
-function toggleView(view: "live" | "history") {
+function scrollToBottom() {
+  nextTick(() => {
+    if (logsContainer.value) {
+      logsContainer.value.scrollTop = logsContainer.value.scrollHeight
+    }
+  })
+}
+
+function toggleView(view: "live" | "history" | "logs") {
   currentView.value = view
   if (view === "history") {
     fetchHistory()
@@ -60,6 +70,8 @@ function toggleView(view: "live" | "history") {
         chart.applyOptions({ width: chartContainer.value.clientWidth })
       }
     })
+  } else if (view === "logs") {
+    scrollToBottom()
   }
 }
 
@@ -96,6 +108,15 @@ function connectWebSocket() {
       const price = msg.data.last_price
       livePrice.value = price
       updateChart(price)
+    } else if (msg.type === "log") {
+      serverLogs.value.push(msg.data)
+      if (serverLogs.value.length > 1000) serverLogs.value.shift()
+      if (currentView.value === "logs") {
+        scrollToBottom()
+      }
+    } else if (msg.type === "analysis") {
+      analysisResult.value = msg.data
+      initChart()
     } else if (msg.type === "breakout") {
       breakouts.value.unshift(msg.data)
       if (breakouts.value.length > 5) breakouts.value.pop()
@@ -336,6 +357,13 @@ onUnmounted(() => {
             "
           >
             Trade History
+          </button>
+          <button
+            @click="toggleView('logs')"
+            class="px-4 py-2 text-sm font-bold rounded-lg transition-all"
+            :class="currentView === 'logs' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+          >
+            Server Logs
           </button>
         </nav>
 
@@ -630,7 +658,8 @@ onUnmounted(() => {
                 <tr
                   class="bg-gray-50/50 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100"
                 >
-                  <th class="px-6 py-4">Date (In/Out)</th>
+                  <th class="px-6 py-4">Opened At</th>
+                  <th class="px-6 py-4">Closed At</th>
                   <th class="px-6 py-4">Symbol</th>
                   <th class="px-6 py-4">Side</th>
                   <th class="px-6 py-4 text-right">Entry</th>
@@ -649,18 +678,17 @@ onUnmounted(() => {
                     @click="toggleTradeExpand(trade.id)"
                   >
                     <td class="px-6 py-4 text-xs text-gray-500 font-medium">
-                      <div class="space-y-1">
-                        <div class="whitespace-nowrap">
-                          <span class="text-[9px] font-black text-gray-400 mr-1 uppercase">In:</span>
-                          {{ new Date(trade.opened_at).toLocaleDateString() }}
-                          <span class="text-[10px] opacity-50 ml-1">{{ new Date(trade.opened_at).toLocaleTimeString() }}</span>
-                        </div>
-                        <div v-if="trade.closed_at" class="whitespace-nowrap">
-                          <span class="text-[9px] font-black text-indigo-400 mr-1 uppercase">Out:</span>
-                          {{ new Date(trade.closed_at).toLocaleDateString() }}
-                          <span class="text-[10px] opacity-50 ml-1">{{ new Date(trade.closed_at).toLocaleTimeString() }}</span>
-                        </div>
+                      <div class="whitespace-nowrap">
+                        {{ new Date(trade.opened_at).toLocaleDateString() }}
+                        <span class="text-[10px] opacity-50 ml-1">{{ new Date(trade.opened_at).toLocaleTimeString() }}</span>
                       </div>
+                    </td>
+                    <td class="px-6 py-4 text-xs text-gray-500 font-medium">
+                      <div v-if="trade.closed_at" class="whitespace-nowrap">
+                        {{ new Date(trade.closed_at).toLocaleDateString() }}
+                        <span class="text-[10px] opacity-50 ml-1">{{ new Date(trade.closed_at).toLocaleTimeString() }}</span>
+                      </div>
+                      <span v-else class="text-gray-300">—</span>
                     </td>
                     <td class="px-6 py-4">
                       <span class="text-sm font-black text-gray-900">{{ trade.symbol }}</span>
@@ -713,7 +741,7 @@ onUnmounted(() => {
                   </tr>
                   <!-- Expandable AI Rationale Row -->
                   <tr v-if="expandedTradeId === trade.id" class="bg-indigo-50/30">
-                    <td colspan="10" class="px-8 py-6">
+                    <td colspan="11" class="px-8 py-6">
                       <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
                         <div class="md:col-span-2 space-y-6">
                           <div>
@@ -823,6 +851,35 @@ onUnmounted(() => {
                 </tr>
               </tbody>
             </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Logs View -->
+      <div v-show="currentView === 'logs'" class="animate-in fade-in slide-in-from-bottom duration-500">
+        <div class="bg-gray-900 rounded-2xl shadow-2xl border border-gray-800 overflow-hidden flex flex-col h-[70vh]">
+          <div class="p-4 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="flex gap-1.5">
+                <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                <div class="w-3 h-3 rounded-full bg-green-500"></div>
+              </div>
+              <h2 class="text-sm font-bold text-gray-300 uppercase tracking-widest flex items-center gap-2">
+                <Zap class="w-4 h-4 text-indigo-400" />
+                Backend Terminal
+              </h2>
+            </div>
+            <button @click="serverLogs = []" class="text-xs font-bold text-gray-500 hover:text-white transition-colors">
+              Clear
+            </button>
+          </div>
+          <div ref="logsContainer" class="flex-1 overflow-y-auto p-6 font-mono text-xs space-y-1.5 selection:bg-indigo-500/30">
+            <div v-if="serverLogs.length === 0" class="text-gray-600 italic">Awaiting logs from server...</div>
+            <div v-for="(log, i) in serverLogs" :key="i" class="text-gray-300 whitespace-pre-wrap break-words leading-relaxed">
+              <span class="text-indigo-500 mr-2 opacity-50">[{{ new Date().toLocaleTimeString() }}]</span>
+              <span>{{ log }}</span>
+            </div>
           </div>
         </div>
       </div>
