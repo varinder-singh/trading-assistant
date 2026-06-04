@@ -37,6 +37,7 @@ export type KiteOptionsAnalysis = {
   atmSentiment: "bullish" | "bearish" | "neutral"
   support: number
   resistance: number
+  marketFlow: "SHORT_COVERING" | "LONG_BUILDUP" | "SHORT_BUILDUP" | "LONG_UNWINDING" | "NEUTRAL"
   rows: KiteOptionOiRow[]
   windowStats?: {
     topShortCovering: KiteOptionOiRow[]
@@ -169,9 +170,24 @@ export function analyzeOptions(
   const pcr = callOI > 0 ? putOI / callOI : 0
   const pcrAtm = atmCallOI > 0 ? atmPutOI / atmCallOI : 0
 
+  // Aggregate Market Flow Calculation
+  let totalCoi = 0
+  let weightedPriceChange = 0
+  for (const row of rows) {
+    if (row.intervalOi) {
+      totalCoi += row.intervalOi
+      weightedPriceChange += row.intervalOi * (row.buildup === "Short Covering" || row.buildup === "Long Buildup" ? 1 : -1)
+    }
+  }
+
+  let marketFlow: KiteOptionsAnalysis["marketFlow"] = "NEUTRAL"
+  if (totalCoi > 0) {
+    marketFlow = weightedPriceChange > 0 ? "LONG_BUILDUP" : "SHORT_BUILDUP"
+  } else if (totalCoi < 0) {
+    marketFlow = weightedPriceChange > 0 ? "SHORT_COVERING" : "LONG_UNWINDING"
+  }
+
   // CONTRARIAN PCR LOGIC (Matches AI Rules)
-  // High PCR (>1.2) = Bullish (Bottoming/Over-hedged)
-  // Low PCR (<0.8) = Bearish (Overbought/Frothy)
   const sentiment = pcr > 1.2 ? "bullish" : pcr < 0.8 ? "bearish" : "neutral"
   const atmSentiment = pcrAtm > 1.2 ? "bullish" : pcrAtm < 0.8 ? "bearish" : "neutral"
 
@@ -189,6 +205,7 @@ export function analyzeOptions(
     atmSentiment,
     support,
     resistance,
+    marketFlow,
     rows: rows.sort((a, b) => a.strike - b.strike || a.type.localeCompare(b.type)),
     windowStats: {
       topShortCovering: [...rows]

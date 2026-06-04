@@ -43,6 +43,14 @@ ${JSON.stringify(input, null, 2)}
 
     if (agentType === "TREND") {
       systemMessage += TREND_RULES
+      // Programmatic Math Injection: Inject Wave 5 target if available
+      const wave5Target = input.tf15m?.waveContext?.wave5Target || input.marketData?.tf15m?.waveContext?.wave5Target
+      if (wave5Target) {
+        systemMessage = systemMessage.replace(
+          /`Wave 5 Target = Wave 4 Low \+ \(1\.0 \* \(Wave 1 High - Wave 1 Low\)\)`/g,
+          `The mathematical Wave 5 Exhaustion Target is exactly ${wave5Target.toFixed(2)}. If price enters within 5 points of this level, shift trailing stop tightly.`
+        )
+      }
     } else {
       systemMessage += SCALPER_RULES
     }
@@ -56,11 +64,14 @@ ${JSON.stringify(input, null, 2)}
           const oiInsights = input.optionsAnalysisZerodha?.windowStats
             ? `\n- OI Window Insights (${input.optionsAnalysisZerodha.windowStats.intervalMins}m): Top Short Covering: ${input.optionsAnalysisZerodha.windowStats.topShortCovering.map((r: any) => r.symbol).join(", ")}`
             : ""
+          const flowInsight = input.optionsAnalysisZerodha?.marketFlow
+            ? `\n- Aggregate Market Flow: ${input.optionsAnalysisZerodha.marketFlow}`
+            : ""
 
           liveContextSection = `
 ## REAL-TIME WEBSOCKET CONTEXT (TRULY LIVE)
 - Trigger Reason: ${input.liveContext.reason}
-- Last Price: ${input.liveContext.tick.last_price}${oiInsights}
+- Last Price: ${input.liveContext.tick.last_price}${oiInsights}${flowInsight}
 - Momentum: ${input.liveContext.reason.includes("Volatility") ? "High Volatility detected" : "Price Action driven"}
 - Recent Ticks (last 60s): ${JSON.stringify(input.liveContext.recentTicks.map((t: any) => t.last_price))}
 
@@ -151,6 +162,14 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
 
     if (agentType === "TREND") {
       systemMessage += TREND_RULES
+      // Programmatic Math Injection: Inject Wave 5 target if available
+      const wave5Target = input.tf15m?.waveContext?.wave5Target || input.marketData?.tf15m?.waveContext?.wave5Target
+      if (wave5Target) {
+        systemMessage = systemMessage.replace(
+          /`Wave 5 Target = Wave 4 Low \+ \(1\.0 \* \(Wave 1 High - Wave 1 Low\)\)`/g,
+          `The mathematical Wave 5 Exhaustion Target is exactly ${wave5Target.toFixed(2)}. If price enters within 5 points of this level, shift trailing stop tightly.`
+        )
+      }
     } else {
       systemMessage += POSITION_MANAGEMENT_RULES
     }
