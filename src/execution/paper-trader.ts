@@ -57,14 +57,14 @@ export class PaperTrader extends EventEmitter {
           `[PaperTrader] Restoring ${openTrades.length} open trades and analyzing ${todayTrades.length} trades for today...`
         )
 
-        // Initialize today's stats
-        this.todayTradeCount = todayTrades.length
-        this.todayRealizedPnL = todayTrades.reduce((acc, t) => acc + (t.pnl || 0), 0)
-        console.log(`[PaperTrader] Today PnL from trades ${this.todayRealizedPnL}`)
+        // Use local variables to build state atomically
+        const newPositions = new Map<string, PaperPosition>()
+        let newTodayTradeCount = todayTrades.length
+        let newTodayRealizedPnL = todayTrades.reduce((acc, t) => acc + (t.pnl || 0), 0)
 
         for (const trade of openTrades) {
           // Group by symbol to reconstruct positions
-          const existing = this.positions.get(trade.symbol)
+          const existing = newPositions.get(trade.symbol)
           if (existing) {
             const totalQty = existing.quantity + trade.quantity
             const totalCost = existing.avgEntryPrice * existing.quantity + trade.entry_price * trade.quantity
@@ -87,13 +87,17 @@ export class PaperTrader extends EventEmitter {
             if (trade.ai_stop_loss) pos.aiStopLoss = trade.ai_stop_loss
             if (trade.ai_target) pos.aiTarget = trade.ai_target
 
-            this.positions.set(trade.symbol, pos)
+            newPositions.set(trade.symbol, pos)
           }
         }
 
-        // Check if trading should be halted based on restored stats
-        // Note: unrealizedPnL is 0 here until prices start ticking
+        // Apply new state
+        this.positions = newPositions
+        this.todayTradeCount = newTodayTradeCount
+        this.todayRealizedPnL = newTodayRealizedPnL
+        console.log(`[PaperTrader] Today PnL from trades ${this.todayRealizedPnL}`)
 
+        // Check if trading should be halted based on restored stats
         if (this.todayTradeCount >= this.maxDailyTrades) {
           console.log(`[PaperTrader] Trading halted on initialization. Trades: ${this.todayTradeCount}`)
           this.tradingHalted = true
@@ -116,6 +120,7 @@ export class PaperTrader extends EventEmitter {
         this.startPositionManager()
       } catch (err) {
         console.error("[PaperTrader] Failed to initialize:", err)
+        throw err // Rethrow so callers know it failed
       } finally {
         this.initializationPromise = null
       }

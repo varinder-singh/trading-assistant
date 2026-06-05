@@ -9,7 +9,7 @@ This document lists potential bugs, architectural weaknesses, and vulnerabilitie
 
 ## MAJOR
 
-1. **Race Condition in PaperTrader Initialization**: `PaperTrader.initialize()` is called asynchronously. If multiple trade orders are placed simultaneously before the first initialization completes, it could lead to duplicate state restoration or inconsistent position tracking.
+1. [FIXED] **Race Condition in PaperTrader Initialization**: `PaperTrader.initialize()` is called asynchronously. If multiple trade orders are placed simultaneously before the first initialization completes, it could lead to duplicate state restoration or inconsistent position tracking.
 2. [FIXED] **Ambiguous Trade Closure Logic**: In `PaperTrader.updatePosition` (SELL side), the system finds the "most recent open trade" for a symbol to close in the database. If multiple trades for the same symbol are open (due to DB sync issues or manual edits), it might close the wrong record, leading to data corruption in trade history.
 3. **Redundant DB Reads on Order Placement**: Every call to `placeOrder` triggers `await this.initialize()`. While it has a guard, this architectural pattern is inefficient and risks performance degradation under high activity.
 4. **Timezone-Dependent Market Logic**: The use of `new Date().toLocaleTimeString("en-IN", ...)` for market square-off and closing logic is brittle. It depends on the system's locale and timezone settings being correctly configured for Asia/Kolkata, which might fail on cloud servers or different environments.
