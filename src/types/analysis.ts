@@ -1,3 +1,8 @@
+import type { AISentimentResponse, AISuccessResponse, TradingAgentType } from "../ai/types.js"
+import type { KiteOptionsAnalysis } from "../analysis/kite-options.js"
+import type { VixData } from "../data/vix.js"
+import type { DailyContext } from "./technical-analysis.js"
+
 export type Analysis = {
   trend: string
   support: number
@@ -25,6 +30,59 @@ export interface Candle {
   time: number
 }
 
-export interface FifteenMinuteCandle extends Candle, Analysis {
+export interface SwingPoint {
+  type: "HIGH" | "LOW"
+  price: number
+  time: number
+}
+
+export interface WaveContext {
+  wave1High?: number
+  wave1Low?: number
+  wave2Low?: number
+  wave3High?: number
+  wave4Low?: number
+  wave5Target?: number
+  currentPhase: "WAVE_1" | "WAVE_2" | "WAVE_3" | "WAVE_4" | "WAVE_5" | "ABC_CORRECTION" | "CONSOLIDATION"
+  fibZones?: {
+    fib382: number
+    fib500: number
+    fib618: number
+  }
+}
+
+export interface OpeningRange {
+  high: number
+  low: number
+  broken?: "UP" | "DOWN" | "INSIDE"
+}
+
+export type TechnicalAnalysis = {
+  trend: string
+  support: number
+  resistance: number
+  vwap: number
+  vwapPosition: string
+  price: number
   rsi: number
+  timeframe?: string
+  ema?: Record<string, number>
+  swings?: SwingPoint[] | undefined
+  waveContext?: WaveContext | undefined
+  openingRange?: OpeningRange | undefined
+}
+
+export type TradeTechnicalAnalysis = {
+  tf1h: TechnicalAnalysis
+  tf15m: TechnicalAnalysis
+  tf3m: TechnicalAnalysis
+  dailyContext: DailyContext | null
+  aiDecision: AISuccessResponse | undefined
+  vix: VixData
+  sentiment: AISentimentResponse
+  optionsAnalysis: KiteOptionsAnalysis
+  candles1h: Candle[]
+  candles15m: Candle[]
+  candles3m: Candle[]
+  agentType: TradingAgentType
 }

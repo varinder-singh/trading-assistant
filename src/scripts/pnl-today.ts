@@ -18,13 +18,15 @@ async function calculateTodayPnL() {
   console.log(`Calculating PnL for ${todayIST}...`)
 
   const todayTrades = allTrades.filter((t) => {
-    const closedDate = t.closed_at ? new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Kolkata",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date(t.closed_at)) : null
-    
+    const closedDate = t.closed_at
+      ? new Intl.DateTimeFormat("en-CA", {
+          timeZone: "Asia/Kolkata",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }).format(new Date(t.closed_at))
+      : null
+
     return closedDate === todayIST
   })
 
@@ -37,9 +39,9 @@ async function calculateTodayPnL() {
   let unrealizedPnL = 0
 
   if (openTrades.length > 0) {
-    const tokens = openTrades.map(t => t.token).filter((t): t is number => t !== null)
+    const tokens = openTrades.map((t) => t.token).filter((t): t is number => t !== null)
     if (tokens.length > 0) {
-      const quotes = await kc.getQuote(tokens.map(t => t.toString()))
+      const quotes = await kc.getQuote(tokens.map((t) => t.toString()))
       for (const trade of openTrades) {
         if (trade.token && quotes[trade.token.toString()]?.last_price !== undefined) {
           const currentPrice = quotes[trade.token.toString()].last_price
@@ -54,8 +56,10 @@ async function calculateTodayPnL() {
   if (todayTrades.length === 0) {
     console.log("No trades closed today.")
   } else {
-    todayTrades.forEach(t => {
-      console.log(`${t.symbol} (${t.side}): Entry: ${t.entry_price}, Exit: ${t.exit_price}, Qty: ${t.quantity}, PnL: ${t.pnl?.toFixed(2)}`)
+    todayTrades.forEach((t) => {
+      console.log(
+        `${t.symbol} (${t.side}): Entry: ${t.entry_price}, Exit: ${t.exit_price}, Qty: ${t.quantity}, PnL: ${t.pnl?.toFixed(2)}`
+      )
     })
   }
 
@@ -64,14 +68,16 @@ async function calculateTodayPnL() {
     console.log("No open trades.")
   } else {
     // We already calculated unrealizedPnL above, but let's log them
-    const tokens = openTrades.map(t => t.token).filter((t): t is number => t !== null)
-    const quotes = tokens.length > 0 ? await kc.getQuote(tokens.map(t => t.toString())) : {}
-    
-    openTrades.forEach(t => {
+    const tokens = openTrades.map((t) => t.token).filter((t): t is number => t !== null)
+    const quotes = tokens.length > 0 ? await kc.getQuote(tokens.map((t) => t.toString())) : {}
+
+    openTrades.forEach((t) => {
       const q = t.token ? quotes[t.token.toString()] : undefined
       const currentPrice = q ? q.last_price : "N/A"
       const pnl = q ? (q.last_price - t.entry_price) * t.quantity : 0
-      console.log(`${t.symbol} (${t.side}): Entry: ${t.entry_price}, Current: ${currentPrice}, Qty: ${t.quantity}, UnPnL: ${pnl.toFixed(2)}`)
+      console.log(
+        `${t.symbol} (${t.side}): Entry: ${t.entry_price}, Current: ${currentPrice}, Qty: ${t.quantity}, UnPnL: ${pnl.toFixed(2)}`
+      )
     })
   }
 

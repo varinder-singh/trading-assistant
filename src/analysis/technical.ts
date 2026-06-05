@@ -1,12 +1,16 @@
-import type { Candle } from "../types/analysis.js"
+import type { Candle, TechnicalAnalysis } from "../types/analysis.js"
 import { detectTrend } from "../indicators/trend.js"
 import { calculateVWAP } from "../indicators/vwap.js"
 import { calculateRSI } from "../indicators/rsi.js"
 
 import { calculateATR } from "../indicators/atr.js"
 import { calculateEMA } from "../indicators/ema.js"
+import { calculateORB } from "../indicators/orb.js"
+import { calculateSwings } from "../indicators/swings.js"
+import { detectWaveStructure } from "../indicators/waves.js"
+import type { DailyContext } from "../types/technical-analysis.js"
 
-export function analyzeDailyContext(candles1d: Candle[]) {
+export function analyzeDailyContext(candles1d: Candle[]): DailyContext | null {
   if (candles1d.length < 15) return null
 
   const atr14 = calculateATR(candles1d, 14)
@@ -21,6 +25,7 @@ export function analyzeDailyContext(candles1d: Candle[]) {
   const pdr = pdh - pdl
 
   const isCompression = pdr < 0.7 * atr14
+  const openingRange = calculateORB(candles1d) ?? undefined
 
   return {
     atr14,
@@ -30,19 +35,8 @@ export function analyzeDailyContext(candles1d: Candle[]) {
     pdr,
     isCompression,
     currentDayOpen: currentDay.open,
+    openingRange,
   }
-}
-
-export type TechnicalAnalysis = {
-  trend: string
-  support: number
-  resistance: number
-  vwap: number
-  vwapPosition: string
-  price: number
-  rsi: number
-  timeframe?: string
-  ema?: Record<string, number>
 }
 
 export function analyzeTechnical(
@@ -74,6 +68,10 @@ export function analyzeTechnical(
     ema[period] = calculateEMA(candles, period)
   }
 
+  const swings = timeframe === "15m" ? calculateSwings(candles, 2) : undefined
+  const waveContext = timeframe === "15m" && swings ? detectWaveStructure(swings, last) : undefined
+  const openingRange = timeframe === "15m" ? (calculateORB(candles) ?? undefined) : undefined
+
   return {
     trend,
     support,
@@ -84,6 +82,9 @@ export function analyzeTechnical(
     rsi,
     timeframe,
     ema,
+    swings,
+    waveContext,
+    openingRange,
   }
 }
 
