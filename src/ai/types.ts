@@ -55,16 +55,43 @@ export type AIOptionAction = "BUY_CE" | "BUY_PE" | "NONE"
 export interface AISuccessResponse {
   decision: AIDecision
   setup: AIMarketActivitySetup
-  macroTrend: AIMacroTrend
+  macroTrend: AIMacroTrend | string
   instrument: AIInstrument
   optionAction: AIOptionAction
-  strike: number
+  strike: number | null
   reason: string // "<2-3 sentences citing technicals AND specific OI/buildup signals>",
   confidence: number // <0-100>,
   entry: number // - Current Index Price or Breakout Level>,
   stopLoss: number // - ACTUAL INDEX LEVEL FOR INVALIDATION>,
   targets: number[]
   riskRewardRatio: number //<e.g. 1.5 or 2.0>
+}
+
+export interface TechnicalAgentResponse {
+  bias: "BULLISH" | "BEARISH" | "NEUTRAL"
+  setup: AIMarketActivitySetup
+  waveContext: {
+    currentWave: string
+    description: string
+  }
+  confidence: number
+  keyLevels: {
+    support: number
+    resistance: number
+  }
+  reason: string
+}
+
+export interface OptionsAgentResponse {
+  bias: "BULLISH" | "BEARISH" | "NEUTRAL"
+  confidence: number
+  signals: string[]
+  pcr: number
+  oiWall: {
+    resistance: number
+    support: number
+  }
+  reason: string
 }
 
 export interface AIFailureResponse {

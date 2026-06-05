@@ -21,7 +21,7 @@ async function runBacktest() {
     // Support both ISO (2026-05-29T...) and Locale (29/05/2026, ...) formats
     const targetTrades = allTrades.filter((t) => {
       const openedAt = t.opened_at || ""
-      return openedAt.includes(dateArg) || new Date(openedAt).toLocaleDateString("en-CA") === dateArg // en-CA gives YYYY-MM-DD
+      return (dateArg && openedAt.includes(dateArg)) || new Date(openedAt).toLocaleDateString("en-CA") === dateArg // en-CA gives YYYY-MM-DD
     })
 
     if (targetTrades.length === 0) {

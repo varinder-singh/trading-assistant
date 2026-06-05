@@ -46,13 +46,19 @@ describe("runAnalysis", () => {
       confidence: 100,
       rationale: "test",
     })
-    vi.mocked(LLMService.prototype.analyzeWithAI).mockResolvedValue({
+    vi.mocked(LLMService.prototype.analyzeWithEnsemble).mockResolvedValue({
       decision: "BUY",
+      setup: "TRUE_BREAKOUT",
+      macroTrend: "BULLISH",
+      instrument: "OPTIONS",
+      optionAction: "BUY_CE",
+      strike: 22500,
       reason: "test",
-      confidence: 0.9,
+      confidence: 90,
       entry: 100,
       stopLoss: 90,
       targets: [120],
+      riskRewardRatio: 2,
     })
 
     const result = await runAnalysis("NIFTY", "intraday")
@@ -60,8 +66,8 @@ describe("runAnalysis", () => {
     expect(result.tf1h).toBeDefined()
     expect(result.tf15m).toBeDefined()
     expect(result.tf3m).toBeDefined()
-    expect(result.aiDecision.decision).toBe("BUY")
-    expect(LLMService.prototype.analyzeWithAI).toHaveBeenCalledWith(
+    expect(result.aiDecision?.decision).toBe("BUY")
+    expect(LLMService.prototype.analyzeWithEnsemble).toHaveBeenCalledWith(
       expect.objectContaining({
         tf1h: expect.any(Object),
         tf15m: expect.any(Object),

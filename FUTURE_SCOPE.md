@@ -4,15 +4,17 @@ This document outlines proposed ideas for improving the Trading Assistant's mult
 
 ## Multi-Agent Setup Improvements
 
-### 1. Collaborative Decision Making (Ensemble Agents)
-- **Current**: A single agent (Scalper or Trend) makes the final decision.
-- **Future**: Multiple agents (e.g., Sentiment Agent, Technical Agent, Options Agent) provide independent assessments. A **Consensus Agent** or **Weighted Voting System** then aggregates these into a final trade signal.
+### 1. Collaborative Decision Making (Ensemble Agents) [IMPLEMENTED]
+- **Current**: Multiple agents (Technical Agent, Options Agent) provide independent assessments. A **Consensus Agent** aggregates these into a final trade signal.
+- **Benefits**: Reduces single-agent bias and improves validation of technical setups against order flow.
 
-### 2. Specialized Risk Management Agent
-- **Future**: A dedicated agent that only monitors open positions. This agent would be responsible for "trailing" stops based on real-time volatility and news, rather than just periodic re-evaluation.
+### 2. Specialized Risk Management Agent [IMPLEMENTED]
+- **Current**: A dedicated agent ("Guardian") that monitors open positions and manages trailing stops based on real-time volatility, wave maturity, and news.
+- **Benefits**: Better capital preservation and optimized exits during wave exhaustion.
 
-### 3. Memory-Augmented Agents (RAG for Trading)
-- **Future**: Implement a Vector Database (like Pinecone or local Chroma) to store past "good" and "bad" trades with their market contexts. Agents can query this memory to avoid repeating past mistakes and reinforce successful setups.
+### 3. Memory-Augmented Agents (RAG-lite) [IMPLEMENTED]
+- **Current**: Uses a `MemoryService` to query past trade outcomes from SQLite based on market context (Trend, VIX). Agents use these lessons to avoid repeating past mistakes.
+- **Future**: Upgrade to a Vector Database (like Pinecone or local Chroma) for semantic search across all historical data points.
 
 ### 4. Self-Correction Loop (Backtesting Agent)
 - **Future**: An agent that automatically runs backtests on different prompt versions and technical parameters, optimizing the system's "personality" over time without human intervention.

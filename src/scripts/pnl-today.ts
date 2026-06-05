@@ -43,8 +43,10 @@ async function calculateTodayPnL() {
     if (tokens.length > 0) {
       const quotes = await kc.getQuote(tokens.map((t) => t.toString()))
       for (const trade of openTrades) {
-        if (trade.token && quotes[trade.token.toString()]?.last_price !== undefined) {
-          const currentPrice = quotes[trade.token.toString()].last_price
+        const tokenStr = trade.token?.toString()
+        const quote = tokenStr ? quotes[tokenStr] : undefined
+        if (quote) {
+          const currentPrice = quote.last_price
           const pnl = (currentPrice - trade.entry_price) * trade.quantity
           unrealizedPnL += pnl
         }

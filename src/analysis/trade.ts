@@ -77,8 +77,8 @@ export async function runAnalysis(
   console.log(`[Orchestrator] Active Agent: ${orchestrator.activeAgent} (${orchestrator.confidence}%)`)
   console.log(`[Orchestrator] Rationale: ${orchestrator.rationale}`)
 
-  // 2. Run analysis with the selected agent
-  const aiDecision = await llmService.analyzeWithAI(
+  // 2. Run analysis with the ensemble of agents
+  const aiDecision = await llmService.analyzeWithEnsemble(
     {
       tf1h,
       tf15m,

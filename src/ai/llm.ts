@@ -1,5 +1,13 @@
 import { getLLMProvider } from "./factory.js"
-import { SCALPER_RULES, TREND_RULES, POSITION_MANAGEMENT_RULES, ORCHESTRATOR_PROMPT } from "./prompts.js"
+import {
+  SCALPER_RULES,
+  TREND_RULES,
+  POSITION_MANAGEMENT_RULES,
+  ORCHESTRATOR_PROMPT,
+  TECHNICAL_AGENT_PROMPT,
+  OPTIONS_AGENT_PROMPT,
+  CONSENSUS_AGENT_PROMPT,
+} from "./prompts.js"
 import type {
   TradingAgentType,
   OrchestratorResponse,
@@ -8,6 +16,7 @@ import type {
   AISentimentResponse,
 } from "./types.js"
 import { eventHub } from "../utils/event-hub.js"
+import { memoryService } from "./memory.js"
 
 export class LLMService {
   private emitUpdate(update: AgentUpdate) {
@@ -236,6 +245,93 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
     }
   }
 
+  public async analyzeWithEnsemble(
+    input: any,
+    agentType: TradingAgentType = "SCALPER"
+  ): Promise<AISuccessResponse | undefined> {
+    console.log(`[AI] Starting Ensemble Analysis (${agentType} regime)...`)
+
+    try {
+      const provider = getLLMProvider()
+      
+      // Fetch Memory
+      const trend = input.tf15m?.trend || "SIDEWAYS"
+      const vix = input.vix?.current || 15
+      const pastTrades = await memoryService.getSimilarTrades(trend, vix)
+      const memoryPrompt = memoryService.formatForPrompt(pastTrades)
+
+      const marketDataStr = JSON.stringify(input, null, 2)
+
+      // 1. Run Technical and Options agents in parallel
+      this.emitUpdate({
+        agent: "Ensemble",
+        status: "thinking",
+        message: "Technical and Options agents are analyzing in parallel with Memory access...",
+      })
+
+      const [techRes, optRes] = await Promise.all([
+        provider.chat([
+          { role: "system", content: TECHNICAL_AGENT_PROMPT + (agentType === "TREND" ? TREND_RULES : SCALPER_RULES) },
+          { role: "user", content: `${memoryPrompt}\n\nAnalyze this market state:\n${marketDataStr}` },
+        ]),
+        provider.chat([
+          { role: "system", content: OPTIONS_AGENT_PROMPT },
+          { role: "user", content: `${memoryPrompt}\n\nAnalyze this options flow:\n${marketDataStr}` },
+        ]),
+      ])
+
+      const cleanJson = (text: string) => text.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim()
+
+      const technical = JSON.parse(cleanJson(techRes))
+      const options = JSON.parse(cleanJson(optRes))
+
+      console.log("[AI] Technical Agent Bias:", technical.bias)
+      console.log("[AI] Options Agent Bias:", options.bias)
+
+      this.emitUpdate({
+        agent: "Consensus",
+        status: "thinking",
+        message: `Technical: ${technical.bias}, Options: ${options.bias}. Determining consensus...`,
+      })
+
+      // 2. Run Consensus Agent
+      const consensusPrompt = `
+Assess the following inputs and provide a final trade decision.
+## TECHNICAL ASSESSMENT
+${JSON.stringify(technical, null, 2)}
+
+## OPTIONS ASSESSMENT
+${JSON.stringify(options, null, 2)}
+
+## RAW MARKET DATA (CONTEXT)
+${marketDataStr}
+`
+      const consensusRes = await provider.chat([
+        { role: "system", content: CONSENSUS_AGENT_PROMPT },
+        { role: "user", content: consensusPrompt },
+      ])
+
+      const result: AISuccessResponse = JSON.parse(cleanJson(consensusRes))
+
+      this.emitUpdate({
+        agent: "Consensus",
+        status: "decided",
+        message: `${result.decision} signal confirmed by ensemble.`,
+        data: { result, technical, options },
+      })
+
+      return result
+    } catch (error: any) {
+      console.error("[AI] Ensemble Analysis Error:", error)
+      this.emitUpdate({
+        agent: "Ensemble",
+        status: "error",
+        message: "Ensemble analysis failed. Falling back to single-agent mode.",
+      })
+      return this.analyzeWithAI(input, agentType)
+    }
+  }
+
   public async managePositionWithAI(input: any, agentType: TradingAgentType = "SCALPER") {
     console.log(`[AI] Starting managePositionWithAI using ${agentType} agent...`)
     this.emitUpdate({
@@ -260,7 +356,15 @@ The position was originally opened by a ${agentType} agent. You must decide whet
       )
     }
 
+    // Fetch Memory for Risk Context
+    const trend = input.marketData?.tf15m?.trend || "SIDEWAYS"
+    const vix = input.marketData?.vix?.current || 15
+    const pastTrades = await memoryService.getSimilarTrades(trend, vix)
+    const memoryPrompt = memoryService.formatForPrompt(pastTrades)
+
     const userPrompt = `Evaluate the following open position against current market data:
+
+${memoryPrompt}
 
 ## OPEN POSITION
 ${JSON.stringify(input.openPosition, null, 2)}
