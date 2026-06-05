@@ -5,7 +5,7 @@ import { LLMService } from "../ai/llm.js"
  * Backtest Script: Multi-Agent Evaluator
  * This script fetches closed paper trades from a specific date and
  * evaluates how the new Orchestrator Agent would have categorized them.
- * 
+ *
  * Usage: tsx src/scripts/backtest-agents.ts [YYYY-MM-DD]
  */
 
@@ -21,8 +21,7 @@ async function runBacktest() {
     // Support both ISO (2026-05-29T...) and Locale (29/05/2026, ...) formats
     const targetTrades = allTrades.filter((t) => {
       const openedAt = t.opened_at || ""
-      return openedAt.includes(dateArg) || 
-             new Date(openedAt).toLocaleDateString('en-CA') === dateArg // en-CA gives YYYY-MM-DD
+      return openedAt.includes(dateArg) || new Date(openedAt).toLocaleDateString("en-CA") === dateArg // en-CA gives YYYY-MM-DD
     })
 
     if (targetTrades.length === 0) {
@@ -41,7 +40,7 @@ async function runBacktest() {
         timeZone: "Asia/Kolkata",
         hour12: false,
       })
-      
+
       const context = {
         symbol: trade.symbol,
         entry: trade.entry_price,
@@ -53,11 +52,11 @@ async function runBacktest() {
       }
 
       const orchestrator = await llm.evaluateMarketState(context)
-      
+
       console.log(`[${time} IST] ${trade.symbol} | PnL: ${trade.pnl?.toFixed(2)}`)
       console.log(`Agent: ${orchestrator.activeAgent} (${orchestrator.confidence}%)`)
       console.log(`Rationale: ${orchestrator.rationale}`)
-      
+
       if (orchestrator.activeAgent === "TREND") {
         trendUpgrades++
         if (trade.pnl && trade.pnl < 0) {
@@ -77,7 +76,6 @@ async function runBacktest() {
     console.log(`SCALPER Maintained: ${scalperMaintained}`)
     console.log(`TREND Upgrades: ${trendUpgrades}`)
     console.log("=".repeat(60))
-
   } catch (error) {
     console.error("Backtest failed:", error)
   }

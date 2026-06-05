@@ -8,8 +8,9 @@ import { calculateEMA } from "../indicators/ema.js"
 import { calculateORB } from "../indicators/orb.js"
 import { calculateSwings } from "../indicators/swings.js"
 import { detectWaveStructure } from "../indicators/waves.js"
+import type { DailyContext } from "../types/technical-analysis.js"
 
-export function analyzeDailyContext(candles1d: Candle[]) {
+export function analyzeDailyContext(candles1d: Candle[]): DailyContext | null {
   if (candles1d.length < 15) return null
 
   const atr14 = calculateATR(candles1d, 14)

@@ -1,3 +1,8 @@
+import type { AISentimentResponse, AISuccessResponse, TradingAgentType } from "../ai/types.js"
+import type { KiteOptionsAnalysis } from "../analysis/kite-options.js"
+import type { VixData } from "../data/vix.js"
+import type { DailyContext } from "./technical-analysis.js"
+
 export type Analysis = {
   trend: string
   support: number
@@ -65,4 +70,19 @@ export type TechnicalAnalysis = {
   swings?: SwingPoint[] | undefined
   waveContext?: WaveContext | undefined
   openingRange?: OpeningRange | undefined
+}
+
+export type TradeTechnicalAnalysis = {
+  tf1h: TechnicalAnalysis
+  tf15m: TechnicalAnalysis
+  tf3m: TechnicalAnalysis
+  dailyContext: DailyContext | null
+  aiDecision: AISuccessResponse | undefined
+  vix: VixData
+  sentiment: AISentimentResponse
+  optionsAnalysis: KiteOptionsAnalysis
+  candles1h: Candle[]
+  candles15m: Candle[]
+  candles3m: Candle[]
+  agentType: TradingAgentType
 }

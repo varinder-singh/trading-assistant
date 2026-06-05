@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from "vue"
+import { ref, onMounted, onUnmounted, watch, nextTick, computed } from "vue"
 import {
   Search,
   TrendingUp,
@@ -25,11 +25,34 @@ const livePrice = ref<number | null>(null)
 const breakouts = ref<any[]>([])
 const portfolio = ref<any[]>([])
 const tradeHistory = ref<any[]>([])
-const currentView = ref<"live" | "history" | "logs">("live")
+const analyzerEvents = ref<any[]>([])
+const currentView = ref<"live" | "history" | "events" | "logs">("live")
 const expandedTradeId = ref<string | null>(null)
 const notifications = ref<any[]>([])
 const serverLogs = ref<string[]>([])
 const logsContainer = ref<HTMLElement | null>(null)
+const lastInstitutionalAlertAt = ref(0)
+
+const agents = ref<Record<string, any>>({
+  Orchestrator: { status: "idle", message: "Awaiting market data...", lastUpdate: Date.now() },
+  SCALPER: { status: "idle", message: "Awaiting signal...", lastUpdate: Date.now() },
+  TREND: { status: "idle", message: "Awaiting trend...", lastUpdate: Date.now() },
+  "Risk Manager": { status: "idle", message: "No active positions.", lastUpdate: Date.now() },
+})
+
+const selectedAgentForDetail = ref<string | null>(null)
+
+const dailyPnl = computed(() => {
+  const realized = tradeHistory.value
+    .filter((t) => {
+      const today = new Date().toISOString().split("T")[0]
+      return t.status === "CLOSED" && t.closed_at?.startsWith(today)
+    })
+    .reduce((acc, t) => acc + (t.pnl || 0), 0)
+
+  const unrealized = portfolio.value.reduce((acc, p) => acc + (p.unrealizedPnL || 0), 0)
+  return realized + unrealized
+})
 
 function addNotification(notif: any) {
   // Prevent duplicate notifications
@@ -52,6 +75,17 @@ async function fetchHistory() {
   }
 }
 
+async function fetchEvents() {
+  try {
+    const data = await $fetch("/api/events", {
+      params: { symbol: symbol.value },
+    })
+    analyzerEvents.value = data as any[]
+  } catch (err: any) {
+    console.error("Failed to fetch analyzer events:", err)
+  }
+}
+
 function scrollToBottom() {
   nextTick(() => {
     if (logsContainer.value) {
@@ -60,10 +94,12 @@ function scrollToBottom() {
   })
 }
 
-function toggleView(view: "live" | "history" | "logs") {
+function toggleView(view: "live" | "history" | "events" | "logs") {
   currentView.value = view
   if (view === "history") {
     fetchHistory()
+  } else if (view === "events") {
+    fetchEvents()
   } else if (view === "live") {
     nextTick(() => {
       if (chart && chartContainer.value) {
@@ -117,6 +153,14 @@ function connectWebSocket() {
     } else if (msg.type === "analysis") {
       analysisResult.value = msg.data
       initChart()
+    } else if (msg.type === "agent_update") {
+      const { agent, status, message, data } = msg.data
+      agents.value[agent] = {
+        status,
+        message,
+        data,
+        lastUpdate: Date.now(),
+      }
     } else if (msg.type === "breakout") {
       breakouts.value.unshift(msg.data)
       if (breakouts.value.length > 5) breakouts.value.pop()
@@ -127,15 +171,19 @@ function connectWebSocket() {
       })
     } else if (msg.type === "portfolio") {
       portfolio.value = msg.data
+      fetchHistory() // Refresh history to get latest realized PnL
 
       // Auto-alert for aggressive institutional flow from last analysis
       const topSC = analysisResult.value?.optionsAnalysis?.windowStats?.topShortCovering
-      if (topSC && topSC.length > 0) {
+      const analysisTime = analysisResult.value?.optionsAnalysis?.windowSnapshot?.timestamp || Date.now()
+
+      if (topSC && topSC.length > 0 && analysisTime > lastInstitutionalAlertAt.value) {
         const best = topSC[0]
         if (Math.abs(best.intervalOi) > 50000) {
+          lastInstitutionalAlertAt.value = analysisTime
           addNotification({
             title: "🔥 Institutional Action",
-            message: `Aggressive Short Covering on ${best.strike} CE detected!`,
+            message: `Aggressive Short Covering on ${best.strike} ${best.type} detected!`,
             type: "warning",
           })
         }
@@ -359,6 +407,15 @@ onUnmounted(() => {
             Trade History
           </button>
           <button
+            @click="toggleView('events')"
+            class="px-4 py-2 text-sm font-bold rounded-lg transition-all"
+            :class="
+              currentView === 'events' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            "
+          >
+            Analyzer Events
+          </button>
+          <button
             @click="toggleView('logs')"
             class="px-4 py-2 text-sm font-bold rounded-lg transition-all"
             :class="currentView === 'logs' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
@@ -403,6 +460,25 @@ onUnmounted(() => {
     </header>
 
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <!-- Risk Management Stats Bar -->
+      <div class="mb-8 flex justify-center">
+        <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between min-w-[300px]">
+          <div>
+            <div class="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1">Daily PnL</div>
+            <div class="text-xl font-mono font-bold" :class="dailyPnl >= 0 ? 'text-green-600' : 'text-red-600'">
+              {{ dailyPnl >= 0 ? "+" : "" }}₹{{ Math.floor(dailyPnl).toLocaleString() }}
+            </div>
+          </div>
+          <div
+            class="w-10 h-10 rounded-xl flex items-center justify-center"
+            :class="dailyPnl >= 0 ? 'bg-green-50' : 'bg-red-50'"
+          >
+            <TrendingUp v-if="dailyPnl >= 0" class="w-5 h-5 text-green-500" />
+            <TrendingDown v-else class="w-5 h-5 text-red-500" />
+          </div>
+        </div>
+      </div>
+
       <!-- Error Message -->
       <div v-if="error" class="mb-8 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 text-red-700">
         <AlertCircle class="w-5 h-5 shrink-0 mt-0.5" />
@@ -430,6 +506,47 @@ onUnmounted(() => {
                 </div>
               </div>
               <div ref="chartContainer" class="w-full"></div>
+            </div>
+
+            <!-- Agent Status Cards -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div
+                v-for="(agent, name) in agents"
+                :key="name"
+                class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 transition-all duration-300 cursor-pointer hover:shadow-lg hover:-translate-y-1"
+                :class="{
+                  'border-indigo-500 ring-2 ring-indigo-50 shadow-md': agent.status === 'thinking',
+                  'border-green-500 bg-green-50/30': agent.status === 'decided',
+                  'border-red-500 bg-red-50/30': agent.status === 'error',
+                }"
+                @click="selectedAgentForDetail = name"
+              >
+                <div class="flex items-center justify-between mb-2">
+                  <span class="text-[10px] font-black uppercase tracking-widest text-gray-400">{{ name }}</span>
+                  <div class="flex items-center gap-1.5">
+                    <span
+                      v-if="agent.status === 'thinking'"
+                      class="w-2 h-2 bg-indigo-500 rounded-full animate-ping"
+                    ></span>
+                    <span
+                      class="w-2 h-2 rounded-full"
+                      :class="{
+                        'bg-gray-300': agent.status === 'idle',
+                        'bg-indigo-500': agent.status === 'thinking',
+                        'bg-green-500': agent.status === 'decided',
+                        'bg-red-500': agent.status === 'error',
+                      }"
+                    ></span>
+                  </div>
+                </div>
+                <div class="text-xs font-bold text-gray-900 line-clamp-2 leading-relaxed h-8">
+                  {{ agent.message }}
+                </div>
+                <div class="mt-2 text-[9px] text-gray-400 flex items-center justify-between">
+                  <span>{{ agent.status.toUpperCase() }}</span>
+                  <span>{{ new Date(agent.lastUpdate).toLocaleTimeString() }}</span>
+                </div>
+              </div>
             </div>
 
             <!-- AI Decision Card -->
@@ -489,19 +606,19 @@ onUnmounted(() => {
                   <div class="p-4 bg-indigo-50 rounded-xl border border-indigo-100">
                     <div class="text-xs text-indigo-600 font-bold uppercase mb-1">Entry Price</div>
                     <div class="text-xl font-bold text-indigo-900">
-                      {{ analysisResult.aiDecision.entry }}
+                      {{ Math.floor(analysisResult.aiDecision.entry || 0) || "N/A" }}
                     </div>
                   </div>
                   <div class="p-4 bg-red-50 rounded-xl border border-red-100">
                     <div class="text-xs text-red-600 font-bold uppercase mb-1">Stop Loss</div>
                     <div class="text-xl font-bold text-red-900">
-                      {{ analysisResult.aiDecision.stopLoss }}
+                      {{ Math.floor(analysisResult.aiDecision.stopLoss || 0) || "N/A" }}
                     </div>
                   </div>
                   <div class="p-4 bg-green-50 rounded-xl border border-green-100">
                     <div class="text-xs text-green-600 font-bold uppercase mb-1">Target(s)</div>
                     <div class="text-xl font-bold text-green-900">
-                      {{ analysisResult.aiDecision.targets?.join(", ") || "N/A" }}
+                      {{ analysisResult.aiDecision.targets?.map((t) => Math.floor(t)).join(", ") || "N/A" }}
                     </div>
                   </div>
                 </div>
@@ -534,8 +651,9 @@ onUnmounted(() => {
                       class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
                       :class="pos.unrealizedPnL >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'"
                     >
-                      {{ pos.unrealizedPnL >= 0 ? "+" : "" }}{{ (pos.unrealizedPnL * 65).toFixed(2) }}
-                    </span>                  </div>
+                      {{ pos.unrealizedPnL >= 0 ? "+" : "" }}{{ pos.unrealizedPnL.toFixed(2) }}
+                    </span>
+                  </div>
                   <div class="grid grid-cols-2 gap-2 text-[10px]">
                     <div>
                       <div class="text-gray-400 uppercase font-bold">Qty</div>
@@ -680,13 +798,17 @@ onUnmounted(() => {
                     <td class="px-6 py-4 text-xs text-gray-500 font-medium">
                       <div class="whitespace-nowrap">
                         {{ new Date(trade.opened_at).toLocaleDateString() }}
-                        <span class="text-[10px] opacity-50 ml-1">{{ new Date(trade.opened_at).toLocaleTimeString() }}</span>
+                        <span class="text-[10px] opacity-50 ml-1">{{
+                          new Date(trade.opened_at).toLocaleTimeString()
+                        }}</span>
                       </div>
                     </td>
                     <td class="px-6 py-4 text-xs text-gray-500 font-medium">
                       <div v-if="trade.closed_at" class="whitespace-nowrap">
                         {{ new Date(trade.closed_at).toLocaleDateString() }}
-                        <span class="text-[10px] opacity-50 ml-1">{{ new Date(trade.closed_at).toLocaleTimeString() }}</span>
+                        <span class="text-[10px] opacity-50 ml-1">{{
+                          new Date(trade.closed_at).toLocaleTimeString()
+                        }}</span>
                       </div>
                       <span v-else class="text-gray-300">—</span>
                     </td>
@@ -719,7 +841,7 @@ onUnmounted(() => {
                         class="font-mono text-sm font-black"
                         :class="trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'"
                       >
-                        {{ trade.pnl >= 0 ? "+" : "" }}{{ (trade.pnl * 65).toFixed(2) }}
+                        {{ trade.pnl >= 0 ? "+" : "" }}{{ trade.pnl.toFixed(2) }}
                       </span>
                       <span v-else class="text-gray-300">—</span>
                     </td>
@@ -855,6 +977,92 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <!-- Events View -->
+      <div v-show="currentView === 'events'" class="space-y-8 animate-in fade-in slide-in-from-bottom duration-500">
+        <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+          <div class="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+            <h2 class="text-lg font-semibold flex items-center gap-2">
+              <Zap class="w-5 h-5 text-indigo-600" />
+              Analyzer Trigger History
+            </h2>
+            <button @click="fetchEvents" class="text-sm font-medium text-indigo-600 hover:text-indigo-700">
+              Refresh
+            </button>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+              <thead>
+                <tr
+                  class="bg-gray-50/50 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100"
+                >
+                  <th class="px-6 py-4">Timestamp</th>
+                  <th class="px-6 py-4">Symbol</th>
+                  <th class="px-6 py-4">Reason</th>
+                  <th class="px-6 py-4 text-right">Price</th>
+                  <th class="px-6 py-4"></th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-50">
+                <template v-for="event in analyzerEvents" :key="event.id">
+                  <tr
+                    class="hover:bg-gray-50/50 transition-colors group cursor-pointer"
+                    @click="toggleTradeExpand(event.id)"
+                  >
+                    <td class="px-6 py-4 text-xs text-gray-500 font-medium">
+                      <div class="whitespace-nowrap">
+                        {{ new Date(event.timestamp).toLocaleDateString() }}
+                        <span class="text-[10px] opacity-50 ml-1">{{
+                          new Date(event.timestamp).toLocaleTimeString()
+                        }}</span>
+                      </div>
+                    </td>
+                    <td class="px-6 py-4">
+                      <span class="text-sm font-black text-gray-900">{{ event.symbol }}</span>
+                    </td>
+                    <td class="px-6 py-4">
+                      <span class="text-sm text-gray-700 font-medium">{{ event.reason }}</span>
+                    </td>
+                    <td class="px-6 py-4 text-right font-mono text-sm font-bold text-gray-600">
+                      {{ event.price.toFixed(2) }}
+                    </td>
+                    <td class="px-6 py-4 text-right">
+                      <Info class="w-4 h-4 text-gray-300 group-hover:text-indigo-500 transition-colors" />
+                    </td>
+                  </tr>
+                  <!-- Expandable Metadata Row -->
+                  <tr v-if="expandedTradeId === event.id" class="bg-indigo-50/30">
+                    <td colspan="5" class="px-8 py-6">
+                      <div class="space-y-3">
+                        <h4
+                          class="text-[10px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2"
+                        >
+                          <Activity class="w-3 h-3" />
+                          Event Metadata (JSON)
+                        </h4>
+                        <div class="bg-gray-900 p-4 rounded-xl border border-gray-800 shadow-inner">
+                          <pre
+                            class="text-[10px] text-indigo-300 font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed"
+                          >
+                            {{ JSON.parse(event.metadata) }}
+                          </pre>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                </template>
+                <tr v-if="analyzerEvents.length === 0">
+                  <td colspan="5" class="px-6 py-20 text-center text-gray-400">
+                    <Zap class="w-8 h-8 mx-auto mb-4 opacity-20" />
+                    <div class="text-sm font-bold">No analyzer events found</div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <!-- Logs View -->
       <div v-show="currentView === 'logs'" class="animate-in fade-in slide-in-from-bottom duration-500">
         <div class="bg-gray-900 rounded-2xl shadow-2xl border border-gray-800 overflow-hidden flex flex-col h-[70vh]">
@@ -874,9 +1082,16 @@ onUnmounted(() => {
               Clear
             </button>
           </div>
-          <div ref="logsContainer" class="flex-1 overflow-y-auto p-6 font-mono text-xs space-y-1.5 selection:bg-indigo-500/30">
+          <div
+            ref="logsContainer"
+            class="flex-1 overflow-y-auto p-6 font-mono text-xs space-y-1.5 selection:bg-indigo-500/30"
+          >
             <div v-if="serverLogs.length === 0" class="text-gray-600 italic">Awaiting logs from server...</div>
-            <div v-for="(log, i) in serverLogs" :key="i" class="text-gray-300 whitespace-pre-wrap break-words leading-relaxed">
+            <div
+              v-for="(log, i) in serverLogs"
+              :key="i"
+              class="text-gray-300 whitespace-pre-wrap break-words leading-relaxed"
+            >
               <span class="text-indigo-500 mr-2 opacity-50">[{{ new Date().toLocaleTimeString() }}]</span>
               <span>{{ log }}</span>
             </div>
@@ -943,6 +1158,111 @@ onUnmounted(() => {
           >
             <X class="w-4 h-4" />
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Agent Detail Slide-over -->
+    <div
+      v-if="selectedAgentForDetail"
+      class="fixed inset-0 z-[60] overflow-hidden"
+      @keydown.esc="selectedAgentForDetail = null"
+    >
+      <!-- Overlay -->
+      <div
+        class="absolute inset-0 bg-gray-900/40 backdrop-blur-sm transition-opacity animate-in fade-in duration-300"
+        @click="selectedAgentForDetail = null"
+      ></div>
+
+      <!-- Slide-over -->
+      <div
+        class="absolute inset-y-0 right-0 max-w-2xl w-full bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-500"
+      >
+        <div class="p-6 border-b border-gray-100 flex items-center justify-between bg-indigo-600 text-white">
+          <div class="flex items-center gap-3">
+            <div class="bg-white/20 p-2 rounded-lg">
+              <Zap class="w-5 h-5" />
+            </div>
+            <div>
+              <h2 class="text-lg font-bold uppercase tracking-tight">{{ selectedAgentForDetail }}</h2>
+              <div class="text-xs text-indigo-100 opacity-80">
+                Last update: {{ new Date(agents[selectedAgentForDetail].lastUpdate).toLocaleTimeString() }}
+              </div>
+            </div>
+          </div>
+          <button @click="selectedAgentForDetail = null" class="p-2 hover:bg-white/10 rounded-full transition-colors">
+            <X class="w-6 h-6" />
+          </button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-8 space-y-8">
+          <!-- Status Banner -->
+          <div
+            class="p-4 rounded-xl border flex items-center gap-3"
+            :class="{
+              'bg-indigo-50 border-indigo-100 text-indigo-700': agents[selectedAgentForDetail].status === 'thinking',
+              'bg-green-50 border-green-100 text-green-700': agents[selectedAgentForDetail].status === 'decided',
+              'bg-red-50 border-red-100 text-red-700': agents[selectedAgentForDetail].status === 'error',
+              'bg-gray-50 border-gray-100 text-gray-700': agents[selectedAgentForDetail].status === 'idle',
+            }"
+          >
+            <div
+              class="w-3 h-3 rounded-full"
+              :class="{
+                'bg-indigo-500 animate-ping': agents[selectedAgentForDetail].status === 'thinking',
+                'bg-indigo-500': agents[selectedAgentForDetail].status === 'thinking',
+                'bg-green-500': agents[selectedAgentForDetail].status === 'decided',
+                'bg-red-500': agents[selectedAgentForDetail].status === 'error',
+                'bg-gray-400': agents[selectedAgentForDetail].status === 'idle',
+              }"
+            ></div>
+            <span class="text-sm font-bold uppercase tracking-widest">{{ agents[selectedAgentForDetail].status }}</span>
+            <div class="h-4 w-px bg-current opacity-20 mx-2"></div>
+            <p class="text-sm font-medium leading-relaxed">{{ agents[selectedAgentForDetail].message }}</p>
+          </div>
+
+          <!-- Deep Dive Data -->
+          <div v-if="agents[selectedAgentForDetail].data" class="space-y-6">
+            <div v-if="agents[selectedAgentForDetail].data.rationale" class="space-y-3">
+              <h3 class="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                <Info class="w-3 h-3" />
+                Strategic Rationale
+              </h3>
+              <p class="text-sm text-gray-700 leading-relaxed italic border-l-4 border-indigo-500 pl-4 py-1">
+                "{{ agents[selectedAgentForDetail].data.rationale }}"
+              </p>
+            </div>
+
+            <div v-if="agents[selectedAgentForDetail].data.reason" class="space-y-3">
+              <h3 class="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                <ShieldCheck class="w-3 h-3" />
+                Agent Reasoning
+              </h3>
+              <p class="text-sm text-gray-700 leading-relaxed italic border-l-4 border-indigo-500 pl-4 py-1">
+                "{{ agents[selectedAgentForDetail].data.reason }}"
+              </p>
+            </div>
+
+            <!-- Full JSON Explorer -->
+            <div class="space-y-3">
+              <h3 class="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                <Activity class="w-3 h-3" />
+                Raw Intelligence Payload
+              </h3>
+              <div class="bg-gray-900 rounded-2xl p-6 shadow-inner border border-gray-800 overflow-hidden">
+                <pre
+                  class="text-[11px] text-indigo-300 font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed"
+                  >{{ JSON.stringify(agents[selectedAgentForDetail].data, null, 2) }}</pre
+                >
+              </div>
+            </div>
+          </div>
+
+          <div v-else class="text-center py-20 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+            <Activity class="w-12 h-12 text-gray-300 mx-auto mb-4 opacity-50" />
+            <div class="text-sm font-bold text-gray-500">Waiting for live intelligence payload...</div>
+            <p class="text-xs text-gray-400 mt-1">Deep dive data will appear here once the agent makes a decision.</p>
+          </div>
         </div>
       </div>
     </div>

@@ -46,7 +46,7 @@ Exact entry/exit for options trades using NCLS Playbooks modified by Wave struct
   - BULLISH FLOW (Action: BUY_CE): Requires Short Covering in CE (Call writers panicking) AND/OR Short Buildup in PE (Put writers creating support). Rule: NEVER buy a PE when there is aggressive CE Short Covering.
   - BEARISH FLOW (Action: BUY_PE): Requires Short Buildup in CE (Call writers creating resistance) AND/OR Short Covering in PE (Put writers panicking). Rule: NEVER buy a CE when there is aggressive CE Short Buildup.
 - Dynamic RSI & Wave Divergence: Don't just use 70/30. Strong trends can stay above 70 or below 30 for long periods. Look for severe RSI divergences between Wave 3 and Wave 5 peaks to spot macro exhaustion.
-`;
+`
 
 export const TREND_RULES = `
 ## INSTITUTIONAL TREND-FOLLOWING FRAMEWORK (HUNTING 50-300 POINTS)
@@ -76,7 +76,7 @@ export const TREND_RULES = `
 - BUY (Action: BUY_CE): Orchestrator signals TREND + 15m breakout confirmed / Wave 3 launchpad active + CE Short Covering or PE Short Buildup.
 - SELL (Action: BUY_PE): Orchestrator signals TREND + 15m breakdown confirmed / Wave 3 breakdown active + PE Short Covering or CE Short Buildup.
 - HOLD: As long as 15m structure and 21 EMA remain intact, and the mathematical Wave 5 target has not been breached.
-`;
+`
 
 export const POSITION_MANAGEMENT_RULES = `
 ## POSITION MANAGEMENT FRAMEWORK (RISK FIRST + WAVE CONTEXTUAL)
@@ -89,7 +89,7 @@ You are managing an ACTIVE open position. Your goal is to protect capital and ma
 
 ### EXIT CRITERIA (Decision: "EXIT")
 - Trend Reversal: Price breaks below 21 EMA or VWAP (for Longs) or above (for Shorts) when in an early/middle trend state.
-- Wave 5 Exhaustion: Price hits the calculated 100% projection of Wave 1 from the Wave 4 low, combined with a 3m candle printing a prominent rejection wick (Institutional Liquidity Sweep).
+- Wave 5 Exhaustion: Price hits the calculated target: \`Wave 5 Target = Wave 4 Low + (1.0 * (Wave 1 High - Wave 1 Low))\`, combined with a 3m candle printing a prominent rejection wick (Institutional Liquidity Sweep).
 - Adverse OI Flow: CE Short Buildup or PE Long Unwinding for Call options (indicating resistance/exit).
 - Momentum Fade: RSI shows clear, severe bearish divergence at fresh price highs (Classic Wave 3 vs Wave 5 signature).
 
@@ -106,7 +106,7 @@ You are managing an ACTIVE open position. Your goal is to protect capital and ma
 ### HOLD CRITERIA (Decision: "HOLD")
 - Consolidation: Price is basing above key EMAs/VWAP with no adverse OI flow (validated Wave 4 flag behavior).
 - Trend Continuation: Market structure continues to make clear structural Higher Highs/Lows within Wave 3.
-`;
+`
 
 export const ORCHESTRATOR_PROMPT = `
 ## ROLE: INSTITUTIONAL MARKET ORCHESTRATOR
@@ -143,4 +143,4 @@ You must respond ONLY with a JSON object in this format:
   "confidence": <0-100>,
   "rationale": "<brief explanation of the environment, active wave phase, and why the agent was chosen>"
 }
-`;
+`

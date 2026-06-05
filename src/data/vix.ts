@@ -3,8 +3,10 @@ import axios from "axios"
 export interface VixData {
   current: number
   change: number
-  sentiment: "low" | "normal" | "high" | "extreme"
+  sentiment: VixDataSentiment
 }
+
+export type VixDataSentiment = "low" | "normal" | "high" | "extreme"
 
 export async function getIndiaVix(): Promise<VixData> {
   const symbol = "^INDIAVIX"
@@ -18,11 +20,7 @@ export async function getIndiaVix(): Promise<VixData> {
     const current = meta.regularMarketPrice
     const previousClose = meta.previousClose
     const change = ((current - previousClose) / previousClose) * 100
-
-    let sentiment: VixData["sentiment"] = "normal"
-    if (current < 12) sentiment = "low"
-    else if (current > 20 && current <= 25) sentiment = "high"
-    else if (current > 25) sentiment = "extreme"
+    const sentiment = setVixDataSentiment(current)
 
     return {
       current: Number(current.toFixed(2)),
@@ -33,4 +31,8 @@ export async function getIndiaVix(): Promise<VixData> {
     console.error("⚠️ Failed to fetch India VIX:", error)
     return { current: 15, change: 0, sentiment: "normal" } // Default fallback
   }
+}
+
+export function setVixDataSentiment(current: number): VixDataSentiment {
+  return current < 12 ? "low" : current > 25 ? "extreme" : current > 20 ? "high" : "normal"
 }

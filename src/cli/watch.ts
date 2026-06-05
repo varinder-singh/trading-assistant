@@ -3,7 +3,8 @@ import { runAnalysis } from "../analysis/trade.js"
 import { getInstrumentToken, getOptionToken } from "../data/kite.js"
 import { createTicker } from "../data/kite-ticker.js"
 import { LiveAnalyzer } from "../analysis/live.js"
-import { paperTrader } from "../execution/paper-trader.js"
+import { paperTrader, type StrategyContext } from "../execution/paper-trader.js"
+import { eventRepo } from "../db/repositories/event-repo.js"
 import kc from "../data/kite.js"
 
 export const watchCommand = new Command("watch")
@@ -76,12 +77,19 @@ export const watchCommand = new Command("watch")
     analyzer.on("breakout", async (context) => {
       console.log("\n" + "=".repeat(50))
       console.log("⚡ BREAKOUT DETECTED")
-      const {
-        tf15m: tf,
-        aiDecision: decision,
-        vix,
-        agentType,
-      } = await runAnalysis(symbol, mode, context, lastDecision)
+
+      // Persist event to DB
+      await eventRepo.saveEvent({
+        symbol,
+        reason: context.reason,
+        price: context.tick.last_price,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          tick: context.tick,
+        },
+      })
+
+      const { tf15m: tf, aiDecision: decision, vix, agentType } = await runAnalysis(symbol, mode, context, lastDecision)
       lastDecision = decision
 
       // --- Paper Trading Execution ---
@@ -116,7 +124,11 @@ export const watchCommand = new Command("watch")
               trend15m: tf.trend,
               aiStopLoss: lastDecision.stopLoss,
               aiTarget: lastDecision.targets && lastDecision.targets.length > 0 ? lastDecision.targets[0] : undefined,
-              agentType,
+              strategyContext: {
+                macroTrend: lastDecision.macroTrend,
+                indexSl: lastDecision.stopLoss,
+                agentType,
+              },
             },
           })
         }

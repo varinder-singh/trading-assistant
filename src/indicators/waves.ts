@@ -10,7 +10,7 @@ export function detectWaveStructure(swings: SwingPoint[], currentPrice: number):
 
   // Filter last 10 swings to find the sequence
   const recentSwings = swings.slice(-10)
-  
+
   // Basic heuristic for Impulse detection:
   // Wave 1: Initial move
   // Wave 2: Retracement of Wave 1 (doesn't break Wave 1 low)
@@ -20,10 +20,10 @@ export function detectWaveStructure(swings: SwingPoint[], currentPrice: number):
 
   // For simplicity, we search for the most recent clear structure
   // This can be expanded into a more robust state machine
-  
+
   // Let's find the last major Low-High sequence
-  let lastLow = recentSwings.filter(s => s.type === "LOW").pop()
-  let lastHigh = recentSwings.filter(s => s.type === "HIGH").pop()
+  let lastLow = recentSwings.filter((s) => s.type === "LOW").pop()
+  let lastHigh = recentSwings.filter((s) => s.type === "HIGH").pop()
 
   if (!lastLow || !lastHigh) return context
 

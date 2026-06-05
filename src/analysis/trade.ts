@@ -8,7 +8,8 @@ import { analyzeOptions } from "./kite-options.js"
 import { getIndiaVix } from "../data/vix.js"
 import { getYesterdayClosingOI } from "../data/kite-historical.js"
 import type { PaperPosition } from "../execution/types.js"
-import type { TradingAgentType } from "../ai/types.js"
+import type { MarketContext, TradingAgentType } from "../ai/types.js"
+import type { TradeTechnicalAnalysis } from "../types/analysis.js"
 
 const llmService = new LLMService()
 
@@ -29,7 +30,7 @@ export async function runAnalysis(
   mode: "intraday" | "swing",
   liveContext?: any,
   previousDecision?: any
-) {
+): Promise<TradeTechnicalAnalysis> {
   const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
 
   const [candlesData, headlines, vix, kiteData] = await Promise.all([
@@ -62,7 +63,7 @@ export async function runAnalysis(
   const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price, yesterdayOiCache, intervalMins)
 
   // 1. Call Orchestrator to decide agent
-  const marketContext = {
+  const marketContext: MarketContext = {
     tf1h,
     tf15m,
     tf3m,
@@ -93,8 +94,35 @@ export async function runAnalysis(
     orchestrator.activeAgent
   )
 
+  if (!aiDecision) {
+    return {
+      tf1h,
+      tf15m,
+      tf3m,
+      dailyContext,
+      aiDecision,
+      vix,
+      sentiment,
+      optionsAnalysis: optionsAnalysisZerodha,
+      candles1h: candles1h.slice(-100),
+      candles15m: candles15m.slice(-100),
+      candles3m: candles3m.slice(-100),
+      agentType: orchestrator.activeAgent,
+    }
+  }
+  // Robust Confidence Check (Handle 0.0-1.0 and 0-100 scales)
+  let normalizedConfidence = aiDecision.confidence
+  if (normalizedConfidence <= 1.0) normalizedConfidence *= 100
+
   if (aiDecision.optionAction && aiDecision.optionAction !== "NONE") {
-    console.log(`🎯 AI EXECUTION SIGNAL: ${aiDecision.optionAction} at strike ${aiDecision.strike}`)
+    if (normalizedConfidence < 75) {
+      console.log(`[Analysis] Signal REJECTED: Confidence ${normalizedConfidence}% is below threshold (75%).`)
+      aiDecision.decision = "HOLD"
+      // Note: We keep entry/stopLoss/targets so they show in the UI as "Planned" levels
+      aiDecision.optionAction = "NONE"
+    } else {
+      console.log(`🎯 AI EXECUTION SIGNAL: ${aiDecision.optionAction} at strike ${aiDecision.strike}`)
+    }
   }
 
   if (liveContext) {
@@ -115,7 +143,7 @@ export async function runAnalysis(
   console.log(`Setup: ${aiDecision.setup ?? "N/A"}`)
   console.log(`Reason: ${aiDecision.reason}`)
   console.log(`Confidence: ${aiDecision.confidence}`)
-  console.log(`Index SL: ${aiDecision.indexStopLoss}`)
+  console.log(`Index SL: ${aiDecision.stopLoss}`)
   console.log(`R:R Ratio: ${aiDecision.riskRewardRatio}`)
 
   logSection("📊 Multi Timeframe Analysis")

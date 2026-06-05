@@ -54,8 +54,18 @@ export interface PaperTradesTable {
   closed_at: string | null // ISO string
 }
 
+export interface AnalyzerEventsTable {
+  id: string
+  symbol: string
+  reason: string
+  price: number
+  timestamp: string
+  metadata: string | null // JSON blob
+}
+
 export interface Database {
   paper_trades: PaperTradesTable
+  analyzer_events: AnalyzerEventsTable
 }
 
 export const db = new Kysely<Database>({

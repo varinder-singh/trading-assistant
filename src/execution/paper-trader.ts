@@ -2,6 +2,15 @@ import { EventEmitter } from "node:events"
 import type { TradeOrder, PaperPosition, TradeResponse, OrderSide } from "./types.js"
 import { tradeRepo } from "../db/repositories/trade-repo.js"
 import { evaluatePosition } from "../analysis/trade.js"
+import type { AIMacroTrend, TradingAgentType } from "../ai/types.js"
+
+export type StrategyContext = {
+  macroTrend: AIMacroTrend
+  isCompression?: boolean
+  atr14?: number
+  indexSl: number
+  agentType: TradingAgentType
+}
 
 export interface TradeContext {
   aiReasoning?: string
@@ -13,7 +22,7 @@ export interface TradeContext {
   aiTarget?: number
   aiStrike?: number
   aiSetup?: string
-  strategyContext?: any
+  strategyContext?: StrategyContext
 }
 
 export class PaperTrader extends EventEmitter {
@@ -24,7 +33,13 @@ export class PaperTrader extends EventEmitter {
   private exitingPositions: Set<string> = new Set()
   private recentExits: Map<string, Date> = new Map()
   public maxConcurrentPositions = Number(process.env.MAX_PAPER_POSITIONS || 2)
-  public entryCooldownMins = Number(process.env.ENTRY_COOLDOWN_MINS || 5)
+  public entryCooldownMins = Number(process.env.ENTRY_COOLDOWN_MINS || 15)
+
+  // Risk Management
+  private maxDailyTrades = 20
+  private todayRealizedPnL = 0
+  private todayTradeCount = 0
+  private tradingHalted = false
 
   constructor() {
     super()
@@ -36,8 +51,16 @@ export class PaperTrader extends EventEmitter {
 
     this.initializationPromise = (async () => {
       try {
-        const openTrades = await tradeRepo.getOpenTrades()
-        console.log(`[PaperTrader] Restoring ${openTrades.length} open trades from DB...`)
+        const [openTrades, todayTrades] = await Promise.all([tradeRepo.getOpenTrades(), tradeRepo.getTodaysTrades()])
+
+        console.log(
+          `[PaperTrader] Restoring ${openTrades.length} open trades and analyzing ${todayTrades.length} trades for today...`
+        )
+
+        // Initialize today's stats
+        this.todayTradeCount = todayTrades.length
+        this.todayRealizedPnL = todayTrades.reduce((acc, t) => acc + (t.pnl || 0), 0)
+        console.log(`[PaperTrader] Today PnL from trades ${this.todayRealizedPnL}`)
 
         for (const trade of openTrades) {
           // Group by symbol to reconstruct positions
@@ -47,6 +70,7 @@ export class PaperTrader extends EventEmitter {
             const totalCost = existing.avgEntryPrice * existing.quantity + trade.entry_price * trade.quantity
             existing.avgEntryPrice = totalCost / totalQty
             existing.quantity = totalQty
+            if ((!existing.token || existing.token === 0) && trade.token) existing.token = trade.token
           } else {
             const pos: PaperPosition = {
               symbol: trade.symbol,
@@ -66,8 +90,25 @@ export class PaperTrader extends EventEmitter {
             this.positions.set(trade.symbol, pos)
           }
         }
+
+        // Check if trading should be halted based on restored stats
+        // Note: unrealizedPnL is 0 here until prices start ticking
+
+        if (this.todayTradeCount >= this.maxDailyTrades) {
+          console.log(`[PaperTrader] Trading halted on initialization. Trades: ${this.todayTradeCount}`)
+          this.tradingHalted = true
+        }
+
         this.initialized = true
         console.log("[PaperTrader] Initialization complete.")
+
+        // Signal initialized with tokens so ticker can subscribe
+        this.emit(
+          "initialized",
+          Array.from(this.positions.values())
+            .map((p) => p.token)
+            .filter((t) => !!t)
+        )
 
         // Start market status monitoring
         this.startMarketMonitor()
@@ -119,7 +160,9 @@ export class PaperTrader extends EventEmitter {
             }
 
             if (decision.decision === "EXIT") {
-              console.log(`[Risk Manager] AI (${agentType} Agent) signaled EXIT for ${pos.symbol}. Reason: ${decision.reason}`)
+              console.log(
+                `[Risk Manager] AI (${agentType} Agent) signaled EXIT for ${pos.symbol}. Reason: ${decision.reason}`
+              )
               await this.placeOrder({
                 symbol: pos.symbol,
                 token: pos.token,
@@ -138,17 +181,19 @@ export class PaperTrader extends EventEmitter {
               // TREND Agent uses wider stops / different multiplier if needed
               // Trend trades often use deep ITM or further ATM, so delta varies.
               // For TREND, we assume a slightly lower delta to give it more breathing room on premium swings.
-              const estimatedDelta = agentType === "TREND" ? 0.45 : 0.6 
+              const estimatedDelta = agentType === "TREND" ? 0.45 : 0.6
               const optionRiskPoints = indexRiskPoints * estimatedDelta
 
               let newPremiumSl = pos.currentPrice - optionRiskPoints
-              
+
               // Base target calculation
               let newPremiumTarget = pos.currentPrice + optionRiskPoints * (decision.riskRewardRatio || 2.0)
-              
+
               // TREND agents should let winners run: expand the target aggressively
               if (agentType === "TREND") {
-                newPremiumTarget = pos.currentPrice + optionRiskPoints * (decision.riskRewardRatio ? decision.riskRewardRatio * 1.5 : 4.0)
+                newPremiumTarget =
+                  pos.currentPrice +
+                  optionRiskPoints * (decision.riskRewardRatio ? decision.riskRewardRatio * 1.5 : 4.0)
               }
 
               // Dynamic Target Trailing: Only update target if it moves higher (never shrink the target)
@@ -162,9 +207,11 @@ export class PaperTrader extends EventEmitter {
               // TREND agent is allowed more breathing room to avoid SL hunting
               const floorPercentage = agentType === "TREND" ? 0.02 : 0.2 // Minimal floor for TREND to stay in the game
               const minAllowedSl = Math.max(pos.currentPrice * floorPercentage, 0.05)
-              
+
               if (newPremiumSl < minAllowedSl) {
-                console.warn(`[Risk Manager] Capping SL for ${pos.symbol} at ${agentType} safety floor: ${minAllowedSl.toFixed(2)}`)
+                console.warn(
+                  `[Risk Manager] Capping SL for ${pos.symbol} at ${agentType} safety floor: ${minAllowedSl.toFixed(2)}`
+                )
                 newPremiumSl = minAllowedSl
               }
 
@@ -241,6 +288,17 @@ export class PaperTrader extends EventEmitter {
     await this.initialize()
 
     if (params.side === "BUY") {
+      // 0. Check Daily Limits & Halt Status
+      if (this.tradingHalted) {
+        console.log(`❌ [PAPER TRADE] Trading halted for the day (Limits reached). Skipping ${params.symbol}`)
+        return { success: false, error: "Trading halted for the day (Limits reached)" }
+      }
+
+      if (this.todayTradeCount >= this.maxDailyTrades) {
+        console.log(`❌ [PAPER TRADE] Maximum daily trades reached (${this.maxDailyTrades}). Skipping ${params.symbol}`)
+        return { success: false, error: "Maximum daily trades reached" }
+      }
+
       // 1. Check Max Concurrent Positions
       if (this.positions.size >= this.maxConcurrentPositions) {
         const msg = `❌ [PAPER TRADE] Limit reached: ${this.positions.size}/${this.maxConcurrentPositions} active positions. Skipping ${params.symbol}`
@@ -278,10 +336,18 @@ export class PaperTrader extends EventEmitter {
           }
         }
       }
+
+      // 5. Fixed Position Sizing (1 Lot Only)
+      // Standard lot sizes: NIFTY = 65, BANKNIFTY = 15
+      const lotSize = params.symbol.includes("BANKNIFTY") ? 15 : 65
+      
+      params.quantity = lotSize
+      this.todayTradeCount++
     }
 
     if (params.side === "SELL") {
       if (this.exitingPositions.has(params.symbol)) {
+        console.log(`⚠️ [PAPER TRADE] Exit already in progress for ${params.symbol}. Skipping duplicate exit.`)
         return { success: false, error: "Exit already in progress" }
       }
       this.exitingPositions.add(params.symbol)
@@ -340,8 +406,37 @@ export class PaperTrader extends EventEmitter {
 
     // Safety check: If AI provides an invalid SL (higher than entry for a BUY),
     // we should invalidate that SL to prevent an immediate exit loop.
+    // NOTE: We must first check if the SL is an INDEX level (> 1000) and translate it to PREMIUM.
     const pos = this.positions.get(order.symbol)
     if (pos && pos.side === "BUY") {
+      // 1. Detect and translate index-level SL
+      if (pos.aiStopLoss !== undefined && pos.aiStopLoss > 1000) {
+        const fallbackOffset = pos.side === "BUY" ? 50 : -50
+        const indexPrice = params.context?.strategyContext?.indexSl || (pos.aiStopLoss + fallbackOffset)
+        const indexRisk = Math.abs(indexPrice - pos.aiStopLoss)
+        const agentType = params.context?.strategyContext?.agentType || "SCALPER"
+        const delta = agentType === "TREND" ? 0.45 : 0.6
+        const premiumRisk = indexRisk * delta
+        
+        const oldSl = pos.aiStopLoss
+        pos.aiStopLoss = Math.max(order.price! - premiumRisk, 0.05)
+        console.log(`[PAPER TRADE] Translated Index SL ${oldSl} to Premium SL ${pos.aiStopLoss.toFixed(2)} (Risk: ${premiumRisk.toFixed(2)})`)
+      }
+
+      // 2. Detect and translate index-level Target
+      if (pos.aiTarget !== undefined && pos.aiTarget > 1000) {
+        const fallbackOffset = pos.side === "BUY" ? -100 : 100
+        const indexPrice = params.context?.strategyContext?.indexSl || (pos.aiTarget + fallbackOffset)
+        const indexGain = Math.abs(pos.aiTarget - indexPrice)
+        const agentType = params.context?.strategyContext?.agentType || "SCALPER"
+        const delta = agentType === "TREND" ? 0.45 : 0.6
+        const premiumGain = indexGain * delta
+        
+        const oldTarget = pos.aiTarget
+        pos.aiTarget = order.price! + premiumGain
+        console.log(`[PAPER TRADE] Translated Index Target ${oldTarget} to Premium Target ${pos.aiTarget.toFixed(2)} (Gain: ${premiumGain.toFixed(2)})`)
+      }
+
       if (pos.aiStopLoss !== undefined && pos.aiStopLoss >= order.price!) {
         console.warn(
           `⚠️ [PAPER TRADE] Invalid SL (${pos.aiStopLoss}) for BUY at ${order.price}. Disabling SL for this position to prevent immediate exit.`
@@ -434,6 +529,7 @@ export class PaperTrader extends EventEmitter {
       if (existing) {
         const pnl = (order.price! - existing.avgEntryPrice) * order.quantity
         existing.realizedPnL += pnl
+        this.todayRealizedPnL += pnl
         existing.quantity -= order.quantity
 
         // DB: We'll need to find the correct trade ID.
@@ -459,6 +555,8 @@ export class PaperTrader extends EventEmitter {
     if (!this.initialized) await this.initialize()
 
     let changed = false
+    let currentUnrealized = 0
+
     for (const [symbol, pos] of this.positions) {
       if (pos.token === token) {
         pos.currentPrice = price
@@ -490,7 +588,9 @@ export class PaperTrader extends EventEmitter {
           }
         }
       }
+      currentUnrealized += pos.unrealizedPnL
     }
+
     if (changed) {
       this.emit("pnl_update", this.getAllPositions())
     }

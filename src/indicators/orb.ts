@@ -27,7 +27,7 @@ export function calculateORB(candles: Candle[]): OpeningRange | null {
   // Check if current price (last candle) has broken the ORB
   const lastCandle = candles[candles.length - 1]
   if (!lastCandle) return { high, low, broken: "INSIDE" }
-  
+
   const lastPrice = lastCandle.close
   let broken: "UP" | "DOWN" | "INSIDE" = "INSIDE"
   if (lastPrice > high) broken = "UP"

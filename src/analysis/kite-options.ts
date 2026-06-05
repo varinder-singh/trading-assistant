@@ -176,7 +176,8 @@ export function analyzeOptions(
   for (const row of rows) {
     if (row.intervalOi) {
       totalCoi += row.intervalOi
-      weightedPriceChange += row.intervalOi * (row.buildup === "Short Covering" || row.buildup === "Long Buildup" ? 1 : -1)
+      weightedPriceChange +=
+        row.intervalOi * (row.buildup === "Short Covering" || row.buildup === "Long Buildup" ? 1 : -1)
     }
   }
 

@@ -1,8 +1,9 @@
 import { LLMService } from "../ai/llm.js"
+import type { AISentimentResponse } from "../ai/types.js"
 
 const llmService = new LLMService()
 
-export async function analyzeSentiment(headlines: string[]) {
+export async function analyzeSentiment(headlines: string[]): Promise<AISentimentResponse> {
   if (headlines.length === 0) {
     return { sentiment: "neutral", confidence: 0.5, reason: "No headlines available" }
   }
@@ -28,7 +29,10 @@ Required Output (JSON only — no code fences):
 }
 `
 
-  const result = await llmService.analyzeWithAI({ prompt, systemPrompt })
+  const result: AISentimentResponse = await llmService.analyzeSentimentWithAI({
+    prompt,
+    systemPrompt,
+  })
 
   return result
 }
