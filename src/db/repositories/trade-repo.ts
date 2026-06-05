@@ -54,6 +54,16 @@ export class TradeRepository {
     return await db.selectFrom("paper_trades").selectAll().where("status", "=", "OPEN").execute()
   }
 
+  async getOpenTradesForSymbol(symbol: string) {
+    return await db
+      .selectFrom("paper_trades")
+      .selectAll()
+      .where("symbol", "=", symbol)
+      .where("status", "=", "OPEN")
+      .orderBy("opened_at", "asc")
+      .execute()
+  }
+
   async getTodaysTrades() {
     const today = new Date().toISOString().split("T")[0] // YYYY-MM-DD
     return await db

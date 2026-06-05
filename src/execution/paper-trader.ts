@@ -532,16 +532,22 @@ export class PaperTrader extends EventEmitter {
         this.todayRealizedPnL += pnl
         existing.quantity -= order.quantity
 
-        // DB: We'll need to find the correct trade ID.
-        // For now, let's assume we find the most recent open trade for this symbol.
-        const openTrades = await tradeRepo.getOpenTrades()
-        const targetTrade = openTrades.find((t) => t.symbol === order.symbol)
-        if (targetTrade) {
-          await tradeRepo
-            .closeTrade(targetTrade.id, order.price!, context?.aiReasoning)
-            .catch((err) => console.error("❌ Failed to close trade in DB:", err))
+        // DB: Close all corresponding open trades for this symbol (FIFO)
+        const openTrades = await tradeRepo.getOpenTradesForSymbol(order.symbol)
+        let remainingToClose = order.quantity
+
+        if (openTrades.length > 0) {
+          for (const trade of openTrades) {
+            if (remainingToClose <= 0) break
+            
+            await tradeRepo
+              .closeTrade(trade.id, order.price!, context?.aiReasoning)
+              .catch((err) => console.error("❌ Failed to close trade in DB:", err))
+            
+            remainingToClose -= trade.quantity
+          }
         } else {
-          console.warn(`⚠️ [DB SYNC ISSUE] Could not find OPEN trade in database for ${order.symbol} to close it.`)
+          console.warn(`⚠️ [DB SYNC ISSUE] Could not find ANY open trade in database for ${order.symbol} to close.`)
         }
 
         if (existing.quantity <= 0) {
