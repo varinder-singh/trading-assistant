@@ -26,6 +26,7 @@ describe("runAnalysis", () => {
     vi.mocked(yahoo.getMultiTimeframeCandles).mockResolvedValue({
       candles1d: Array(20).fill(mockCandle),
       candles1h: [mockCandle],
+      candles30m: [mockCandle],
       candles15m: [mockCandle],
       candles3m: [mockCandle],
     })
@@ -64,12 +65,14 @@ describe("runAnalysis", () => {
     const result = await runAnalysis("NIFTY", "intraday")
 
     expect(result.tf1h).toBeDefined()
+    expect(result.tf30m).toBeDefined()
     expect(result.tf15m).toBeDefined()
     expect(result.tf3m).toBeDefined()
     expect(result.aiDecision?.decision).toBe("BUY")
     expect(LLMService.prototype.analyzeWithEnsemble).toHaveBeenCalledWith(
       expect.objectContaining({
         tf1h: expect.any(Object),
+        tf30m: expect.any(Object),
         tf15m: expect.any(Object),
         tf3m: expect.any(Object),
       }),

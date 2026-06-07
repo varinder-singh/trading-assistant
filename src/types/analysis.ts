@@ -74,6 +74,7 @@ export type TechnicalAnalysis = {
 
 export type TradeTechnicalAnalysis = {
   tf1h: TechnicalAnalysis
+  tf30m: TechnicalAnalysis
   tf15m: TechnicalAnalysis
   tf3m: TechnicalAnalysis
   dailyContext: DailyContext | null
@@ -82,6 +83,7 @@ export type TradeTechnicalAnalysis = {
   sentiment: AISentimentResponse
   optionsAnalysis: KiteOptionsAnalysis
   candles1h: Candle[]
+  candles30m: Candle[]
   candles15m: Candle[]
   candles3m: Candle[]
   agentType: TradingAgentType

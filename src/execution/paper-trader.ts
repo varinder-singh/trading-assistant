@@ -3,6 +3,8 @@ import type { TradeOrder, PaperPosition, TradeResponse, OrderSide } from "./type
 import { tradeRepo } from "../db/repositories/trade-repo.js"
 import { evaluatePosition } from "../analysis/trade.js"
 import type { AIMacroTrend, TradingAgentType } from "../ai/types.js"
+import { candleBuilder } from "../data/candle-builder.js"
+import { getMultiTimeframeCandles } from "../data/yahoo.js"
 
 export type StrategyContext = {
   macroTrend: AIMacroTrend
@@ -150,7 +152,16 @@ export class PaperTrader extends EventEmitter {
                 ? "BANKNIFTY"
                 : pos.symbol
 
-            const { decision, marketData, agentType } = await evaluatePosition(symbol, pos)
+            const macroSymbol = symbol === "NIFTY" ? "^NSEI" : "^NSEBANK"
+            const macro = await getMultiTimeframeCandles(macroSymbol)
+
+            const { decision, marketData, agentType } = await evaluatePosition(symbol, pos, {
+              candles1d: macro.candles1d,
+              candles1h: macro.candles1h,
+              candles30m: candleBuilder.getCandles(30),
+              candles15m: candleBuilder.getCandles(15),
+              candles3m: candleBuilder.getCandles(3),
+            })
 
             // Update stored agent type if upgraded
             if (!pos.strategyContext) pos.strategyContext = {}

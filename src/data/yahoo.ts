@@ -24,9 +24,10 @@ export async function getCandles(symbol: string, interval: string = "15m", range
 
 export async function getMultiTimeframeCandles(symbol: string) {
   // Fetch 1h (1 month) for macro, 15-min (5 days) for trend, 1-min (2 days) for 3m execution, and 1d (2 months) for ATR14
-  const [candles1d, candles1h, candles15m, candles1m] = await Promise.all([
+  const [candles1d, candles1h, candles30m, candles15m, candles1m] = await Promise.all([
     getCandles(symbol, "1d", "60d"),
     getCandles(symbol, "1h", "1mo"),
+    getCandles(symbol, "30m", "5d"),
     getCandles(symbol, "15m", "5d"),
     getCandles(symbol, "1m", "2d"),
   ])
@@ -37,19 +38,19 @@ export async function getMultiTimeframeCandles(symbol: string) {
     const chunk = candles1m.slice(i, i + 3)
     if (chunk.length === 0) continue
 
-    const first = chunk[0];
-    const last = chunk[chunk.length - 1];
-    if (!first || !last) continue;
+    const first = chunk[0]
+    const last = chunk[chunk.length - 1]
+    if (!first || !last) continue
 
     candles3m.push({
       time: first.time,
       open: first.open,
-      high: Math.max(...chunk.map(c => c.high)),
-      low: Math.min(...chunk.map(c => c.low)),
+      high: Math.max(...chunk.map((c) => c.high)),
+      low: Math.min(...chunk.map((c) => c.low)),
       close: last.close,
       volume: chunk.reduce((sum, c) => sum + (c.volume || 0), 0),
     })
   }
 
-  return { candles1d, candles1h, candles15m, candles3m }
+  return { candles1d, candles1h, candles30m, candles15m, candles3m }
 }

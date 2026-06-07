@@ -9,7 +9,7 @@ import { getIndiaVix } from "../data/vix.js"
 import { getYesterdayClosingOI } from "../data/kite-historical.js"
 import type { PaperPosition } from "../execution/types.js"
 import type { MarketContext, TradingAgentType } from "../ai/types.js"
-import type { TradeTechnicalAnalysis } from "../types/analysis.js"
+import type { Candle, TradeTechnicalAnalysis } from "../types/analysis.js"
 
 const llmService = new LLMService()
 
@@ -29,22 +29,50 @@ export async function runAnalysis(
   symbol: string,
   mode: "intraday" | "swing",
   liveContext?: any,
-  previousDecision?: any
+  previousDecision?: any,
+  injectedCandles?: {
+    candles1d: Candle[]
+    candles1h: Candle[]
+    candles30m: Candle[]
+    candles15m: Candle[]
+    candles3m: Candle[]
+  }
 ): Promise<TradeTechnicalAnalysis> {
   const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
 
-  const [candlesData, headlines, vix, kiteData] = await Promise.all([
-    getMultiTimeframeCandles(ticker),
-    getNews(symbol),
-    getIndiaVix(),
-    getOptionChain(symbol),
-  ])
+  let candles1d, candles1h, candles30m, candles15m, candles3m
+  let headlines, vix, kiteData
 
-  const { candles1d, candles1h, candles15m, candles3m } = candlesData
+  if (injectedCandles) {
+    candles1d = injectedCandles.candles1d
+    candles1h = injectedCandles.candles1h
+    candles30m = injectedCandles.candles30m
+    candles15m = injectedCandles.candles15m
+    candles3m = injectedCandles.candles3m
+
+    ;[headlines, vix, kiteData] = await Promise.all([getNews(symbol), getIndiaVix(), getOptionChain(symbol)])
+  } else {
+    const [candlesData, h, v, k] = await Promise.all([
+      getMultiTimeframeCandles(ticker),
+      getNews(symbol),
+      getIndiaVix(),
+      getOptionChain(symbol),
+    ])
+
+    candles1d = candlesData.candles1d
+    candles1h = candlesData.candles1h
+    candles30m = candlesData.candles30m || candlesData.candles15m
+    candles15m = candlesData.candles15m
+    candles3m = candlesData.candles3m
+    headlines = h
+    vix = v
+    kiteData = k
+  }
+
   if (candles15m.length === 0) {
     throw new Error("No 15-minute candles found.")
   }
-  const { tf1h, tf15m, tf3m } = analyzeMultiTimeframe(candles1h, candles15m, candles3m)
+  const { tf1h, tf30m, tf15m, tf3m } = analyzeMultiTimeframe(candles1h, candles30m, candles15m, candles3m)
   const dailyContext = analyzeDailyContext(candles1d)
 
   const sentiment = await analyzeSentiment(headlines)
@@ -65,6 +93,7 @@ export async function runAnalysis(
   // 1. Call Orchestrator to decide agent
   const marketContext: MarketContext = {
     tf1h,
+    tf30m,
     tf15m,
     tf3m,
     dailyContext,
@@ -81,6 +110,7 @@ export async function runAnalysis(
   const aiDecision = await llmService.analyzeWithEnsemble(
     {
       tf1h,
+      tf30m,
       tf15m,
       tf3m,
       dailyContext,
@@ -97,6 +127,7 @@ export async function runAnalysis(
   if (!aiDecision) {
     return {
       tf1h,
+      tf30m,
       tf15m,
       tf3m,
       dailyContext,
@@ -105,11 +136,13 @@ export async function runAnalysis(
       sentiment,
       optionsAnalysis: optionsAnalysisZerodha,
       candles1h: candles1h.slice(-100),
+      candles30m: candles30m.slice(-100),
       candles15m: candles15m.slice(-100),
       candles3m: candles3m.slice(-100),
       agentType: orchestrator.activeAgent,
     }
   }
+
   // Robust Confidence Check (Handle 0.0-1.0 and 0-100 scales)
   let normalizedConfidence = aiDecision.confidence
   if (normalizedConfidence <= 1.0) normalizedConfidence *= 100
@@ -161,6 +194,7 @@ export async function runAnalysis(
 
   return {
     tf1h,
+    tf30m,
     tf15m,
     tf3m,
     dailyContext,
@@ -169,23 +203,54 @@ export async function runAnalysis(
     sentiment,
     optionsAnalysis: optionsAnalysisZerodha,
     candles1h: candles1h.slice(-100),
+    candles30m: candles30m.slice(-100),
     candles15m: candles15m.slice(-100),
     candles3m: candles3m.slice(-100),
     agentType: orchestrator.activeAgent,
   }
 }
 
-export async function evaluatePosition(symbol: string, openPosition: PaperPosition) {
+export async function evaluatePosition(
+  symbol: string,
+  openPosition: PaperPosition,
+  injectedCandles?: {
+    candles1d: Candle[]
+    candles1h: Candle[]
+    candles30m: Candle[]
+    candles15m: Candle[]
+    candles3m: Candle[]
+  }
+) {
   const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
 
-  const [candlesData, vix, kiteData] = await Promise.all([
-    getMultiTimeframeCandles(ticker),
-    getIndiaVix(),
-    getOptionChain(symbol),
-  ])
+  let candles1d, candles1h, candles30m, candles15m, candles3m
+  let vix, kiteData
 
-  const { candles1d, candles1h, candles15m, candles3m } = candlesData
-  const { tf1h, tf15m, tf3m } = analyzeMultiTimeframe(candles1h, candles15m, candles3m)
+  if (injectedCandles) {
+    candles1d = injectedCandles.candles1d
+    candles1h = injectedCandles.candles1h
+    candles30m = injectedCandles.candles30m
+    candles15m = injectedCandles.candles15m
+    candles3m = injectedCandles.candles3m
+
+    ;[vix, kiteData] = await Promise.all([getIndiaVix(), getOptionChain(symbol)])
+  } else {
+    const [candlesData, v, k] = await Promise.all([
+      getMultiTimeframeCandles(ticker),
+      getIndiaVix(),
+      getOptionChain(symbol),
+    ])
+
+    candles1d = candlesData.candles1d
+    candles1h = candlesData.candles1h
+    candles15m = candlesData.candles15m
+    candles3m = candlesData.candles3m
+    candles30m = candles15m // Mock
+    vix = v
+    kiteData = k
+  }
+
+  const { tf1h, tf30m, tf15m, tf3m } = analyzeMultiTimeframe(candles1h, candles30m, candles15m, candles3m)
   const dailyContext = analyzeDailyContext(candles1d)
 
   const { quotes, finalOptions } = kiteData
@@ -193,14 +258,16 @@ export async function evaluatePosition(symbol: string, openPosition: PaperPositi
   // Analyze Options
   const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price, yesterdayOiCache, 5)
 
-  const marketData = {
+  const marketData: MarketContext = {
     tf1h,
+    tf30m,
     tf15m,
     tf3m,
     dailyContext,
     optionsAnalysisZerodha,
     vix,
     time: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }),
+    mode: "intraday", // Default for evaluation
   }
 
   // Determine agent type for management

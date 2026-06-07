@@ -6,6 +6,9 @@ import { LiveAnalyzer } from "../analysis/live.js"
 import { paperTrader, type StrategyContext } from "../execution/paper-trader.js"
 import { eventRepo } from "../db/repositories/event-repo.js"
 import kc from "../data/kite.js"
+import { getIntradayBaseline } from "../data/kite-historical.js"
+import { candleBuilder } from "../data/candle-builder.js"
+import { getMultiTimeframeCandles } from "../data/yahoo.js"
 
 export const watchCommand = new Command("watch")
   .argument("<symbol>", "Symbol like NIFTY")
@@ -22,13 +25,35 @@ export const watchCommand = new Command("watch")
     }
     console.log(`✅ Resolved ${symbol} to token ${token}`)
 
+    // 2. Baseline Seeding for CandleBuilder
+    console.log(`📊 Seeding CandleBuilder for ${symbol}...`)
+    const [c1m, c3m, c15m, c30m] = await Promise.all([
+      getIntradayBaseline(token, "minute", 2),
+      getIntradayBaseline(token, "3minute", 5),
+      getIntradayBaseline(token, "15minute", 5),
+      getIntradayBaseline(token, "30minute", 5),
+    ])
+    candleBuilder.seed(1, c1m)
+    candleBuilder.seed(3, c3m)
+    candleBuilder.seed(15, c15m)
+    candleBuilder.seed(30, c30m)
+    console.log("✅ CandleBuilder seeded.")
+
     let lastDecision: any = null
 
-    // 2. Get Initial Levels
-    const { tf15m, aiDecision } = await runAnalysis(symbol, mode)
-    lastDecision = aiDecision
+    // 3. Get Initial Levels (Inject seeded candles)
+    const yahooMacro = await getMultiTimeframeCandles(symbol === "NIFTY" ? "^NSEI" : "^NSEBANK")
+    const initialAnalysis = await runAnalysis(symbol, mode, undefined, undefined, {
+      candles1d: yahooMacro.candles1d,
+      candles1h: yahooMacro.candles1h,
+      candles30m: candleBuilder.getCandles(30),
+      candles15m: candleBuilder.getCandles(15),
+      candles3m: candleBuilder.getCandles(3),
+    })
+    const { tf15m } = initialAnalysis
+    lastDecision = initialAnalysis.aiDecision
 
-    // 3. Setup Analyzer
+    // 4. Setup Analyzer
     const analyzer = new LiveAnalyzer()
     analyzer.setLevels({
       resistance: tf15m.resistance,
@@ -36,7 +61,7 @@ export const watchCommand = new Command("watch")
       vwap: tf15m.vwap,
     })
 
-    // 4. Setup Ticker
+    // 5. Setup Ticker
     const ticker = createTicker()
 
     paperTrader.on("market_close", () => {
@@ -48,6 +73,7 @@ export const watchCommand = new Command("watch")
     ticker.on("ticks", (ticks: any[]) => {
       const targetTick = ticks.find((t) => t.instrument_token === token)
       if (targetTick) {
+        candleBuilder.addTick(targetTick)
         analyzer.addTick(targetTick)
         process.stdout.write(
           `\rLive: ${targetTick.last_price.toFixed(2)} | RSI: ${tf15m.rsi.toFixed(2)} | Trend: ${tf15m.trend} `
@@ -76,7 +102,7 @@ export const watchCommand = new Command("watch")
 
     analyzer.on("breakout", async (context) => {
       console.log("\n" + "=".repeat(50))
-      console.log("⚡ BREAKOUT DETECTED")
+      console.log(`⚡ BREAKOUT DETECTED: ${context.reason}`)
 
       // Persist event to DB
       await eventRepo.saveEvent({
@@ -89,7 +115,20 @@ export const watchCommand = new Command("watch")
         },
       })
 
-      const { tf15m: tf, aiDecision: decision, vix, agentType } = await runAnalysis(symbol, mode, context, lastDecision)
+      // Use injected candles from CandleBuilder
+      const macro = await getMultiTimeframeCandles(symbol === "NIFTY" ? "^NSEI" : "^NSEBANK")
+      const {
+        tf15m: tf,
+        aiDecision: decision,
+        vix,
+        agentType,
+      } = await runAnalysis(symbol, mode, context, lastDecision, {
+        candles1d: macro.candles1d,
+        candles1h: macro.candles1h,
+        candles30m: candleBuilder.getCandles(30),
+        candles15m: candleBuilder.getCandles(15),
+        candles3m: candleBuilder.getCandles(3),
+      })
       lastDecision = decision
 
       // --- Paper Trading Execution ---
@@ -100,7 +139,7 @@ export const watchCommand = new Command("watch")
         if (option) {
           console.log(`📝 Executing Paper Trade for ${option.symbol}...`)
 
-          // Subscribe ticker to the option
+          // Subscribe ticker to the option for real-time premium tracking
           ticker.subscribe([option.token])
           ticker.setMode(ticker.modeFull, [option.token])
 

@@ -21,8 +21,8 @@ This document outlines proposed ideas for improving the Trading Assistant's mult
 
 ## Architectural Enhancements
 
-### 1. Real-Time WebSocket Integration
-- **Future**: Replace periodic polling (e.g., for Yahoo candles) with real-time WebSockets from Zerodha/Kite for both underlying and option premiums. This will reduce latency and improve SL/Target execution accuracy.
+### 1. Real-Time WebSocket Integration [IMPLEMENTED]
+- **Current**: Replaced periodic polling (e.g., for Yahoo candles) with real-time WebSockets from Zerodha/Kite for both underlying and option premiums. Uses in-memory `CandleBuilder` for sub-second execution accuracy and multi-timeframe (1m, 3m, 15m, 30m) analysis.
 
 ### 2. Microservices Refactoring
 - **Future**: Separate the Data Fetcher, AI Service, and Execution Engine into distinct microservices (e.g., using Docker and a message broker like RabbitMQ or Redis). This would allow for better scaling and fault tolerance.
