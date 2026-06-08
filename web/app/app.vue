@@ -618,7 +618,7 @@ onUnmounted(() => {
                   <div class="p-4 bg-green-50 rounded-xl border border-green-100">
                     <div class="text-xs text-green-600 font-bold uppercase mb-1">Target(s)</div>
                     <div class="text-xl font-bold text-green-900">
-                      {{ analysisResult.aiDecision.targets?.map((t) => Math.floor(t)).join(", ") || "N/A" }}
+                      {{ analysisResult.aiDecision.targets?.map((t: number) => Math.floor(t)).join(", ") || "N/A" }}
                     </div>
                   </div>
                 </div>

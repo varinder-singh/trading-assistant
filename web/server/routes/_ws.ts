@@ -3,12 +3,39 @@ import { getInstrumentToken, getOptionToken } from "@core/data/kite.js"
 import { LiveAnalyzer } from "@core/analysis/live.js"
 import { paperTrader } from "@core/execution/paper-trader.js"
 import { runAnalysis } from "@core/analysis/trade.js"
+import type { AIMacroTrend } from "@core/ai/types.js"
 import { eventHub } from "@core/utils/event-hub.js"
 import { eventRepo } from "@core/db/repositories/event-repo.js"
+import { candleBuilder } from "@core/data/candle-builder.js"
+import { getIntradayBaseline } from "@core/data/kite-historical.js"
 import kc from "@core/data/kite.js"
 
 // Shared ticker instance
 let globalTicker: any = null
+
+/**
+ * Seed CandleBuilder for a specific token if not already seeded.
+ */
+async function seedCandleBuilder(token: number) {
+  if (candleBuilder.isSeeded(token)) return
+
+  console.log(`📊 Seeding CandleBuilder for token ${token}...`)
+  try {
+    const [c1m, c3m, c15m, c30m] = await Promise.all([
+      getIntradayBaseline(token, "minute", 2),
+      getIntradayBaseline(token, "3minute", 5),
+      getIntradayBaseline(token, "15minute", 5),
+      getIntradayBaseline(token, "30minute", 5),
+    ])
+    candleBuilder.seed(token, 1, c1m)
+    candleBuilder.seed(token, 3, c3m)
+    candleBuilder.seed(token, 15, c15m)
+    candleBuilder.seed(token, 30, c30m)
+    console.log(`✅ CandleBuilder seeded for token ${token}.`)
+  } catch (err) {
+    console.error(`❌ Failed to seed CandleBuilder for token ${token}:`, err)
+  }
+}
 const clients = new Map<
   string,
   {
@@ -86,6 +113,11 @@ paperTrader.on("initialized", (tokens) => {
     const ticker = getTicker()
     ticker.subscribe(tokens)
     ticker.setMode(ticker.modeFull, tokens)
+
+    // Seed CandleBuilder for existing positions
+    tokens.forEach((token: number) => {
+      seedCandleBuilder(token)
+    })
   }
 })
 
@@ -106,6 +138,9 @@ paperTrader.on("market_close", () => {
 })
 
 function getTicker() {
+  // Ensure PaperTrader is initialized so it can restore positions
+  paperTrader.initialize()
+
   if (!globalTicker) {
     console.log("Initializing Global Kite Ticker...")
     globalTicker = createTicker()
@@ -125,8 +160,9 @@ function getTicker() {
         }
       }
 
-      // Update paper trader prices
+      // Update candle builder and paper trader prices
       ticks.forEach((tick) => {
+        candleBuilder.addTick(tick)
         paperTrader.updatePrice(tick.instrument_token, tick.last_price)
       })
     })
@@ -173,6 +209,9 @@ export default defineWebSocketHandler({
           return
         }
 
+        // Seed CandleBuilder for the watched symbol
+        seedCandleBuilder(token)
+
         const analyzer = new LiveAnalyzer()
         if (levels) {
           analyzer.setLevels(levels)
@@ -207,7 +246,7 @@ export default defineWebSocketHandler({
             // --- Paper Trading Execution ---
             if (decision) {
               const type = decision.optionAction === "BUY_CE" ? "CE" : "PE"
-              const option = await getOptionToken(symbol, decision.strike, type)
+              const option = await getOptionToken(symbol, decision.strike || 0, type)
 
               if (option) {
                 console.log(`[ws] Executing Paper Trade for ${option.symbol} (${agentType} Agent)...`)
@@ -260,17 +299,17 @@ export default defineWebSocketHandler({
                 const result = await paperTrader.placeOrder({
                   symbol: option.symbol,
                   token: option.token,
-                  strike: decision.strike,
+                  strike: decision.strike || undefined,
                   side: "BUY",
                   quantity: 1,
                   price: entryPrice,
                   context: {
                     aiReasoning: decision.reason,
                     aiConfidence: decision.confidence,
-                    aiStrike: decision.strike,
+                    aiStrike: decision.strike || undefined,
                     aiSetup: decision.setup,
                     strategyContext: {
-                      macroTrend: decision.macroTrend,
+                      macroTrend: decision.macroTrend as AIMacroTrend,
                       indexSl: decision.stopLoss,
                       agentType,
                     },

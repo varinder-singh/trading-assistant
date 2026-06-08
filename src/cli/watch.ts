@@ -17,6 +17,9 @@ export const watchCommand = new Command("watch")
     const mode = options.mode as "intraday" | "swing"
     console.log(`\n🔭 Starting Watch Mode for ${symbol} (${mode})...`)
 
+    // 0. Initialize PaperTrader to restore positions
+    await paperTrader.initialize()
+
     // 1. Resolve Instrument Token
     const token = await getInstrumentToken(symbol)
     if (!token) {
@@ -33,10 +36,10 @@ export const watchCommand = new Command("watch")
       getIntradayBaseline(token, "15minute", 5),
       getIntradayBaseline(token, "30minute", 5),
     ])
-    candleBuilder.seed(1, c1m)
-    candleBuilder.seed(3, c3m)
-    candleBuilder.seed(15, c15m)
-    candleBuilder.seed(30, c30m)
+    candleBuilder.seed(token, 1, c1m)
+    candleBuilder.seed(token, 3, c3m)
+    candleBuilder.seed(token, 15, c15m)
+    candleBuilder.seed(token, 30, c30m)
     console.log("✅ CandleBuilder seeded.")
 
     let lastDecision: any = null
@@ -46,9 +49,9 @@ export const watchCommand = new Command("watch")
     const initialAnalysis = await runAnalysis(symbol, mode, undefined, undefined, {
       candles1d: yahooMacro.candles1d,
       candles1h: yahooMacro.candles1h,
-      candles30m: candleBuilder.getCandles(30),
-      candles15m: candleBuilder.getCandles(15),
-      candles3m: candleBuilder.getCandles(3),
+      candles30m: candleBuilder.getCandles(token, 30),
+      candles15m: candleBuilder.getCandles(token, 15),
+      candles3m: candleBuilder.getCandles(token, 3),
     })
     const { tf15m } = initialAnalysis
     lastDecision = initialAnalysis.aiDecision
@@ -125,9 +128,9 @@ export const watchCommand = new Command("watch")
       } = await runAnalysis(symbol, mode, context, lastDecision, {
         candles1d: macro.candles1d,
         candles1h: macro.candles1h,
-        candles30m: candleBuilder.getCandles(30),
-        candles15m: candleBuilder.getCandles(15),
-        candles3m: candleBuilder.getCandles(3),
+        candles30m: candleBuilder.getCandles(token, 30),
+        candles15m: candleBuilder.getCandles(token, 15),
+        candles3m: candleBuilder.getCandles(token, 3),
       })
       lastDecision = decision
 

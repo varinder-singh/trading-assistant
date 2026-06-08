@@ -233,6 +233,15 @@ export async function evaluatePosition(
     candles15m = injectedCandles.candles15m
     candles3m = injectedCandles.candles3m
 
+    // FALLBACK: If real-time candles (from CandleBuilder) are not yet seeded, use Yahoo baseline
+    if (candles15m.length === 0) {
+      console.log(`[Risk Manager] Real-time candles empty for ${symbol}. Falling back to Yahoo baseline.`)
+      const macro = await getMultiTimeframeCandles(ticker)
+      candles30m = macro.candles30m
+      candles15m = macro.candles15m
+      candles3m = macro.candles3m
+    }
+
     ;[vix, kiteData] = await Promise.all([getIndiaVix(), getOptionChain(symbol)])
   } else {
     const [candlesData, v, k] = await Promise.all([

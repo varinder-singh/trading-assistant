@@ -23,6 +23,7 @@ This document outlines proposed ideas for improving the Trading Assistant's mult
 
 ### 1. Real-Time WebSocket Integration [IMPLEMENTED]
 - **Current**: Replaced periodic polling (e.g., for Yahoo candles) with real-time WebSockets from Zerodha/Kite for both underlying and option premiums. Uses in-memory `CandleBuilder` for sub-second execution accuracy and multi-timeframe (1m, 3m, 15m, 30m) analysis.
+- **Update**: `CandleBuilder` refactored to support multi-token namespacing, allowing the Risk Manager to evaluate multiple active positions simultaneously with sub-second data. Includes a robust fallback to Yahoo Finance macro candles during seeding or transition periods.
 
 ### 2. Microservices Refactoring
 - **Future**: Separate the Data Fetcher, AI Service, and Execution Engine into distinct microservices (e.g., using Docker and a message broker like RabbitMQ or Redis). This would allow for better scaling and fault tolerance.
