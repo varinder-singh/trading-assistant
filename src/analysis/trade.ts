@@ -1,6 +1,7 @@
 import { getMultiTimeframeCandles } from "../data/yahoo.js"
 import { analyzeMultiTimeframe, analyzeDailyContext } from "./technical.js"
 import { LLMService } from "../ai/llm.js"
+import { validateRegime } from "../ai/regime-validator.js"
 import { getNews } from "../data/news.js"
 import { analyzeSentiment } from "./sentiment.js"
 import { getOptionChain } from "../data/kite-options.js"
@@ -9,7 +10,10 @@ import { getIndiaVix } from "../data/vix.js"
 import { getYesterdayClosingOI } from "../data/kite-historical.js"
 import type { PaperPosition } from "../execution/types.js"
 import type { MarketContext, TradingAgentType } from "../ai/types.js"
+import { cooldownManager } from "../utils/cooldown.js"
 import type { Candle, TradeTechnicalAnalysis } from "../types/analysis.js"
+import { getInstrumentToken } from "../data/kite.js"
+import { gtiTracker } from "../indicators/gti-tracker.js"
 
 const llmService = new LLMService()
 
@@ -72,10 +76,9 @@ export async function runAnalysis(
   if (candles15m.length === 0) {
     throw new Error("No 15-minute candles found.")
   }
+
   const { tf1h, tf30m, tf15m, tf3m } = analyzeMultiTimeframe(candles1h, candles30m, candles15m, candles3m)
   const dailyContext = analyzeDailyContext(candles1d)
-
-  const sentiment = await analyzeSentiment(headlines)
 
   const { quotes, finalOptions } = kiteData
 
@@ -90,7 +93,29 @@ export async function runAnalysis(
   const intervalMins = Number(process.env.OI_SHIFT_INTERVAL_MINS || 5)
   const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price, yesterdayOiCache, intervalMins)
 
+  if (cooldownManager.isOnCooldown(symbol) || vix.current > 25) {
+    const reason = cooldownManager.isOnCooldown(symbol) ? "Symbol on Cooldown" : "VIX > 25 Circuit Breaker"
+    console.log(`[Circuit Breaker] Aborting analysis for ${symbol}: ${reason}`)
+    return {
+      tf1h, tf30m, tf15m, tf3m, dailyContext, vix,
+      sentiment: { sentiment: "neutral", confidence: 1, reason: "Skipped due to circuit breaker" },
+      optionsAnalysis: optionsAnalysisZerodha,
+      candles1h: candles1h.slice(-100), candles30m: candles30m.slice(-100), candles15m: candles15m.slice(-100), candles3m: candles3m.slice(-100),
+      agentType: "SCALPER",
+      aiDecision: { decision: "NO_TRADE", reason, confidence: 100, optionAction: "NONE", setup: "NONE", riskRewardRatio: 0, entry: 0, stopLoss: 0, targets: [], instrument: "OPTIONS", strike: null, macroTrend: "SIDEWAYS" }
+    }
+  }
+
+  const sentiment = await analyzeSentiment(headlines)
+
   // 1. Call Orchestrator to decide agent
+  // Get current GTI score for the watched token (if available)
+  const underlyingToken = await getInstrumentToken(symbol)
+  if (underlyingToken) {
+    gtiTracker.setMarketContext(underlyingToken, tf15m.vwap, dailyContext?.atr14 || 1, optionsAnalysisZerodha.flow)
+  }
+  const gtiScore = gtiTracker.getCurrentScore(underlyingToken || 0)
+
   const marketContext: MarketContext = {
     tf1h,
     tf30m,
@@ -102,9 +127,20 @@ export async function runAnalysis(
     mode,
     time: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }),
   }
+  
+  if (gtiScore && gtiScore.confidence > 0) {
+    marketContext.gtiScore = gtiScore
+  }
   const orchestrator = await llmService.evaluateMarketState(marketContext)
-  console.log(`[Orchestrator] Active Agent: ${orchestrator.activeAgent} (${orchestrator.confidence}%)`)
-  console.log(`[Orchestrator] Rationale: ${orchestrator.rationale}`)
+  const validation = validateRegime(orchestrator, marketContext)
+  if (validation.wasOverridden) {
+    console.warn(`[RegimeValidator] OVERRIDE: ${orchestrator.activeAgent} → ${validation.activeAgent}`)
+    validation.checks.filter(c => !c.passed).forEach(c => console.warn(`  ✗ ${c.name}: ${c.reason}`))
+  } else {
+    console.log(`[Orchestrator] Active Agent: ${validation.activeAgent} (${orchestrator.confidence}%)`)
+    console.log(`[Orchestrator] Rationale: ${orchestrator.rationale}`)
+  }
+  const activeAgent = validation.activeAgent
 
   // 2. Run analysis with the ensemble of agents
   const aiDecision = await llmService.analyzeWithEnsemble(
@@ -121,7 +157,7 @@ export async function runAnalysis(
       liveContext,
       previousDecision,
     },
-    orchestrator.activeAgent
+    activeAgent
   )
 
   if (!aiDecision) {
@@ -131,7 +167,20 @@ export async function runAnalysis(
       tf15m,
       tf3m,
       dailyContext,
-      aiDecision,
+      aiDecision: {
+        decision: "NO_TRADE",
+        reason: "No active trend + high VIX structure requires sitting out.",
+        confidence: 100,
+        optionAction: "NONE",
+        setup: "NONE",
+        riskRewardRatio: 0,
+        stopLoss: 0,
+        entry: 0,
+        targets: [],
+        instrument: "OPTIONS",
+        strike: null,
+        macroTrend: mode,
+      },
       vix,
       sentiment,
       optionsAnalysis: optionsAnalysisZerodha,
@@ -139,7 +188,8 @@ export async function runAnalysis(
       candles30m: candles30m.slice(-100),
       candles15m: candles15m.slice(-100),
       candles3m: candles3m.slice(-100),
-      agentType: orchestrator.activeAgent,
+      agentType: activeAgent || "SCALPER",
+      gtiHistory: gtiTracker.getHistory(0),
     }
   }
 
@@ -154,7 +204,30 @@ export async function runAnalysis(
       // Note: We keep entry/stopLoss/targets so they show in the UI as "Planned" levels
       aiDecision.optionAction = "NONE"
     } else {
-      console.log(`🎯 AI EXECUTION SIGNAL: ${aiDecision.optionAction} at strike ${aiDecision.strike}`)
+      // GTI Gatekeeper: Block trades that strongly oppose institutional flow
+      const gtiGatekeeperThreshold = -0.3
+      if (gtiScore.confidence > 30) {
+        const isBuySignal = aiDecision.optionAction === "BUY_CE"
+        const isSellSignal = aiDecision.optionAction === "BUY_PE"
+        const gtiOpposing =
+          (isBuySignal && gtiScore.composite < gtiGatekeeperThreshold) ||
+          (isSellSignal && gtiScore.composite > -gtiGatekeeperThreshold)
+
+        if (gtiOpposing) {
+          console.warn(
+            `[GTI Gatekeeper] ⚠️ BLOCKED: ${aiDecision.optionAction} rejected — GTI score ${gtiScore.composite.toFixed(2)} (${gtiScore.classification}) opposes this trade direction.`
+          )
+          aiDecision.decision = "HOLD"
+          aiDecision.optionAction = "NONE"
+          aiDecision.reason = `[GTI BLOCKED] ${aiDecision.reason} | Institutional flow (${gtiScore.classification}) opposes this trade direction.`
+        } else {
+          console.log(`🎯 AI EXECUTION SIGNAL: ${aiDecision.optionAction} at strike ${aiDecision.strike}`)
+          console.log(`[GTI] ✅ Institutional flow CONFIRMS direction: ${gtiScore.classification} (${gtiScore.composite.toFixed(2)})`)
+        }
+      } else {
+        console.log(`🎯 AI EXECUTION SIGNAL: ${aiDecision.optionAction} at strike ${aiDecision.strike}`)
+        console.log(`[GTI] ℹ️ Insufficient GTI data for gatekeeper (confidence: ${gtiScore.confidence.toFixed(0)}%)`)
+      }
     }
   }
 
@@ -192,6 +265,17 @@ export async function runAnalysis(
   console.log(`Resistance (15m): ${tf15m.resistance.toFixed(2)}`)
   console.log(`Support (15m): ${tf15m.support.toFixed(2)}`)
 
+  if (gtiScore.confidence > 0) {
+    logSection("🏦 GTI — Institutional Activity")
+    console.log(`Composite Score: ${gtiScore.composite.toFixed(3)} (${gtiScore.classification})`)
+    console.log(`Confidence: ${gtiScore.confidence.toFixed(0)}%`)
+    console.log(`  Volume Anomaly: ${gtiScore.components.volumeAnomaly.toFixed(3)}`)
+    console.log(`  CVD: ${gtiScore.components.cvd.toFixed(3)}`)
+    console.log(`  VWAP Deviation: ${gtiScore.components.vwapDeviation.toFixed(3)}`)
+    console.log(`  OI Signal: ${gtiScore.components.oiSignal.toFixed(3)}`)
+    console.log(`  Smart Money Flow: ${gtiScore.components.smartMoneyFlow.toFixed(3)}`)
+  }
+
   return {
     tf1h,
     tf30m,
@@ -206,7 +290,8 @@ export async function runAnalysis(
     candles30m: candles30m.slice(-100),
     candles15m: candles15m.slice(-100),
     candles3m: candles3m.slice(-100),
-    agentType: orchestrator.activeAgent,
+    agentType: activeAgent,
+    gtiHistory: gtiTracker.getHistory(0), // Will be overridden by WS server with actual token
   }
 }
 
@@ -284,7 +369,12 @@ export async function evaluatePosition(
   let agentType: TradingAgentType = openPosition.strategyContext?.agentType || "SCALPER"
 
   const orchestrator = await llmService.evaluateMarketState(marketData)
-  if (orchestrator.activeAgent === "TREND" && agentType === "SCALPER") {
+  const validation = validateRegime(orchestrator, marketData)
+  if (validation.wasOverridden) {
+    console.warn(`[RegimeValidator] OVERRIDE: ${orchestrator.activeAgent} → ${validation.activeAgent}`)
+    validation.checks.filter(c => !c.passed).forEach(c => console.warn(`  ✗ ${c.name}: ${c.reason}`))
+  }
+  if (validation.activeAgent === "TREND" && agentType === "SCALPER") {
     console.log(`[Orchestrator] UPGRADING position management to TREND agent for ${openPosition.symbol}`)
     agentType = "TREND"
   }
@@ -296,6 +386,10 @@ export async function evaluatePosition(
     },
     agentType
   )
+
+  if (decision.decision === "EXIT") {
+    cooldownManager.setCooldown(symbol, 15)
+  }
 
   console.log(
     `[Risk Manager] AI Decision for ${openPosition.symbol}: ${decision.decision} (${agentType} Agent) - ${decision.reason}`

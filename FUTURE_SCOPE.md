@@ -36,3 +36,10 @@ This document outlines proposed ideas for improving the Trading Assistant's mult
 
 ### 5. Automated Journaling & Review
 - **Future**: Use LLMs to generate a "Daily Post-Market Report" that summarizes all trades, the rationale behind them, and lessons learned, automatically saving this to a `JOURNAL.md` or a web dashboard.
+
+### 6. Wave-GTI Confluence Engine
+- **Future**: Deep integration between Elliott Wave detection (`waves.ts`) and GTI (Global Trading Intelligence) institutional activity scores. Rather than just boosting/reducing confidence, the system would actively override wave phase detection based on institutional flow:
+  - Wave 5 + institutional distribution (GTI < -0.6) → force WAVE_EXHAUSTION phase
+  - Wave 2 pullback + institutional accumulation (GTI > 0.6) → confirm entry zone with higher confidence
+  - Wave 3 + divergent GTI (institutional selling while price rises) → flag INSTITUTIONAL_TRAP
+  - This requires a dedicated `WaveGTIConfluence` interface and a state machine that combines both signals for trade timing.

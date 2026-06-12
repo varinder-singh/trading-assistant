@@ -1,6 +1,6 @@
 import type { KiteOptionsAnalysis } from "../analysis/kite-options.js"
 import type { VixData } from "../data/vix.js"
-import type { TechnicalAnalysis } from "../types/analysis.js"
+import type { GTIScore, TechnicalAnalysis } from "../types/analysis.js"
 import type { MarketMode } from "../types/mode.js"
 import type { DailyContext } from "../types/technical-analysis.js"
 
@@ -46,6 +46,7 @@ export type MarketContext = {
   vix: VixData
   mode: MarketMode
   time: string
+  gtiScore?: GTIScore
 }
 export type AIDecision = "BUY" | "SELL" | "NO_TRADE" | "HOLD"
 export type AIMarketActivitySetup = "TRUE_BREAKOUT" | "INSTITUTIONAL_TRAP" | "TREND_CONTINUATION" | "NONE"

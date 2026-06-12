@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events"
+import type { GTIScore } from "../types/analysis.js"
 
 export interface LiveTick {
   last_price: number
@@ -21,6 +22,11 @@ export class LiveAnalyzer extends EventEmitter {
   private lastTriggerTime = 0
   private triggerCooldownMs = 5 * 60 * 1000 // 5 minutes cooldown between AI calls
 
+  // GTI state tracking
+  private lastGTIScore: GTIScore | null = null
+  private priceAtLastGTICheck = 0
+  private readonly gtiSurgeThreshold = 0.6
+
   constructor() {
     super()
   }
@@ -34,6 +40,51 @@ export class LiveAnalyzer extends EventEmitter {
     this.ticks.push(tick)
     this.cleanupOldTicks()
     this.checkTriggers(tick)
+  }
+
+  /**
+   * Update the current GTI score. Called by the WS server when GTI is computed.
+   */
+  updateGTI(gtiScore: GTIScore) {
+    const prevScore = this.lastGTIScore
+    this.lastGTIScore = gtiScore
+
+    if (!prevScore) return
+
+    const now = Date.now()
+    if (now - this.lastTriggerTime < this.triggerCooldownMs) return
+
+    // GTI Surge: Score crosses the institutional threshold
+    const wasBelowThreshold = Math.abs(prevScore.composite) < this.gtiSurgeThreshold
+    const isAboveThreshold = Math.abs(gtiScore.composite) >= this.gtiSurgeThreshold
+    if (wasBelowThreshold && isAboveThreshold) {
+      const direction = gtiScore.composite > 0 ? "ACCUMULATION" : "DISTRIBUTION"
+      this.trigger(
+        `GTI Institutional Surge: ${direction} (${gtiScore.composite.toFixed(2)}, ${gtiScore.classification})`,
+        { last_price: this.priceAtLastGTICheck, instrument_token: 0, received_at: now } as LiveTick
+      )
+    }
+
+    // GTI Divergence: Price rising but GTI falling, or vice versa
+    if (prevScore.confidence > 30 && gtiScore.confidence > 30) {
+      const lastTick = this.ticks.length > 0 ? this.ticks[this.ticks.length - 1] : undefined
+      const priceRising = this.priceAtLastGTICheck > 0 && lastTick && lastTick.last_price > this.priceAtLastGTICheck
+      const gtiDropping = gtiScore.composite < prevScore.composite - 0.3
+
+      if (priceRising && gtiDropping && lastTick) {
+        this.trigger(
+          `GTI Divergence: Price rising but institutional flow weakening (${gtiScore.composite.toFixed(2)} ← ${prevScore.composite.toFixed(2)})`,
+          { last_price: lastTick.last_price, instrument_token: lastTick.instrument_token, received_at: now } as LiveTick
+        )
+      }
+    }
+
+    if (this.ticks.length > 0) {
+      const last = this.ticks[this.ticks.length - 1]
+      if (last) {
+        this.priceAtLastGTICheck = last.last_price
+      }
+    }
   }
 
   private cleanupOldTicks() {

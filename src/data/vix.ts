@@ -18,8 +18,8 @@ export async function getIndiaVix(): Promise<VixData> {
     const meta = result.meta
     
     const current = meta.regularMarketPrice
-    const previousClose = meta.previousClose
-    const change = ((current - previousClose) / previousClose) * 100
+    const previousClose = meta.previousClose || meta.chartPreviousClose || current
+    const change = previousClose ? ((current - previousClose) / previousClose) * 100 : 0
     const sentiment = setVixDataSentiment(current)
 
     return {

@@ -1,10 +1,15 @@
+import { EventEmitter } from "node:events"
 import type { Candle } from "../types/analysis.js"
 import type { LiveTick } from "../analysis/live.js"
 
-export class CandleBuilder {
+export class CandleBuilder extends EventEmitter {
   private candlesByToken: Map<number, Map<number, Candle[]>> = new Map()
   private timeframes: number[] = [1, 3, 15, 30] // minutes
   private lastVolumeByToken: Map<number, Map<number, number>> = new Map()
+
+  constructor() {
+    super()
+  }
 
   /**
    * Seed the builder with historical candles for a specific token.
@@ -55,6 +60,11 @@ export class CandleBuilder {
       const lastCandle = candles[candles.length - 1]
 
       if (!lastCandle || lastCandle.time < periodStartSeconds) {
+        // Emit candle_close for the completed candle before starting a new one
+        if (lastCandle) {
+          this.emit("candle_close", { token, timeframe: tf, candle: lastCandle })
+        }
+
         // Determine the volume of the NEW candle.
         let startingVolume = 0
         if (tokenVolumes.has(tf) && totalVolume > 0) {

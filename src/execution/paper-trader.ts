@@ -40,6 +40,7 @@ export class PaperTrader extends EventEmitter {
 
   // Risk Management
   private maxDailyTrades = 20
+  private maxDailyLoss = Number(process.env.MAX_DAILY_LOSS || -20000)
   private todayRealizedPnL = 0
   private todayTradeCount = 0
   private tradingHalted = false
@@ -97,8 +98,8 @@ export class PaperTrader extends EventEmitter {
         // Check if trading should be halted based on restored stats
         // Note: unrealizedPnL is 0 here until prices start ticking
 
-        if (this.todayTradeCount >= this.maxDailyTrades) {
-          console.log(`[PaperTrader] Trading halted on initialization. Trades: ${this.todayTradeCount}`)
+        if (this.todayTradeCount >= this.maxDailyTrades || this.todayRealizedPnL <= this.maxDailyLoss) {
+          console.log(`[PaperTrader] Trading halted on initialization. Trades: ${this.todayTradeCount}, PnL: ${this.todayRealizedPnL}`)
           this.tradingHalted = true
         }
 
@@ -187,19 +188,28 @@ export class PaperTrader extends EventEmitter {
                 context: { aiReasoning: decision.reason },
               })
             } else if (decision.decision === "UPDATE_SL" && decision.newIndexStopLoss) {
-              // TRANSLATE INDEX TRAILING STOP TO PREMIUM
               const currentIndexPrice = marketData.tf15m.price
 
-              // Logic: Calculate how many points the Index SL moved, then apply delta to Option Premium
-              const indexRiskPoints = Math.abs(currentIndexPrice - decision.newIndexStopLoss)
+              // AI mistake protection: if the index SL is < 1000, it's a premium price
+              let newPremiumSl;
+              let optionRiskPoints;
 
-              // TREND Agent uses wider stops / different multiplier if needed
-              // Trend trades often use deep ITM or further ATM, so delta varies.
-              // For TREND, we assume a slightly lower delta to give it more breathing room on premium swings.
-              const estimatedDelta = agentType === "TREND" ? 0.45 : 0.6
-              const optionRiskPoints = indexRiskPoints * estimatedDelta
+              if (decision.newIndexStopLoss < 1000) {
+                console.warn(`[Risk Manager] AI returned a premium SL instead of an Index SL: ${decision.newIndexStopLoss}. Using it directly.`);
+                newPremiumSl = decision.newIndexStopLoss;
+                optionRiskPoints = Math.abs(pos.currentPrice - newPremiumSl);
+              } else {
+                // TRANSLATE INDEX TRAILING STOP TO PREMIUM
+                const indexRiskPoints = Math.abs(currentIndexPrice - decision.newIndexStopLoss)
 
-              let newPremiumSl = pos.currentPrice - optionRiskPoints
+                // TREND Agent uses wider stops / different multiplier if needed
+                // Trend trades often use deep ITM or further ATM, so delta varies.
+                // For TREND, we assume a slightly lower delta to give it more breathing room on premium swings.
+                const estimatedDelta = agentType === "TREND" ? 0.45 : 0.6
+                optionRiskPoints = indexRiskPoints * estimatedDelta
+                
+                newPremiumSl = pos.currentPrice - optionRiskPoints
+              }
 
               // Base target calculation
               let newPremiumTarget = pos.currentPrice + optionRiskPoints * (decision.riskRewardRatio || 2.0)
@@ -230,18 +240,25 @@ export class PaperTrader extends EventEmitter {
                 newPremiumSl = minAllowedSl
               }
 
-              console.log(
-                `[Risk Manager] AI (${agentType} Agent) signaled UPDATE_SL for ${pos.symbol}. Index SL: ${decision.newIndexStopLoss} -> Premium SL: ${newPremiumSl.toFixed(2)}`
-              )
+              // ONE-WAY RATCHET: Stop-Loss can only go UP
+              if (pos.aiStopLoss !== undefined && newPremiumSl <= pos.aiStopLoss) {
+                console.log(
+                  `[Risk Manager] Ignoring calculated SL (${newPremiumSl.toFixed(2)}) as it is lower than or equal to current SL (${pos.aiStopLoss.toFixed(2)}) for ${pos.symbol}.`
+                )
+              } else {
+                console.log(
+                  `[Risk Manager] AI (${agentType} Agent) signaled UPDATE_SL for ${pos.symbol}. Index SL: ${decision.newIndexStopLoss} -> Premium SL: ${newPremiumSl.toFixed(2)}`
+                )
+                pos.aiStopLoss = newPremiumSl
+                
+                this.emit("notification", {
+                  title: `🛡️ Trailing SL (${agentType})`,
+                  message: `${pos.symbol}: SL moved to ${newPremiumSl.toFixed(2)}`,
+                  type: "info",
+                })
+              }
 
-              pos.aiStopLoss = newPremiumSl
               pos.aiTarget = newPremiumTarget
-
-              this.emit("notification", {
-                title: `🛡️ Trailing SL (${agentType})`,
-                message: `${pos.symbol}: SL moved to ${newPremiumSl.toFixed(2)}`,
-                type: "info",
-              })
             }
           } catch (err) {
             console.error(`[Risk Manager] Failed to re-evaluate position ${pos.symbol}:`, err)
@@ -304,6 +321,9 @@ export class PaperTrader extends EventEmitter {
 
     if (params.side === "BUY") {
       // 0. Check Daily Limits & Halt Status
+      if (this.todayRealizedPnL <= this.maxDailyLoss) {
+        this.tradingHalted = true
+      }
       if (this.tradingHalted) {
         console.log(`❌ [PAPER TRADE] Trading halted for the day (Limits reached). Skipping ${params.symbol}`)
         return { success: false, error: "Trading halted for the day (Limits reached)" }
