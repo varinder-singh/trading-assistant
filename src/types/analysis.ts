@@ -51,6 +51,37 @@ export interface WaveContext {
   }
 }
 
+// GTI (Global Trading Intelligence) Types
+export type GTIClassification =
+  | "STRONG_INSTITUTIONAL_BUY"
+  | "INSTITUTIONAL_BUY"
+  | "NEUTRAL"
+  | "INSTITUTIONAL_SELL"
+  | "STRONG_INSTITUTIONAL_SELL"
+
+export interface GTIScore {
+  composite: number // -1.0 (distribution) to +1.0 (accumulation)
+  components: {
+    volumeAnomaly: number // Z-score signed by price direction
+    cvd: number // Cumulative Volume Delta normalized (-1 to +1)
+    vwapDeviation: number // Distance from VWAP as signal (-1 to +1)
+    oiSignal: number // From options buildup states (-1 to +1)
+    smartMoneyFlow: number // Session-timing weighted flow (-1 to +1)
+  }
+  classification: GTIClassification
+  confidence: number // 0-100, reliability of the signal
+}
+
+export interface GTICandleData {
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+  gtiScore: GTIScore
+}
+
 export interface OpeningRange {
   high: number
   low: number
@@ -70,10 +101,12 @@ export type TechnicalAnalysis = {
   swings?: SwingPoint[] | undefined
   waveContext?: WaveContext | undefined
   openingRange?: OpeningRange | undefined
+  gtiScore?: GTIScore | undefined
 }
 
 export type TradeTechnicalAnalysis = {
   tf1h: TechnicalAnalysis
+  tf30m: TechnicalAnalysis
   tf15m: TechnicalAnalysis
   tf3m: TechnicalAnalysis
   dailyContext: DailyContext | null
@@ -82,7 +115,9 @@ export type TradeTechnicalAnalysis = {
   sentiment: AISentimentResponse
   optionsAnalysis: KiteOptionsAnalysis
   candles1h: Candle[]
+  candles30m: Candle[]
   candles15m: Candle[]
   candles3m: Candle[]
   agentType: TradingAgentType
+  gtiHistory?: GTICandleData[]
 }

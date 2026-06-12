@@ -3,12 +3,42 @@ import { getInstrumentToken, getOptionToken } from "@core/data/kite.js"
 import { LiveAnalyzer } from "@core/analysis/live.js"
 import { paperTrader } from "@core/execution/paper-trader.js"
 import { runAnalysis } from "@core/analysis/trade.js"
+import type { AIMacroTrend } from "@core/ai/types.js"
 import { eventHub } from "@core/utils/event-hub.js"
 import { eventRepo } from "@core/db/repositories/event-repo.js"
+import { candleBuilder } from "@core/data/candle-builder.js"
+import { getIntradayBaseline } from "@core/data/kite-historical.js"
 import kc from "@core/data/kite.js"
+import { gtiTracker } from "@core/indicators/gti-tracker.js"
+import { computeHistoricalGTI } from "@core/indicators/gti.js"
+import { gtiRepo } from "@core/db/repositories/gti-repo.js"
 
 // Shared ticker instance
 let globalTicker: any = null
+
+/**
+ * Seed CandleBuilder for a specific token if not already seeded.
+ */
+async function seedCandleBuilder(token: number) {
+  if (candleBuilder.isSeeded(token)) return
+
+  console.log(`📊 Seeding CandleBuilder for token ${token}...`)
+  try {
+    const [c1m, c3m, c15m, c30m] = await Promise.all([
+      getIntradayBaseline(token, "minute", 2),
+      getIntradayBaseline(token, "3minute", 5),
+      getIntradayBaseline(token, "15minute", 5),
+      getIntradayBaseline(token, "30minute", 5),
+    ])
+    candleBuilder.seed(token, 1, c1m)
+    candleBuilder.seed(token, 3, c3m)
+    candleBuilder.seed(token, 15, c15m)
+    candleBuilder.seed(token, 30, c30m)
+    console.log(`✅ CandleBuilder seeded for token ${token}.`)
+  } catch (err) {
+    console.error(`❌ Failed to seed CandleBuilder for token ${token}:`, err)
+  }
+}
 const clients = new Map<
   string,
   {
@@ -18,6 +48,7 @@ const clients = new Map<
     token: number
     mode: "intraday" | "swing"
     lastDecision: any
+    chartTimeframe: number // 1, 3, 5, or 15 minutes for candle chart
   }
 >()
 
@@ -86,6 +117,11 @@ paperTrader.on("initialized", (tokens) => {
     const ticker = getTicker()
     ticker.subscribe(tokens)
     ticker.setMode(ticker.modeFull, tokens)
+
+    // Seed CandleBuilder for existing positions
+    tokens.forEach((token: number) => {
+      seedCandleBuilder(token)
+    })
   }
 })
 
@@ -106,9 +142,40 @@ paperTrader.on("market_close", () => {
 })
 
 function getTicker() {
+  // Ensure PaperTrader is initialized so it can restore positions
+  paperTrader.initialize()
+
   if (!globalTicker) {
     console.log("Initializing Global Kite Ticker...")
     globalTicker = createTicker()
+
+    // Handle completed candles (emitted by CandleBuilder)
+    candleBuilder.on("candle_close", async ({ token, timeframe, candle }) => {
+      // 1. Compute finalized GTI score for this candle
+      const gtiScore = gtiTracker.onCandleClose(token, candle)
+      
+      // 2. Persist to SQLite
+      const symbol = Array.from(clients.values()).find(c => c.token === token)?.symbol || `TOKEN_${token}`
+      try {
+        await gtiRepo.saveScore({
+          symbol,
+          token,
+          timeframe,
+          candleTime: candle.time,
+          candle,
+          gtiScore
+        })
+      } catch (err) {
+        console.error(`[GTI] Failed to persist score for ${symbol}:`, err)
+      }
+
+      // 3. Update analyzer state to trigger any GTI divergence/surge events
+      for (const client of clients.values()) {
+        if (client.token === token) {
+          client.analyzer.updateGTI(gtiScore)
+        }
+      }
+    })
 
     globalTicker.on("ticks", (ticks: any[]) => {
       // Route ticks to relevant clients
@@ -116,17 +183,22 @@ function getTicker() {
         const tick = ticks.find((t) => t.instrument_token === client.token)
         if (tick) {
           client.analyzer.addTick(tick)
+
+          // Include current GTI score in tick data sent to UI
+          const currentGTI = gtiTracker.getCurrentScore(client.token)
           client.peer.send(
             JSON.stringify({
               type: "tick",
-              data: tick,
+              data: { ...tick, gtiScore: currentGTI },
             })
           )
         }
       }
 
-      // Update paper trader prices
+      // Update candle builder, GTI tracker, and paper trader prices
       ticks.forEach((tick) => {
+        candleBuilder.addTick(tick)
+        gtiTracker.addTick(tick)
         paperTrader.updatePrice(tick.instrument_token, tick.last_price)
       })
     })
@@ -173,6 +245,9 @@ export default defineWebSocketHandler({
           return
         }
 
+        // Seed CandleBuilder for the watched symbol
+        seedCandleBuilder(token)
+
         const analyzer = new LiveAnalyzer()
         if (levels) {
           analyzer.setLevels(levels)
@@ -207,7 +282,7 @@ export default defineWebSocketHandler({
             // --- Paper Trading Execution ---
             if (decision) {
               const type = decision.optionAction === "BUY_CE" ? "CE" : "PE"
-              const option = await getOptionToken(symbol, decision.strike, type)
+              const option = await getOptionToken(symbol, decision.strike || 0, type)
 
               if (option) {
                 console.log(`[ws] Executing Paper Trade for ${option.symbol} (${agentType} Agent)...`)
@@ -243,6 +318,9 @@ export default defineWebSocketHandler({
                 const floorPercentage = agentType === "TREND" ? 0 : 0.2
                 const minAllowedSl = Math.max(entryPrice * floorPercentage, 0.05)
 
+                console.log(
+                  `[ws] Risk Translation: Index Risk ${indexRiskPoints.toFixed(2)} pts -> Option Risk ${optionRiskPoints.toFixed(2)} pts`
+                )
                 if (calculatedSl < minAllowedSl) {
                   console.warn(
                     `⚠️ [ws] Calculated SL (${calculatedSl.toFixed(2)}) is below safety floor for ${agentType}. Capping at: ${minAllowedSl.toFixed(2)}`
@@ -250,9 +328,12 @@ export default defineWebSocketHandler({
                   calculatedSl = minAllowedSl
                 }
 
-                console.log(
-                  `[ws] Risk Translation: Index Risk ${indexRiskPoints.toFixed(2)} pts -> Option Risk ${optionRiskPoints.toFixed(2)} pts`
-                )
+                if (calculatedSl < minAllowedSl) {
+                  console.warn(
+                    `⚠️ [ws] Calculated SL (${calculatedSl.toFixed(2)}) is below safety floor for ${agentType}. Capping at: ${minAllowedSl.toFixed(2)}`
+                  )
+                  calculatedSl = minAllowedSl
+                }
                 console.log(
                   `[ws] Option Entry: ${entryPrice}, Calculated SL: ${calculatedSl.toFixed(2)}, Target: ${calculatedTarget.toFixed(2)} (R:R ${decision.riskRewardRatio || 1.5})`
                 )
@@ -260,17 +341,17 @@ export default defineWebSocketHandler({
                 const result = await paperTrader.placeOrder({
                   symbol: option.symbol,
                   token: option.token,
-                  strike: decision.strike,
+                  strike: decision.strike || undefined,
                   side: "BUY",
                   quantity: 1,
                   price: entryPrice,
                   context: {
                     aiReasoning: decision.reason,
                     aiConfidence: decision.confidence,
-                    aiStrike: decision.strike,
+                    aiStrike: decision.strike || undefined,
                     aiSetup: decision.setup,
                     strategyContext: {
-                      macroTrend: decision.macroTrend,
+                      macroTrend: decision.macroTrend as AIMacroTrend,
                       indexSl: decision.stopLoss,
                       agentType,
                     },
@@ -301,6 +382,7 @@ export default defineWebSocketHandler({
           token,
           mode: mode || "intraday",
           lastDecision: null,
+          chartTimeframe: msg.data.chartTimeframe || 1,
         })
 
         const ticker = getTicker()

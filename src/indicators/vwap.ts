@@ -21,7 +21,12 @@ export function calculateVWAP(candles: Candle[]): number {
   }
 
   if (cumulativeVolume === 0) {
-    return 0
+    if (candles.length === 0) return 0
+    let sumPrice = 0
+    for (const c of candles) {
+      sumPrice += (c.high + c.low + c.close) / 3
+    }
+    return sumPrice / candles.length
   }
 
   return cumulativePV / cumulativeVolume

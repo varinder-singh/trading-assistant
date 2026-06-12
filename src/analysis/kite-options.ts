@@ -40,8 +40,10 @@ export type KiteOptionsAnalysis = {
   marketFlow: "SHORT_COVERING" | "LONG_BUILDUP" | "SHORT_BUILDUP" | "LONG_UNWINDING" | "NEUTRAL"
   rows: KiteOptionOiRow[]
   windowStats?: {
-    topShortCovering: KiteOptionOiRow[]
-    topLongBuildup: KiteOptionOiRow[]
+    topShortCoveringCE: KiteOptionOiRow[]
+    topShortCoveringPE: KiteOptionOiRow[]
+    topLongBuildupCE: KiteOptionOiRow[]
+    topLongBuildupPE: KiteOptionOiRow[]
     intervalMins: number
   }
 }
@@ -170,22 +172,45 @@ export function analyzeOptions(
   const pcr = callOI > 0 ? putOI / callOI : 0
   const pcrAtm = atmCallOI > 0 ? atmPutOI / atmCallOI : 0
 
-  // Aggregate Market Flow Calculation
-  let totalCoi = 0
-  let weightedPriceChange = 0
+  // Aggregate Market Flow — computed SEPARATELY for CE and PE legs
+  // CE Short Covering (OI↓, Price↑) = BULLISH; PE Short Covering (OI↓, Price↑) = BEARISH
+  // We must not mix them — net them independently then derive the dominant signal.
+  let ceNetCoi = 0, ceWeighted = 0
+  let peNetCoi = 0, peWeighted = 0
   for (const row of rows) {
-    if (row.intervalOi) {
-      totalCoi += row.intervalOi
-      weightedPriceChange +=
-        row.intervalOi * (row.buildup === "Short Covering" || row.buildup === "Long Buildup" ? 1 : -1)
+    if (!row.intervalOi) continue
+    const signedWeight = row.intervalOi * (row.buildup === "Short Covering" || row.buildup === "Long Buildup" ? 1 : -1)
+    if (row.type === "CE") {
+      ceNetCoi += row.intervalOi
+      ceWeighted += signedWeight
+    } else {
+      peNetCoi += row.intervalOi
+      peWeighted += signedWeight
     }
   }
 
+  // CE leg: if OI dropping (Short Covering) → BULLISH squeeze
+  // PE leg: if OI dropping (Short Covering) → BEARISH squeeze (puts being closed = bullish underlying... wait, context)
+  // Convention for underlying direction:
+  //   CE Short Covering → bullish for underlying (+1)
+  //   PE Short Covering → bearish for underlying... actually PE SC = put writers buying back = bullish underlying too
+  //   CE Long Buildup   → bearish for underlying (-1) [call writers adding shorts = resistance]
+  //   PE Long Buildup   → bullish for underlying (+1) [put writers adding shorts = support]
+  // Score: sum of CE and PE directional signals
+  let marketFlowScore = 0
+  if (ceNetCoi < 0) marketFlowScore += 1  // CE SC = bullish
+  else if (ceNetCoi > 0 && ceWeighted < 0) marketFlowScore -= 1  // CE LB = bearish resistance
+  if (peNetCoi < 0) marketFlowScore += 1  // PE SC = put writers closing = less put support = slightly bullish
+  else if (peNetCoi > 0 && peWeighted > 0) marketFlowScore += 1  // PE LB = put writers adding = bullish support
+
   let marketFlow: KiteOptionsAnalysis["marketFlow"] = "NEUTRAL"
-  if (totalCoi > 0) {
-    marketFlow = weightedPriceChange > 0 ? "LONG_BUILDUP" : "SHORT_BUILDUP"
-  } else if (totalCoi < 0) {
-    marketFlow = weightedPriceChange > 0 ? "SHORT_COVERING" : "LONG_UNWINDING"
+  const totalNetCoi = ceNetCoi + peNetCoi
+  if (totalNetCoi > 0) {
+    // Net OI increasing — buildup scenario
+    marketFlow = marketFlowScore >= 0 ? "LONG_BUILDUP" : "SHORT_BUILDUP"
+  } else if (totalNetCoi < 0) {
+    // Net OI decreasing — covering scenario
+    marketFlow = marketFlowScore >= 0 ? "SHORT_COVERING" : "LONG_UNWINDING"
   }
 
   // CONTRARIAN PCR LOGIC (Matches AI Rules)
@@ -209,12 +234,22 @@ export function analyzeOptions(
     marketFlow,
     rows: rows.sort((a, b) => a.strike - b.strike || a.type.localeCompare(b.type)),
     windowStats: {
-      topShortCovering: [...rows]
-        .filter((r) => r.buildup === "Short Covering")
+      // CE Short Covering: most negative intervalOi first (biggest OI reduction = most aggressive)
+      topShortCoveringCE: [...rows]
+        .filter((r) => r.buildup === "Short Covering" && r.type === "CE")
         .sort((a, b) => (a.intervalOi || 0) - (b.intervalOi || 0))
         .slice(0, 3),
-      topLongBuildup: [...rows]
-        .filter((r) => r.buildup === "Long Buildup")
+      // PE Short Covering
+      topShortCoveringPE: [...rows]
+        .filter((r) => r.buildup === "Short Covering" && r.type === "PE")
+        .sort((a, b) => (a.intervalOi || 0) - (b.intervalOi || 0))
+        .slice(0, 3),
+      topLongBuildupCE: [...rows]
+        .filter((r) => r.buildup === "Long Buildup" && r.type === "CE")
+        .sort((a, b) => (b.intervalOi || 0) - (a.intervalOi || 0))
+        .slice(0, 3),
+      topLongBuildupPE: [...rows]
+        .filter((r) => r.buildup === "Long Buildup" && r.type === "PE")
         .sort((a, b) => (b.intervalOi || 0) - (a.intervalOi || 0))
         .slice(0, 3),
       intervalMins,
@@ -284,10 +319,16 @@ export function formatOptionsAnalysisForLog(analysis: KiteOptionsAnalysis): stri
   if (analysis.windowStats) {
     log.push(`Window Stats (${analysis.windowStats.intervalMins}m):`)
     log.push(
-      `  Top Short Covering: ${analysis.windowStats.topShortCovering.map((r) => `${r.strike} ${r.type} (${r.intervalOi})`).join(", ")}`
+      `  CE Short Covering (BULLISH): ${analysis.windowStats.topShortCoveringCE.map((r) => `${r.strike}CE (\u0394OI:${r.intervalOi})`).join(", ") || "None"}`
     )
     log.push(
-      `  Top Long Buildup: ${analysis.windowStats.topLongBuildup.map((r) => `${r.strike} ${r.type} (+${r.intervalOi})`).join(", ")}`
+      `  PE Short Covering (BULLISH underlying): ${analysis.windowStats.topShortCoveringPE.map((r) => `${r.strike}PE (\u0394OI:${r.intervalOi})`).join(", ") || "None"}`
+    )
+    log.push(
+      `  CE Long Buildup (BEARISH/resistance): ${analysis.windowStats.topLongBuildupCE.map((r) => `${r.strike}CE (+${r.intervalOi})`).join(", ") || "None"}`
+    )
+    log.push(
+      `  PE Long Buildup (BULLISH/support): ${analysis.windowStats.topLongBuildupPE.map((r) => `${r.strike}PE (+${r.intervalOi})`).join(", ") || "None"}`
     )
   }
 

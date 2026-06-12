@@ -12,8 +12,9 @@ import {
   Zap,
   X,
   LogOut,
+  BarChart2,
 } from "@lucide/vue"
-import { createChart, AreaSeries, CrosshairMode } from "lightweight-charts"
+import { createChart, CandlestickSeries, CrosshairMode } from "lightweight-charts"
 import type { IChartApi, ISeriesApi } from "lightweight-charts"
 
 const symbol = ref("NIFTY")
@@ -35,6 +36,7 @@ const lastInstitutionalAlertAt = ref(0)
 
 const agents = ref<Record<string, any>>({
   Orchestrator: { status: "idle", message: "Awaiting market data...", lastUpdate: Date.now() },
+  "Regime Validator": { status: "idle", message: "Awaiting orchestrator...", lastUpdate: Date.now() },
   SCALPER: { status: "idle", message: "Awaiting signal...", lastUpdate: Date.now() },
   TREND: { status: "idle", message: "Awaiting trend...", lastUpdate: Date.now() },
   "Risk Manager": { status: "idle", message: "No active positions.", lastUpdate: Date.now() },
@@ -118,9 +120,18 @@ function toggleTradeExpand(id: string) {
 // Chart Refs
 const chartContainer = ref<HTMLElement | null>(null)
 let chart: IChartApi | null = null
-let areaSeries: ISeriesApi<"Area"> | null = null
+let candleSeries: ISeriesApi<"Candlestick"> | null = null
 let resistanceLine: any = null
 let supportLine: any = null
+
+// Current candle state for tick updates
+const currentCandle = ref<any>(null)
+const chartTimeframeStr = ref<string>("15m") // 3m, 15m, 30m, 1h
+
+const activeTfStats = computed(() => {
+  if (!analysisResult.value) return null
+  return analysisResult.value[`tf${chartTimeframeStr.value}`] || null
+})
 
 // WebSocket
 let ws: WebSocket | null = null
@@ -133,9 +144,7 @@ function connectWebSocket() {
 
   ws.onopen = () => {
     console.log("WS Connected")
-    if (analysisResult.value) {
-      startWatching()
-    }
+    startWatching()
   }
 
   ws.onmessage = (event) => {
@@ -143,7 +152,7 @@ function connectWebSocket() {
     if (msg.type === "tick") {
       const price = msg.data.last_price
       livePrice.value = price
-      updateChart(price)
+      updateChartFromTick(price, msg.data.gtiScore, msg.data.exchange_timestamp)
     } else if (msg.type === "log") {
       serverLogs.value.push(msg.data)
       if (serverLogs.value.length > 1000) serverLogs.value.shift()
@@ -152,7 +161,42 @@ function connectWebSocket() {
       }
     } else if (msg.type === "analysis") {
       analysisResult.value = msg.data
-      initChart()
+      if (!chart) {
+        initChart()
+      }
+      
+      if (!resistanceLine && !supportLine && candleSeries && analysisResult.value) {
+        const { resistance, support } = analysisResult.value.tf15m
+        resistanceLine = candleSeries.createPriceLine({
+          price: resistance,
+          color: "#ef4444",
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: "RESISTANCE",
+        })
+        supportLine = candleSeries.createPriceLine({
+          price: support,
+          color: "#22c55e",
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: "SUPPORT",
+        })
+      }
+      
+      updateChartDataForTimeframe()
+      
+      // Update resistance and support lines dynamically
+      if (analysisResult.value && candleSeries) {
+        const { resistance, support } = analysisResult.value.tf15m
+        if (resistanceLine) {
+          resistanceLine.applyOptions({ price: resistance })
+        }
+        if (supportLine) {
+          supportLine.applyOptions({ price: support })
+        }
+      }
     } else if (msg.type === "agent_update") {
       const { agent, status, message, data } = msg.data
       agents.value[agent] = {
@@ -192,9 +236,9 @@ function connectWebSocket() {
       addNotification(msg.data)
 
       // Add marker to chart if it's a trade execution
-      if (msg.data.details && areaSeries) {
+      if (msg.data.details && candleSeries) {
         const { side, price } = msg.data.details
-        const markers = areaSeries.getMarkers() || []
+        const markers = candleSeries.getMarkers() || []
         markers.push({
           time: Math.floor(Date.now() / 1000) as any,
           position: side === "BUY" ? "belowBar" : "aboveBar",
@@ -202,7 +246,7 @@ function connectWebSocket() {
           shape: side === "BUY" ? "arrowUp" : "arrowDown",
           text: side === "BUY" ? "BUY" : "SELL",
         })
-        areaSeries.setMarkers(markers)
+        candleSeries.setMarkers(markers)
       }
     } else if (msg.type === "market_closed") {
       addNotification({
@@ -215,18 +259,18 @@ function connectWebSocket() {
 }
 
 function startWatching() {
-  if (ws && ws.readyState === WebSocket.OPEN && analysisResult.value) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(
       JSON.stringify({
         type: "watch",
         data: {
           symbol: symbol.value,
           mode: mode.value,
-          levels: {
+          levels: analysisResult.value ? {
             resistance: analysisResult.value.tf15m.resistance,
             support: analysisResult.value.tf15m.support,
             vwap: analysisResult.value.tf15m.vwap,
-          },
+          } : undefined,
         },
       })
     )
@@ -249,8 +293,13 @@ async function runAnalysis() {
       },
     })
     analysisResult.value = data
-    initChart()
+    if (!chart) {
+      initChart()
+    }
     startWatching()
+
+    // Setup chart with correct timeframe data
+    updateChartDataForTimeframe()
 
     // Refresh history if we are on that view
     if (currentView.value === "history") fetchHistory()
@@ -269,6 +318,12 @@ function initChart() {
   }
 
   chart = createChart(chartContainer.value, {
+    localization: {
+      timeFormatter: (time: number) => {
+        const date = new Date(time * 1000)
+        return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })
+      }
+    },
     layout: {
       background: { color: "#ffffff" },
       textColor: "#333",
@@ -288,16 +343,21 @@ function initChart() {
       borderColor: "#f0f0f0",
       timeVisible: true,
       secondsVisible: true,
+      tickMarkFormatter: (time: number) => {
+        const date = new Date(time * 1000)
+        return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })
+      }
     },
     width: chartContainer.value.clientWidth,
     height: 400,
   })
 
-  areaSeries = chart.addSeries(AreaSeries, {
-    lineColor: "#4f46e5",
-    topColor: "rgba(79, 70, 229, 0.4)",
-    bottomColor: "rgba(79, 70, 229, 0.0)",
-    lineWidth: 2,
+  candleSeries = chart.addSeries(CandlestickSeries, {
+    upColor: "#22c55e",
+    downColor: "#ef4444",
+    borderVisible: false,
+    wickUpColor: "#22c55e",
+    wickDownColor: "#ef4444",
     priceFormat: {
       type: "price",
       precision: 2,
@@ -305,20 +365,11 @@ function initChart() {
     },
   })
 
-  // Pre-load historical data
-  if (analysisResult.value?.candles5m) {
-    const historicalData = analysisResult.value.candles5m.map((c: any) => ({
-      time: c.time as any,
-      value: c.close,
-    }))
-    areaSeries.setData(historicalData)
-  }
-
   if (analysisResult.value) {
     const { resistance, support } = analysisResult.value.tf15m
 
     // Custom price lines for levels
-    areaSeries.createPriceLine({
+    resistanceLine = candleSeries.createPriceLine({
       price: resistance,
       color: "#ef4444",
       lineWidth: 1,
@@ -327,7 +378,7 @@ function initChart() {
       title: "RESISTANCE",
     })
 
-    areaSeries.createPriceLine({
+    supportLine = candleSeries.createPriceLine({
       price: support,
       color: "#22c55e",
       lineWidth: 1,
@@ -338,12 +389,141 @@ function initChart() {
   }
 }
 
-function updateChart(price: number) {
-  if (areaSeries) {
-    areaSeries.update({
-      time: Math.floor(Date.now() / 1000) as any,
-      value: price,
-    })
+function getGtiColors(gtiScore: any | undefined, isUp: boolean) {
+  // Default colors
+  let color = isUp ? "#22c55e" : "#ef4444"
+  
+  if (!gtiScore) return { color, wickColor: color }
+
+  // Apply GTI institutional coloring
+  const score = gtiScore.composite || 0
+  
+  if (score > 0.6) {
+    color = "#3b82f6" // Strong Institutional Buy (Blue)
+  } else if (score > 0.2) {
+    color = "#10b981" // Institutional Buy (Emerald)
+  } else if (score < -0.6) {
+    color = "#9333ea" // Strong Institutional Sell (Purple)
+  } else if (score < -0.2) {
+    color = "#f43f5e" // Institutional Sell (Rose)
+  } else {
+    color = isUp ? "#22c55e" : "#ef4444" // Standard colors for Neutral
+  }
+
+  return { color, wickColor: color }
+}
+
+function updateChartDataForTimeframe() {
+  if (!analysisResult.value || !candleSeries) return
+
+  const key = `candles${chartTimeframeStr.value}`
+  const candles = analysisResult.value[key]
+  
+  if (!candles || candles.length === 0) return
+
+  const gtiHistory = analysisResult.value.gtiHistory || []
+
+  const formattedData = candles.map((c: any) => {
+    const isUp = c.close >= c.open
+    // Find matching GTI score for this candle time if available
+    const gtiMatch = gtiHistory.find((g: any) => g.time === c.time)
+    const { color, wickColor } = getGtiColors(gtiMatch?.gtiScore, isUp)
+    
+    return {
+      time: c.time as any,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      color,
+      wickColor
+    }
+  })
+
+  candleSeries.setData(formattedData)
+  
+  // Set current candle to the last one
+  const last = formattedData[formattedData.length - 1]
+  if (last) {
+    currentCandle.value = { ...last }
+  } else {
+    currentCandle.value = null
+  }
+}
+
+function updateChartFromTick(price: number, gtiScore?: any, tickTimestamp?: string) {
+  if (!candleSeries) return
+
+  // Use tick timestamp if available, else fallback to Date.now
+  const tickTimeMs = tickTimestamp ? new Date(tickTimestamp).getTime() : Date.now()
+  const now = Math.floor(tickTimeMs / 1000)
+  
+  const tfMap: Record<string, number> = { "3m": 180, "15m": 900, "30m": 1800, "1h": 3600 }
+  const bucketSecs = tfMap[chartTimeframeStr.value] || 900
+  
+  if (!currentCandle.value) {
+    const isUp = true
+    const { color, wickColor } = getGtiColors(gtiScore, isUp)
+    currentCandle.value = {
+      time: (now - (now % bucketSecs)) as any,
+      open: price,
+      high: price,
+      low: price,
+      close: price,
+      color,
+      wickColor
+    }
+  }
+  
+  // Check if we need to roll over to a new candle
+  if (now >= currentCandle.value.time + bucketSecs) {
+    const bucketsPassed = Math.floor((now - currentCandle.value.time) / bucketSecs)
+    const newCandleTime = currentCandle.value.time + (bucketsPassed * bucketSecs)
+    
+    currentCandle.value = {
+      time: newCandleTime as any,
+      open: price,
+      high: price,
+      low: price,
+      close: price,
+      color: currentCandle.value.color,
+      wickColor: currentCandle.value.wickColor
+    }
+  } else {
+    // Update current candle OHLC
+    currentCandle.value.close = price
+    if (price > currentCandle.value.high) currentCandle.value.high = price
+    if (price < currentCandle.value.low) currentCandle.value.low = price
+  }
+  
+  // Apply live GTI colors if available
+  const isUp = currentCandle.value.close >= currentCandle.value.open
+  const { color, wickColor } = getGtiColors(gtiScore, isUp)
+  
+  currentCandle.value.color = color
+  currentCandle.value.wickColor = wickColor
+
+  candleSeries.update(currentCandle.value)
+}
+
+function changeTimeframe(tf: string) {
+  chartTimeframeStr.value = tf
+  updateChartDataForTimeframe()
+  
+  // Update WS subscription for timeframe
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    // Re-send watch command with new timeframe
+    const tfMap: Record<string, number> = { "3m": 3, "15m": 15, "30m": 30, "1h": 60 }
+    ws.send(
+      JSON.stringify({
+        type: "watch",
+        data: {
+          symbol: symbol.value,
+          mode: mode.value,
+          chartTimeframe: tfMap[tf] || 15
+        },
+      })
+    )
   }
 }
 
@@ -359,6 +539,9 @@ function getDecisionColor(decision: string) {
 }
 
 onMounted(() => {
+  nextTick(() => {
+    initChart()
+  })
   runAnalysis()
   connectWebSocket()
 
@@ -490,26 +673,53 @@ onUnmounted(() => {
 
       <!-- Live View -->
       <div v-show="currentView === 'live'">
-        <div v-if="analysisResult" class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <!-- Main Content -->
           <div class="lg:col-span-2 space-y-8">
             <!-- Chart Card -->
             <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
               <div class="p-4 border-b border-gray-100 flex items-center justify-between">
-                <h3 class="text-sm font-bold text-gray-500 uppercase flex items-center gap-2">
-                  <Activity class="w-4 h-4 text-indigo-500" />
-                  Live Price Chart
-                </h3>
+                <div class="flex items-center gap-4">
+                  <h3 class="text-sm font-bold text-gray-500 uppercase flex items-center gap-2">
+                    <BarChart2 class="w-4 h-4 text-indigo-500" />
+                    Live Chart
+                  </h3>
+                  <!-- Timeframe selector -->
+                  <div class="flex bg-gray-100 rounded-lg p-0.5">
+                    <button 
+                      v-for="tf in ['3m', '15m', '30m', '1h']" :key="tf"
+                      @click="changeTimeframe(tf)"
+                      class="px-2 py-1 text-xs font-bold rounded-md transition-colors"
+                      :class="chartTimeframeStr === tf ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                    >
+                      {{ tf }}
+                    </button>
+                  </div>
+                </div>
                 <div v-if="livePrice" class="flex items-center gap-2">
                   <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
                   <span class="text-sm font-mono font-bold">{{ livePrice.toFixed(2) }}</span>
                 </div>
               </div>
+              
+              <!-- GTI Legend -->
+              <div class="px-4 py-2 bg-gray-50/50 border-b border-gray-100 flex items-center gap-4 overflow-x-auto">
+                <span class="text-[10px] font-black uppercase text-gray-400 tracking-widest flex items-center gap-1">
+                  <ShieldCheck class="w-3 h-3" /> GTI Flow:
+                </span>
+                <div class="flex items-center gap-3 text-[10px] font-bold text-gray-600 whitespace-nowrap">
+                  <span class="flex items-center gap-1"><div class="w-2 h-2 rounded bg-blue-500"></div> Strong Buy</span>
+                  <span class="flex items-center gap-1"><div class="w-2 h-2 rounded bg-emerald-500"></div> Buy</span>
+                  <span class="flex items-center gap-1"><div class="w-2 h-2 rounded bg-rose-500"></div> Sell</span>
+                  <span class="flex items-center gap-1"><div class="w-2 h-2 rounded bg-purple-600"></div> Strong Sell</span>
+                </div>
+              </div>
+
               <div ref="chartContainer" class="w-full"></div>
             </div>
 
             <!-- Agent Status Cards -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
               <div
                 v-for="(agent, name) in agents"
                 :key="name"
@@ -550,7 +760,7 @@ onUnmounted(() => {
             </div>
 
             <!-- AI Decision Card -->
-            <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            <div v-if="analysisResult" class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
               <div class="p-6 border-b border-gray-100 flex items-center justify-between">
                 <h2 class="text-lg font-semibold flex items-center gap-2">
                   <ShieldCheck class="w-5 h-5 text-indigo-600" />
@@ -618,7 +828,7 @@ onUnmounted(() => {
                   <div class="p-4 bg-green-50 rounded-xl border border-green-100">
                     <div class="text-xs text-green-600 font-bold uppercase mb-1">Target(s)</div>
                     <div class="text-xl font-bold text-green-900">
-                      {{ analysisResult.aiDecision.targets?.map((t) => Math.floor(t)).join(", ") || "N/A" }}
+                      {{ analysisResult.aiDecision.targets?.map((t: number) => Math.floor(t)).join(", ") || "N/A" }}
                     </div>
                   </div>
                 </div>
@@ -627,7 +837,7 @@ onUnmounted(() => {
           </div>
 
           <!-- Sidebar Details -->
-          <div class="space-y-8">
+          <div v-if="analysisResult" class="space-y-8">
             <!-- Paper Portfolio -->
             <div
               v-if="portfolio.length > 0"
@@ -714,29 +924,113 @@ onUnmounted(() => {
             </div>
 
             <!-- Technicals & Context (Condensed) -->
-            <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-              <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-6 flex items-center gap-2">
-                <TrendingUp class="w-4 h-4" />
-                Technical Stats
-              </h3>
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200" v-if="activeTfStats">
+              <div class="flex items-center justify-between mb-6">
+                <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-2">
+                  <TrendingUp class="w-4 h-4" />
+                  Technical Stats ({{ chartTimeframeStr }})
+                </h3>
+              </div>
 
               <div class="space-y-4 text-sm">
-                <div class="flex items-center justify-between">
-                  <span class="text-gray-500">Trend</span>
-                  <span
-                    class="font-bold"
-                    :class="analysisResult.tf15m.trend === 'up' ? 'text-green-600' : 'text-red-600'"
-                  >
-                    {{ analysisResult.tf15m.trend.toUpperCase() }}
-                  </span>
+                <!-- Trend & RSI -->
+                <div class="grid grid-cols-2 gap-4">
+                  <div class="bg-gray-50 p-3 rounded-xl border border-gray-100">
+                    <div class="text-xs text-gray-500 mb-1">Trend</div>
+                    <div class="font-bold text-lg" :class="activeTfStats.trend === 'up' ? 'text-green-600' : activeTfStats.trend === 'down' ? 'text-red-600' : 'text-gray-600'">
+                      {{ (activeTfStats.trend || '').toUpperCase() }}
+                    </div>
+                  </div>
+                  <div class="bg-gray-50 p-3 rounded-xl border border-gray-100">
+                    <div class="text-xs text-gray-500 mb-1">RSI</div>
+                    <div class="font-bold text-lg" :class="activeTfStats.rsi > 70 ? 'text-red-600' : activeTfStats.rsi < 30 ? 'text-green-600' : 'text-gray-900'">
+                      {{ activeTfStats.rsi.toFixed(2) }}
+                    </div>
+                  </div>
                 </div>
-                <div class="flex items-center justify-between">
-                  <span class="text-gray-500">RSI</span>
-                  <span class="font-bold">{{ analysisResult.tf15m.rsi.toFixed(2) }}</span>
+
+                <!-- VWAP & Levels -->
+                <div class="space-y-2 pt-2 border-t border-gray-100">
+                  <div class="flex items-center justify-between">
+                    <span class="text-gray-500">VWAP</span>
+                    <span class="font-mono text-xs">{{ activeTfStats.vwap.toFixed(2) }}</span>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-gray-500">VWAP Pos</span>
+                    <span class="font-bold text-xs" :class="activeTfStats.vwapPosition === 'above' ? 'text-green-600' : 'text-red-600'">{{ (activeTfStats.vwapPosition || '').toUpperCase() }}</span>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-gray-500">Resistance</span>
+                    <span class="font-mono text-red-600 text-xs">{{ activeTfStats.resistance.toFixed(2) }}</span>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-gray-500">Support</span>
+                    <span class="font-mono text-green-600 text-xs">{{ activeTfStats.support.toFixed(2) }}</span>
+                  </div>
                 </div>
-                <div class="flex items-center justify-between">
-                  <span class="text-gray-500">VWAP</span>
-                  <span class="font-bold">{{ analysisResult.tf15m.vwap.toFixed(2) }}</span>
+
+                <!-- Elliott Wave Context -->
+                <div v-if="activeTfStats.waveContext" class="pt-3 border-t border-gray-100">
+                  <div class="text-xs font-bold text-indigo-600 uppercase mb-2 flex items-center gap-1"><Activity class="w-3 h-3" /> Wave Context</div>
+                  <div class="text-sm font-medium text-gray-700 bg-indigo-50 p-2 rounded-lg border border-indigo-100">
+                    Current Wave: <span class="font-bold text-indigo-900">{{ (activeTfStats.waveContext.currentPhase || '').replace('_', ' ') }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- GTI Real-Time Dashboard Panel -->
+            <div v-if="analysisResult.gtiHistory && analysisResult.gtiHistory.length > 0" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+              <div class="flex items-center justify-between mb-6">
+                <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-2">
+                  <ShieldCheck class="w-4 h-4 text-indigo-500" />
+                  Institutional Flow (GTI)
+                </h3>
+              </div>
+              
+              <div v-if="analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1]?.gtiScore" class="space-y-4">
+                <div class="p-4 rounded-xl flex flex-col gap-1"
+                  :class="{
+                    'bg-blue-50 border border-blue-100 text-blue-800': analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite > 0.6,
+                    'bg-emerald-50 border border-emerald-100 text-emerald-800': analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite > 0.2 && analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite <= 0.6,
+                    'bg-gray-50 border border-gray-200 text-gray-700': analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite >= -0.2 && analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite <= 0.2,
+                    'bg-rose-50 border border-rose-100 text-rose-800': analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite < -0.2 && analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite >= -0.6,
+                    'bg-purple-50 border border-purple-100 text-purple-800': analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite < -0.6
+                  }">
+                  <div class="text-[10px] font-black uppercase tracking-widest opacity-60">Composite Score</div>
+                  <div class="text-2xl font-black">
+                    {{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite > 0 ? '+' : '' }}{{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite.toFixed(2) }}
+                  </div>
+                  <div class="text-xs font-bold mt-1">
+                    {{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.classification.replace(/_/g, ' ') }}
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                  <div class="p-2 bg-gray-50 rounded-lg border border-gray-100 flex justify-between">
+                    <span class="text-gray-500 font-medium">Volume</span>
+                    <span class="font-mono font-bold" :class="analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.volumeAnomaly > 0 ? 'text-green-600' : 'text-red-600'">
+                      {{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.volumeAnomaly > 0 ? '+' : '' }}{{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.volumeAnomaly.toFixed(2) }}
+                    </span>
+                  </div>
+                  <div class="p-2 bg-gray-50 rounded-lg border border-gray-100 flex justify-between">
+                    <span class="text-gray-500 font-medium">CVD</span>
+                    <span class="font-mono font-bold" :class="analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.cvd > 0 ? 'text-green-600' : 'text-red-600'">
+                      {{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.cvd > 0 ? '+' : '' }}{{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.cvd.toFixed(2) }}
+                    </span>
+                  </div>
+                  <div class="p-2 bg-gray-50 rounded-lg border border-gray-100 flex justify-between">
+                    <span class="text-gray-500 font-medium">VWAP Dev</span>
+                    <span class="font-mono font-bold" :class="analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.vwapDeviation > 0 ? 'text-green-600' : 'text-red-600'">
+                      {{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.vwapDeviation > 0 ? '+' : '' }}{{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.vwapDeviation.toFixed(2) }}
+                    </span>
+                  </div>
+                  <div class="p-2 bg-gray-50 rounded-lg border border-gray-100 flex justify-between">
+                    <span class="text-gray-500 font-medium">OI Signal</span>
+                    <span class="font-mono font-bold" :class="analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.oiSignal > 0 ? 'text-green-600' : analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.oiSignal < 0 ? 'text-red-600' : 'text-gray-600'">
+                      {{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.oiSignal > 0 ? '+' : '' }}{{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.oiSignal.toFixed(2) }}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -744,7 +1038,7 @@ onUnmounted(() => {
         </div>
 
         <!-- Empty State -->
-        <div v-else-if="!loading" class="text-center py-20">
+        <div v-if="!analysisResult && !loading" class="text-center py-20">
           <div
             class="bg-white w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-sm border border-gray-100"
           >

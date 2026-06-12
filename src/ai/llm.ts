@@ -17,6 +17,28 @@ import type {
 } from "./types.js"
 import { eventHub } from "../utils/event-hub.js"
 import { memoryService } from "./memory.js"
+import { extractJsonFromText } from "../utils/json-extractor.js"
+
+function pruneMarketData(input: any): any {
+  if (!input) return input
+  const pruned = { ...input }
+  if (pruned.optionsAnalysisZerodha && Array.isArray(pruned.optionsAnalysisZerodha.rows)) {
+    pruned.optionsAnalysisZerodha = {
+      ...pruned.optionsAnalysisZerodha,
+      rows: "[OMITTED TO SAVE CONTEXT - Use aggregated metrics and windowStats]",
+    }
+  }
+  if (pruned.marketData?.optionsAnalysisZerodha && Array.isArray(pruned.marketData.optionsAnalysisZerodha.rows)) {
+    pruned.marketData = {
+      ...pruned.marketData,
+      optionsAnalysisZerodha: {
+        ...pruned.marketData.optionsAnalysisZerodha,
+        rows: "[OMITTED TO SAVE CONTEXT - Use aggregated metrics and windowStats]",
+      },
+    }
+  }
+  return pruned
+}
 
 export class LLMService {
   private emitUpdate(update: AgentUpdate) {
@@ -32,9 +54,10 @@ export class LLMService {
     })
 
     const systemMessage = ORCHESTRATOR_PROMPT
+    const prunedInput = pruneMarketData(input)
     const userPrompt = `Evaluate the current macro context to decide the active trading agent:
 ## MARKET DATA
-${JSON.stringify(input, null, 2)}
+${JSON.stringify(prunedInput, null, 2)}
 `
     try {
       const provider = getLLMProvider()
@@ -46,10 +69,7 @@ ${JSON.stringify(input, null, 2)}
         { temperature: 0.2 }
       )
 
-      const cleanedText = text
-        .replace(/^```(?:json)?\n?/, "")
-        .replace(/\n?```$/, "")
-        .trim()
+      const cleanedText = extractJsonFromText(text)
       const result: OrchestratorResponse = JSON.parse(cleanedText)
 
       this.emitUpdate({
@@ -90,15 +110,12 @@ ${JSON.stringify(input, null, 2)}
       { role: "system", content: systemMessage },
       { role: "user", content: userPrompt },
     ])
-    const cleanedText = text
-      .replace(/^```(?:json)?\n?/, "")
-      .replace(/\n?```$/, "")
-      .trim()
+    const cleanedText = extractJsonFromText(text)
     const result: AISentimentResponse = JSON.parse(cleanedText)
     return result
   }
 
-  public async analyzeWithAI(
+  public async analyzeWithSingleAgent(
     input: any,
     agentType: TradingAgentType = "SCALPER"
   ): Promise<AISuccessResponse | undefined> {
@@ -115,16 +132,22 @@ ${JSON.stringify(input, null, 2)}
 
     if (agentType === "TREND") {
       systemMessage += TREND_RULES
-      // Programmatic Math Injection: Inject Wave 5 target if available
-      const wave5Target = input.tf15m?.waveContext?.wave5Target || input.marketData?.tf15m?.waveContext?.wave5Target
-      if (wave5Target) {
-        systemMessage = systemMessage.replace(
-          /`Wave 5 Target = Wave 4 Low \+ \(1\.0 \* \(Wave 1 High - Wave 1 Low\)\)`/g,
-          `The mathematical Wave 5 Exhaustion Target is exactly ${wave5Target.toFixed(2)}. If price enters within 5 points of this level, shift trailing stop tightly.`
-        )
-      }
     } else {
       systemMessage += SCALPER_RULES
+    }
+
+    // Programmatic Math Injection: Inject Wave 5 target if available
+    const wave5Target = input.tf15m?.waveContext?.wave5Target || input.marketData?.tf15m?.waveContext?.wave5Target
+    if (wave5Target) {
+      systemMessage = systemMessage.replace(
+        /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,
+        `- **Wave 5 Target Reached:** The mathematical Wave 5 Exhaustion Target is exactly ${wave5Target.toFixed(2)}. If price enters within 5 points of this level, instantly deactivate the wide 15m trailing filter and **shift the trailing stop tightly to the low/high of the most recent 3-minute candle**.`
+      )
+    } else {
+      systemMessage = systemMessage.replace(
+        /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,
+        `- **Default Wave 5 Target:** Calculate the mathematical target for Wave 5: \`Wave 5 Target = Wave 4 Low + (1.0 * (Wave 1 High - Wave 1 Low))\`. If price enters within 5 points of this level, shift trailing stop tightly.`
+      )
     }
 
     try {
@@ -133,8 +156,13 @@ ${JSON.stringify(input, null, 2)}
       } else {
         let liveContextSection = ""
         if (input.liveContext) {
-          const oiInsights = input.optionsAnalysisZerodha?.windowStats
-            ? `\n- OI Window Insights (${input.optionsAnalysisZerodha.windowStats.intervalMins}m): Top Short Covering: ${input.optionsAnalysisZerodha.windowStats.topShortCovering.map((r: any) => r.symbol).join(", ")}`
+          const ws = input.optionsAnalysisZerodha?.windowStats
+          const oiInsights = ws
+            ? `\n- OI Window Insights (${ws.intervalMins}m):` +
+              `\n  CE Short Covering (BULLISH): ${ws.topShortCoveringCE.map((r: any) => `${r.strike}CE (ΔOI:${r.intervalOi})`).join(", ") || "None"}` +
+              `\n  PE Short Covering (BULLISH underlying): ${ws.topShortCoveringPE.map((r: any) => `${r.strike}PE (ΔOI:${r.intervalOi})`).join(", ") || "None"}` +
+              `\n  CE Long Buildup (BEARISH/resistance): ${ws.topLongBuildupCE.map((r: any) => `${r.strike}CE (+${r.intervalOi})`).join(", ") || "None"}` +
+              `\n  PE Long Buildup (BULLISH/support): ${ws.topLongBuildupPE.map((r: any) => `${r.strike}PE (+${r.intervalOi})`).join(", ") || "None"}`
             : ""
           const flowInsight = input.optionsAnalysisZerodha?.marketFlow
             ? `\n- Aggregate Market Flow: ${input.optionsAnalysisZerodha.marketFlow}`
@@ -164,7 +192,7 @@ Use this to decide if the current live breakout confirms your previous bias.
 `
         }
 
-        const cleanedInput = { ...input }
+        let cleanedInput = pruneMarketData({ ...input })
         if (cleanedInput.liveContext) {
           cleanedInput.liveContext = {
             ...cleanedInput.liveContext,
@@ -192,7 +220,7 @@ ${JSON.stringify(cleanedInput, null, 2)}
   "reason": "<2-3 sentences citing technicals AND specific OI/buildup signals>",
   "confidence": <0-100>,
   "entry": <number - Current Index Price or Breakout Level>,
-  "stopLoss": <number - ACTUAL INDEX LEVEL FOR INVALIDATION>,
+  "stopLoss": <number - MUST BE THE UNDERLYING NIFTY/BANKNIFTY INDEX LEVEL (e.g. 23500), NEVER THE OPTION PREMIUM PRICE. IF YOU RETURN A PREMIUM LIKE 150 IT WILL BREAK THE SYSTEM!>,
   "targets": [<number>, <number>],
   "riskRewardRatio": <number - e.g. 1.5 or 2.0>
 }
@@ -211,10 +239,7 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
         { role: "user", content: userPrompt },
       ])
 
-      const cleanedText = text
-        .replace(/^```(?:json)?\n?/, "")
-        .replace(/\n?```$/, "")
-        .trim()
+      const cleanedText = extractJsonFromText(text)
 
       try {
         const result: AISuccessResponse = JSON.parse(cleanedText)
@@ -255,18 +280,19 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
       const provider = getLLMProvider()
       
       // Fetch Memory
-      const trend = input.tf15m?.trend || "SIDEWAYS"
+      const trend = input.tf15m?.trend || "sideways"
       const vix = input.vix?.current || 15
-      const pastTrades = await memoryService.getSimilarTrades(trend, vix)
-      const memoryPrompt = memoryService.formatForPrompt(pastTrades)
+      const regimeStats = await memoryService.getRegimeStats(trend, vix)
+      const memoryPrompt = memoryService.formatForPrompt(regimeStats)
 
-      const marketDataStr = JSON.stringify(input, null, 2)
+      const prunedInput = pruneMarketData(input)
+      const marketDataStr = JSON.stringify(prunedInput, null, 2)
 
       // 1. Run Technical and Options agents in parallel
       this.emitUpdate({
-        agent: "Ensemble",
+        agent: agentType,
         status: "thinking",
-        message: "Technical and Options agents are analyzing in parallel with Memory access...",
+        message: "Ensemble: Technical and Options agents analyzing in parallel...",
       })
 
       const [techRes, optRes] = await Promise.all([
@@ -280,7 +306,7 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
         ]),
       ])
 
-      const cleanJson = (text: string) => text.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim()
+      const cleanJson = (text: string) => extractJsonFromText(text)
 
       const technical = JSON.parse(cleanJson(techRes))
       const options = JSON.parse(cleanJson(optRes))
@@ -289,9 +315,9 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
       console.log("[AI] Options Agent Bias:", options.bias)
 
       this.emitUpdate({
-        agent: "Consensus",
+        agent: agentType,
         status: "thinking",
-        message: `Technical: ${technical.bias}, Options: ${options.bias}. Determining consensus...`,
+        message: `Ensemble Consensus | Tech: ${technical.bias}, Opt: ${options.bias}. Finalizing...`,
       })
 
       // 2. Run Consensus Agent
@@ -314,9 +340,9 @@ ${marketDataStr}
       const result: AISuccessResponse = JSON.parse(cleanJson(consensusRes))
 
       this.emitUpdate({
-        agent: "Consensus",
+        agent: agentType,
         status: "decided",
-        message: `${result.decision} signal confirmed by ensemble.`,
+        message: `Ensemble Consensus: ${result.decision} signal confirmed.`,
         data: { result, technical, options },
       })
 
@@ -324,11 +350,11 @@ ${marketDataStr}
     } catch (error: any) {
       console.error("[AI] Ensemble Analysis Error:", error)
       this.emitUpdate({
-        agent: "Ensemble",
+        agent: agentType,
         status: "error",
         message: "Ensemble analysis failed. Falling back to single-agent mode.",
       })
-      return this.analyzeWithAI(input, agentType)
+      return this.analyzeWithSingleAgent(input, agentType)
     }
   }
 
@@ -351,16 +377,21 @@ The position was originally opened by a ${agentType} agent. You must decide whet
     const wave5Target = input.tf15m?.waveContext?.wave5Target || input.marketData?.tf15m?.waveContext?.wave5Target
     if (wave5Target) {
       systemMessage = systemMessage.replace(
-        /`Wave 5 Target = Wave 4 Low \+ \(1\.0 \* \(Wave 1 High - Wave 1 Low\)\)`/g,
-        `The mathematical Wave 5 Exhaustion Target is exactly ${wave5Target.toFixed(2)}. If price enters within 5 points of this level, shift trailing stop tightly.`
+        /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,
+        `- **Wave 5 Target Reached:** The mathematical Wave 5 Exhaustion Target is exactly ${wave5Target.toFixed(2)}. If price enters within 5 points of this level, instantly deactivate the wide 15m trailing filter and **shift the trailing stop tightly to the low/high of the most recent 3-minute candle**.`
+      )
+    } else {
+      systemMessage = systemMessage.replace(
+        /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,
+        `- **Default Wave 5 Target:** Calculate the mathematical target for Wave 5: \`Wave 5 Target = Wave 4 Low + (1.0 * (Wave 1 High - Wave 1 Low))\`. If price enters within 5 points of this level, shift trailing stop tightly.`
       )
     }
 
     // Fetch Memory for Risk Context
-    const trend = input.marketData?.tf15m?.trend || "SIDEWAYS"
+    const trend = input.marketData?.tf15m?.trend || "sideways"
     const vix = input.marketData?.vix?.current || 15
-    const pastTrades = await memoryService.getSimilarTrades(trend, vix)
-    const memoryPrompt = memoryService.formatForPrompt(pastTrades)
+    const regimeStats = await memoryService.getRegimeStats(trend, vix)
+    const memoryPrompt = memoryService.formatForPrompt(regimeStats)
 
     const userPrompt = `Evaluate the following open position against current market data:
 
@@ -370,13 +401,13 @@ ${memoryPrompt}
 ${JSON.stringify(input.openPosition, null, 2)}
 
 ## CURRENT MARKET DATA
-${JSON.stringify(input.marketData, null, 2)}
+${JSON.stringify(pruneMarketData(input).marketData, null, 2)}
 
 ## Required Output (JSON only)
 {
   "decision": "HOLD" | "EXIT" | "UPDATE_SL",
   "reason": "<1-2 sentences explaining the risk/momentum shift>",
-  "newIndexStopLoss": <number or null>,
+  "newIndexStopLoss": <number or null - MUST BE THE UNDERLYING NIFTY/BANKNIFTY INDEX LEVEL (e.g. 23500), NEVER THE OPTION PREMIUM PRICE. DO NOT OUTPUT SMALL NUMBERS LIKE 100-300!>,
   "riskRewardRatio": <number or null>,
   "confidence": <0-100>
 }
@@ -388,10 +419,7 @@ ${JSON.stringify(input.marketData, null, 2)}
         { role: "user", content: userPrompt },
       ])
 
-      const cleanedText = text
-        .replace(/^```(?:json)?\n?/, "")
-        .replace(/\n?```$/, "")
-        .trim()
+      const cleanedText = extractJsonFromText(text)
       const result = JSON.parse(cleanedText)
 
       this.emitUpdate({

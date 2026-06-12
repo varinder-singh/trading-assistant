@@ -20,10 +20,11 @@ The Trading Assistant is a multi-agent AI-driven system designed for automated m
 - **Options Analysis**: Processes Zerodha (Kite) options chain data, calculating OI shifts and buildup states.
 
 ### 3. Data Layer (`src/data`)
-- **Yahoo Finance**: Source for historical and real-time candle data.
+- **Yahoo Finance**: Source for macro historical data and fallback candle data.
+- **CandleBuilder**: An in-memory engine that aggregates real-time WebSocket ticks into multi-timeframe candles (1m, 3m, 15m, 30m). Refactored to support multi-token namespacing for simultaneous multi-symbol tracking.
 - **News**: Fetches market news for sentiment analysis.
 - **India VIX**: Fetches volatility index data.
-- **Kite (Zerodha)**: Fetches live quotes, options chains, and instrument details.
+- **Kite (Zerodha)**: Fetches live quotes, options chains, and instrument details. Primary source for real-time WebSocket tick streams.
 
 ### 4. Execution Layer (`src/execution`)
 - **PaperTrader**: A simulated trading engine that:

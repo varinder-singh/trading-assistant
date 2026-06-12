@@ -63,9 +63,28 @@ export interface AnalyzerEventsTable {
   metadata: string | null // JSON blob
 }
 
+export interface GtiScoresTable {
+  id: string
+  symbol: string
+  token: number
+  timeframe: number
+  candle_time: number
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+  composite_score: number
+  classification: string
+  confidence: number
+  components: string | null
+  timestamp: string
+}
+
 export interface Database {
   paper_trades: PaperTradesTable
   analyzer_events: AnalyzerEventsTable
+  gti_scores: GtiScoresTable
 }
 
 export const db = new Kysely<Database>({

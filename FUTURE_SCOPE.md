@@ -21,8 +21,9 @@ This document outlines proposed ideas for improving the Trading Assistant's mult
 
 ## Architectural Enhancements
 
-### 1. Real-Time WebSocket Integration
-- **Future**: Replace periodic polling (e.g., for Yahoo candles) with real-time WebSockets from Zerodha/Kite for both underlying and option premiums. This will reduce latency and improve SL/Target execution accuracy.
+### 1. Real-Time WebSocket Integration [IMPLEMENTED]
+- **Current**: Replaced periodic polling (e.g., for Yahoo candles) with real-time WebSockets from Zerodha/Kite for both underlying and option premiums. Uses in-memory `CandleBuilder` for sub-second execution accuracy and multi-timeframe (1m, 3m, 15m, 30m) analysis.
+- **Update**: `CandleBuilder` refactored to support multi-token namespacing, allowing the Risk Manager to evaluate multiple active positions simultaneously with sub-second data. Includes a robust fallback to Yahoo Finance macro candles during seeding or transition periods.
 
 ### 2. Microservices Refactoring
 - **Future**: Separate the Data Fetcher, AI Service, and Execution Engine into distinct microservices (e.g., using Docker and a message broker like RabbitMQ or Redis). This would allow for better scaling and fault tolerance.
@@ -35,3 +36,10 @@ This document outlines proposed ideas for improving the Trading Assistant's mult
 
 ### 5. Automated Journaling & Review
 - **Future**: Use LLMs to generate a "Daily Post-Market Report" that summarizes all trades, the rationale behind them, and lessons learned, automatically saving this to a `JOURNAL.md` or a web dashboard.
+
+### 6. Wave-GTI Confluence Engine
+- **Future**: Deep integration between Elliott Wave detection (`waves.ts`) and GTI (Global Trading Intelligence) institutional activity scores. Rather than just boosting/reducing confidence, the system would actively override wave phase detection based on institutional flow:
+  - Wave 5 + institutional distribution (GTI < -0.6) → force WAVE_EXHAUSTION phase
+  - Wave 2 pullback + institutional accumulation (GTI > 0.6) → confirm entry zone with higher confidence
+  - Wave 3 + divergent GTI (institutional selling while price rises) → flag INSTITUTIONAL_TRAP
+  - This requires a dedicated `WaveGTIConfluence` interface and a state machine that combines both signals for trade timing.
