@@ -33,13 +33,21 @@ export function calculateReversalScore(
   // 1. Options OI Defense (+1)
   if (direction === "BULLISH") {
     // Bullish reversal: Put writers should be defending
-    if (optionsAnalysis.atmPutOI > optionsAnalysis.atmCallOI * 1.5 || optionsAnalysis.marketFlow === "LONG_BUILDUP" || optionsAnalysis.marketFlow === "SHORT_COVERING") {
+    if (
+      optionsAnalysis.atmPutOI > optionsAnalysis.atmCallOI * 1.5 ||
+      optionsAnalysis.marketFlow === "LONG_BUILDUP" ||
+      optionsAnalysis.marketFlow === "SHORT_COVERING"
+    ) {
       breakdown.optionsDefense = true
       score++
     }
   } else {
     // Bearish reversal: Call writers should be defending
-    if (optionsAnalysis.atmCallOI > optionsAnalysis.atmPutOI * 1.5 || optionsAnalysis.marketFlow === "SHORT_BUILDUP" || optionsAnalysis.marketFlow === "LONG_UNWINDING") {
+    if (
+      optionsAnalysis.atmCallOI > optionsAnalysis.atmPutOI * 1.5 ||
+      optionsAnalysis.marketFlow === "SHORT_BUILDUP" ||
+      optionsAnalysis.marketFlow === "LONG_UNWINDING"
+    ) {
       breakdown.optionsDefense = true
       score++
     }
@@ -56,7 +64,7 @@ export function calculateReversalScore(
   if (candles3m.length >= 2) {
     const currentCandle = candles3m[candles3m.length - 1]
     const avgVolume = candles3m.slice(0, -1).reduce((sum, c) => sum + c.volume, 0) / (candles3m.length - 1)
-    
+
     if (currentCandle.volume > avgVolume * 1.5) {
       breakdown.volumeClimax = true
       score++
@@ -65,7 +73,7 @@ export function calculateReversalScore(
 
   // 4. Structural Levels / Volume Profile (+1)
   let nearStructure = false
-  
+
   // Check classic support/resistance
   if (direction === "BULLISH" && Math.abs(currentPrice - tf15m.support) < tolerance) nearStructure = true
   if (direction === "BEARISH" && Math.abs(currentPrice - tf15m.resistance) < tolerance) nearStructure = true
@@ -73,7 +81,7 @@ export function calculateReversalScore(
   // Check Volume Profile levels (POC, VAH, VAL)
   if (dailyContext?.previousDayVolumeProfile) {
     const vp = dailyContext.previousDayVolumeProfile
-    const nearVP = [vp.poc, vp.vah, vp.val].some(level => Math.abs(currentPrice - level) < tolerance)
+    const nearVP = [vp.poc, vp.vah, vp.val].some((level) => Math.abs(currentPrice - level) < tolerance)
     if (nearVP) nearStructure = true
   }
 

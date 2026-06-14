@@ -54,7 +54,6 @@ export async function runAnalysis(
     candles30m = injectedCandles.candles30m
     candles15m = injectedCandles.candles15m
     candles3m = injectedCandles.candles3m
-
     ;[headlines, vix, kiteData] = await Promise.all([getNews(symbol), getIndiaVix(), getOptionChain(kc, symbol)])
   } else {
     const [candlesData, h, v, k] = await Promise.all([
@@ -97,7 +96,9 @@ export async function runAnalysis(
   // Fetch IV Rank
   const { ivHistoryRepo } = await import("../db/repositories/iv-history.js")
   // We get the ATM IV from the optionsAnalysisZerodha rows
-  const atmRow = optionsAnalysisZerodha.rows.find((r) => r.strike === optionsAnalysisZerodha.atmStrike && r.type === "CE")
+  const atmRow = optionsAnalysisZerodha.rows.find(
+    (r) => r.strike === optionsAnalysisZerodha.atmStrike && r.type === "CE"
+  )
   const currentIv = atmRow?.greeks?.iv || 0.15
   const ivStats = await ivHistoryRepo.getIvStats(symbol, currentIv, 30)
   optionsAnalysisZerodha.ivRank = ivStats.ivRank
@@ -107,12 +108,33 @@ export async function runAnalysis(
     const reason = cooldownManager.isOnCooldown(symbol) ? "Symbol on Cooldown" : "VIX > 25 Circuit Breaker"
     console.log(`[Circuit Breaker] Aborting analysis for ${symbol}: ${reason}`)
     return {
-      tf1h, tf30m, tf15m, tf3m, dailyContext, vix,
+      tf1h,
+      tf30m,
+      tf15m,
+      tf3m,
+      dailyContext,
+      vix,
       sentiment: { sentiment: "neutral", confidence: 1, reason: "Skipped due to circuit breaker" },
       optionsAnalysis: optionsAnalysisZerodha,
-      candles1h: candles1h.slice(-100), candles30m: candles30m.slice(-100), candles15m: candles15m.slice(-100), candles3m: candles3m.slice(-100),
+      candles1h: candles1h.slice(-100),
+      candles30m: candles30m.slice(-100),
+      candles15m: candles15m.slice(-100),
+      candles3m: candles3m.slice(-100),
       agentType: "SCALPER",
-      aiDecision: { decision: "NO_TRADE", reason, confidence: 100, optionAction: "NONE", setup: "NONE", riskRewardRatio: 0, entry: 0, stopLoss: 0, targets: [], instrument: "OPTIONS", strike: null, macroTrend: "SIDEWAYS" }
+      aiDecision: {
+        decision: "NO_TRADE",
+        reason,
+        confidence: 100,
+        optionAction: "NONE",
+        setup: "NONE",
+        riskRewardRatio: 0,
+        entry: 0,
+        stopLoss: 0,
+        targets: [],
+        instrument: "OPTIONS",
+        strike: null,
+        macroTrend: "SIDEWAYS",
+      },
     }
   }
 
@@ -137,7 +159,7 @@ export async function runAnalysis(
     mode,
     time: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }),
   }
-  
+
   if (gtiScore && gtiScore.confidence > 0) {
     marketContext.gtiScore = gtiScore
   }
@@ -145,7 +167,7 @@ export async function runAnalysis(
   const validation = validateRegime(orchestrator, marketContext)
   if (validation.wasOverridden) {
     console.warn(`[RegimeValidator] OVERRIDE: ${orchestrator.activeAgent} → ${validation.activeAgent}`)
-    validation.checks.filter(c => !c.passed).forEach(c => console.warn(`  ✗ ${c.name}: ${c.reason}`))
+    validation.checks.filter((c) => !c.passed).forEach((c) => console.warn(`  ✗ ${c.name}: ${c.reason}`))
   } else {
     console.log(`[Orchestrator] Active Agent: ${validation.activeAgent} (${orchestrator.confidence}%)`)
     console.log(`[Orchestrator] Rationale: ${orchestrator.rationale}`)
@@ -156,9 +178,18 @@ export async function runAnalysis(
   const { calculateReversalScore } = await import("./reversals.js")
   // We mock a temporary TradeTechnicalAnalysis object just to calculate the score
   const tempAnalysisForScore = {
-    tf1h, tf30m, tf15m, tf3m, dailyContext,
-    vix, sentiment, optionsAnalysis: optionsAnalysisZerodha,
-    candles1h, candles30m, candles15m, candles3m,
+    tf1h,
+    tf30m,
+    tf15m,
+    tf3m,
+    dailyContext,
+    vix,
+    sentiment,
+    optionsAnalysis: optionsAnalysisZerodha,
+    candles1h,
+    candles30m,
+    candles15m,
+    candles3m,
     agentType: activeAgent,
   } as TradeTechnicalAnalysis
 
@@ -248,7 +279,9 @@ export async function runAnalysis(
           aiDecision.reason = `[GTI BLOCKED] ${aiDecision.reason} | Institutional flow (${gtiScore.classification}) opposes this trade direction.`
         } else {
           console.log(`🎯 AI EXECUTION SIGNAL: ${aiDecision.optionAction} at strike ${aiDecision.strike}`)
-          console.log(`[GTI] ✅ Institutional flow CONFIRMS direction: ${gtiScore.classification} (${gtiScore.composite.toFixed(2)})`)
+          console.log(
+            `[GTI] ✅ Institutional flow CONFIRMS direction: ${gtiScore.classification} (${gtiScore.composite.toFixed(2)})`
+          )
         }
       } else {
         console.log(`🎯 AI EXECUTION SIGNAL: ${aiDecision.optionAction} at strike ${aiDecision.strike}`)
@@ -322,7 +355,7 @@ export async function runAnalysis(
 
   return {
     ...baseAnalysis,
-    reversalScore // Now reusing the score calculated earlier
+    reversalScore, // Now reusing the score calculated earlier
   }
 }
 
@@ -404,7 +437,7 @@ export async function evaluatePosition(
   const validation = validateRegime(orchestrator, marketData)
   if (validation.wasOverridden) {
     console.warn(`[RegimeValidator] OVERRIDE: ${orchestrator.activeAgent} → ${validation.activeAgent}`)
-    validation.checks.filter(c => !c.passed).forEach(c => console.warn(`  ✗ ${c.name}: ${c.reason}`))
+    validation.checks.filter((c) => !c.passed).forEach((c) => console.warn(`  ✗ ${c.name}: ${c.reason}`))
   }
   if (validation.activeAgent === "TREND" && agentType === "SCALPER") {
     console.log(`[Orchestrator] UPGRADING position management to TREND agent for ${openPosition.symbol}`)

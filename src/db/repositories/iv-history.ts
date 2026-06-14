@@ -7,7 +7,7 @@ export class IvHistoryRepo {
    */
   async saveDailyIV(symbol: string, iv: number, dateStr?: string): Promise<void> {
     const date = dateStr || (new Date().toISOString().split("T")[0] as string)
-    
+
     await db
       .insertInto("ivHistory")
       .values({

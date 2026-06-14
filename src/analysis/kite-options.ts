@@ -157,7 +157,7 @@ export function analyzeOptions(
       const expiryDate = new Date(inst.expiry)
       expiryDate.setHours(15, 30, 0, 0)
       const daysToExpiry = Math.max(0.001, (expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-      
+
       greeks = getGreeksFromPrice(ltp, underlyingPrice, inst.strike, daysToExpiry, 0.07, inst.instrument_type)
     }
 

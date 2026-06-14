@@ -31,59 +31,66 @@ export default defineEventHandler(async (event) => {
     const brokerUserId = response.user_id
 
     // Ensure the user profile exists to satisfy the foreign key constraint
-    const profile = await db.selectFrom("profiles")
-      .select("id")
-      .where("id", "=", userId)
-      .executeTakeFirst()
+    const profile = await db.selectFrom("profiles").select("id").where("id", "=", userId).executeTakeFirst()
 
     if (!profile) {
-      await db.insertInto("profiles").values({
-        id: userId,
-        fullName: user.email ? user.email.split('@')[0] : "Trader",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }).execute()
+      await db
+        .insertInto("profiles")
+        .values({
+          id: userId,
+          fullName: user.email ? user.email.split("@")[0] : "Trader",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+        .execute()
     }
 
     // Check if the user already has a broker account
-    const existing = await db.selectFrom("brokerAccounts")
+    const existing = await db
+      .selectFrom("brokerAccounts")
       .select("id")
       .where("userId", "=", userId)
       .where("brokerName", "=", "zerodha")
       .executeTakeFirst()
 
     if (existing) {
-      await db.updateTable("brokerAccounts")
+      await db
+        .updateTable("brokerAccounts")
         .set({
           accessToken,
           publicToken,
           brokerUserId,
           isActive: true,
-          updatedAt: new Date().toISOString()
+          updatedAt: new Date().toISOString(),
         })
         .where("id", "=", existing.id)
         .execute()
     } else {
       console.log("[KITE CALLBACK] user object:", user)
       console.log("[KITE CALLBACK] user.id:", user.id)
-      await db.insertInto("brokerAccounts").values({
-        id: crypto.randomUUID(),
-        userId: userId,
-        brokerName: "zerodha",
-        brokerUserId,
-        accessToken,
-        publicToken,
-        isActive: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }).execute()
+      await db
+        .insertInto("brokerAccounts")
+        .values({
+          id: crypto.randomUUID(),
+          userId: userId,
+          brokerName: "zerodha",
+          brokerUserId,
+          accessToken,
+          publicToken,
+          isActive: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+        .execute()
     }
 
     // Redirect to dashboard on success
     return sendRedirect(event, "/")
-
   } catch (error: any) {
     console.error("Zerodha OAuth Error:", error)
-    throw createError({ statusCode: 500, statusMessage: `Failed to authenticate with Zerodha: ${error.message || error}` })
+    throw createError({
+      statusCode: 500,
+      statusMessage: `Failed to authenticate with Zerodha: ${error.message || error}`,
+    })
   }
 })

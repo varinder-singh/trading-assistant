@@ -12,8 +12,8 @@ export const gtiTracker = {
         cvd: 0,
         vwapDeviation: 0,
         oiSignal: 0,
-        smartMoneyFlow: 0
-      }
+        smartMoneyFlow: 0,
+      },
     }
   },
   getHistory(token: number) {
@@ -24,5 +24,5 @@ export const gtiTracker = {
   },
   addTick(tick: any) {
     // Dummy
-  }
+  },
 }

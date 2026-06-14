@@ -49,7 +49,7 @@ Exact entry/exit for options trades using NCLS Playbooks modified by Wave struct
   - BULLISH FLOW (Action: BUY_CE): Requires Short Covering in CE (Call writers panicking) AND/OR Short Buildup in PE (Put writers creating support). Rule: NEVER buy a PE when there is aggressive CE Short Covering or PE Short Buildup.
   - BEARISH FLOW (Action: BUY_PE): Requires Short Buildup in CE (Call writers creating resistance) AND/OR Short Covering in PE (Put writers panicking). Rule: NEVER buy a CE when there is aggressive PE Short Covering or CE Short Buildup.
 - Dynamic RSI & Wave Divergence: Don't just use 70/30. Strong trends can stay above 70 or below 30 for long periods. Look for severe RSI divergences between Wave 3 and Wave 5 peaks to spot macro exhaustion.
-`;
+`
 
 export const TECHNICAL_AGENT_PROMPT = `
 ## ROLE: INSTITUTIONAL TECHNICAL ANALYST (WAVE & STRUCTURE SPECIALIST)
@@ -86,7 +86,7 @@ You must respond ONLY with a JSON object:
   },
   "reason": "<2-3 sentences citing structure and waves>"
 }
-`;
+`
 
 export const OPTIONS_AGENT_PROMPT = `
 ## ROLE: OPTIONS FLOW & ORDER FLOW SPECIALIST (OI/COI ANALYST)
@@ -115,7 +115,7 @@ You must respond ONLY with a JSON object:
   },
   "reason": "<2-3 sentences citing specific OI/COI shifts>"
 }
-`;
+`
 
 export const CONSENSUS_AGENT_PROMPT = `
 ## ROLE: MASTER CONSENSUS JUDGE (ENSEMBLE AGGREGATOR)
@@ -154,7 +154,7 @@ You must respond ONLY with a JSON object:
   "targets": [<number>, <number>],
   "riskRewardRatio": <number>
 }
-`;
+`
 
 export const TREND_RULES = `
 
@@ -185,7 +185,7 @@ export const TREND_RULES = `
 - BUY (Action: BUY_CE): Orchestrator signals TREND + 15m breakout confirmed / Wave 3 launchpad active + CE Short Covering or PE Short Buildup.
 - SELL (Action: BUY_PE): Orchestrator signals TREND + 15m breakdown confirmed / Wave 3 breakdown active + PE Short Covering or CE Short Buildup.
 - HOLD: As long as 15m structure and 21 EMA remain intact, and the mathematical Wave 5 target has not been breached.
-`;
+`
 
 export const POSITION_MANAGEMENT_RULES = `
 ## ROLE: SPECIALIZED RISK MANAGEMENT AGENT (GUARDIAN)
@@ -212,7 +212,7 @@ You must respond ONLY with a JSON object:
   "reason": "<1-2 sentences citing volatility, waves, or flow>",
   "confidence": <0-100>
 }
-`;
+`
 
 export const ORCHESTRATOR_PROMPT = `
 ### ROLE: INSTITUTIONAL MARKET ORCHESTRATOR
@@ -249,4 +249,4 @@ You must respond ONLY with a JSON object in this format:
   "confidence": <0-100>,
   "rationale": "<brief explanation of the environment, active wave phase, and why the agent was chosen>"
 }
-`;
+`

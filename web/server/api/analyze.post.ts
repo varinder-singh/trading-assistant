@@ -16,10 +16,11 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 401, statusMessage: "Unauthorized (No User ID)" })
   }
 
-  const brokerAccount = await db.selectFrom('brokerAccounts')
-    .select('accessToken')
-    .where('userId', '=', userId)
-    .where('isActive', '=', true)
+  const brokerAccount = await db
+    .selectFrom("brokerAccounts")
+    .select("accessToken")
+    .where("userId", "=", userId)
+    .where("isActive", "=", true)
     .executeTakeFirst()
 
   if (!brokerAccount?.accessToken) {
@@ -81,9 +82,17 @@ export default defineEventHandler(async (event) => {
               aiConfidence: decision.confidence,
               aiStrike: decision.strike || undefined,
               aiSetup: decision.setup,
-              strategyContext: { macroTrend: decision.macroTrend as any, indexSl: decision.stopLoss, agentType: agentType as any },
-              vixLevel: vix.current, rsiLevel: tf.rsi, trend15m: tf.trend, aiStopLoss: calculatedSl, aiTarget: calculatedTarget
-            }
+              strategyContext: {
+                macroTrend: decision.macroTrend as any,
+                indexSl: decision.stopLoss,
+                agentType: agentType as any,
+              },
+              vixLevel: vix.current,
+              rsiLevel: tf.rsi,
+              trend15m: tf.trend,
+              aiStopLoss: calculatedSl,
+              aiTarget: calculatedTarget,
+            },
           })
         }
       }

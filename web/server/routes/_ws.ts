@@ -75,9 +75,9 @@ eventHub.on("agent_update", (update) => {
 // Global CandleBuilder close listener for GTI
 candleBuilder.on("candle_close", async ({ token, timeframe, candle }) => {
   const gtiScore = gtiTracker.onCandleClose(token, candle)
-  
+
   // Persist to DB
-  const symbol = Array.from(clients.values()).find(c => c.token === token)?.symbol || `TOKEN_${token}`
+  const symbol = Array.from(clients.values()).find((c) => c.token === token)?.symbol || `TOKEN_${token}`
   try {
     await gtiRepo.saveScore({
       symbol,
@@ -85,7 +85,7 @@ candleBuilder.on("candle_close", async ({ token, timeframe, candle }) => {
       timeframe,
       candleTime: candle.time,
       candle,
-      gtiScore
+      gtiScore,
     })
   } catch (err) {
     console.error(`[GTI] Failed to persist score for ${symbol}:`, err)
@@ -101,11 +101,16 @@ candleBuilder.on("candle_close", async ({ token, timeframe, candle }) => {
 
 function decodeJwtBase64(token: string) {
   try {
-    const base64Url = token.split('.')[1]
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
-    }).join(''))
+    const base64Url = token.split(".")[1]
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/")
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map(function (c) {
+          return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2)
+        })
+        .join("")
+    )
     return JSON.parse(jsonPayload)
   } catch (e) {
     return null
@@ -134,10 +139,11 @@ export default defineWebSocketHandler({
 
         const userId = payload.sub
 
-        const brokerAccount = await db.selectFrom('brokerAccounts')
-          .select('accessToken')
-          .where('userId', '=', userId)
-          .where('isActive', '=', true)
+        const brokerAccount = await db
+          .selectFrom("brokerAccounts")
+          .select("accessToken")
+          .where("userId", "=", userId)
+          .where("isActive", "=", true)
           .executeTakeFirst()
 
         if (!brokerAccount?.accessToken) {
@@ -194,7 +200,7 @@ export default defineWebSocketHandler({
           token: 0,
           mode: "intraday",
           lastDecision: null,
-          chartTimeframe: 15
+          chartTimeframe: 15,
         })
 
         peer.send(JSON.stringify({ type: "authenticated" }))
@@ -223,7 +229,9 @@ export default defineWebSocketHandler({
         const analyzer = new LiveAnalyzer()
 
         if (!isMarketOpen()) {
-          peer.send(JSON.stringify({ type: "market_closed", message: "Market is closed. Operating in read-only mode." }))
+          peer.send(
+            JSON.stringify({ type: "market_closed", message: "Market is closed. Operating in read-only mode." })
+          )
         } else if (levels) {
           analyzer.setLevels(levels)
 
@@ -240,7 +248,13 @@ export default defineWebSocketHandler({
             })
 
             try {
-              const analysisResult = await runAnalysis(client.session.kc, symbol, client.mode, context, client.lastDecision)
+              const analysisResult = await runAnalysis(
+                client.session.kc,
+                symbol,
+                client.mode,
+                context,
+                client.lastDecision
+              )
               const { tf15m: tf, aiDecision: decision, vix, agentType } = analysisResult
               client.lastDecision = decision
 
@@ -265,7 +279,7 @@ export default defineWebSocketHandler({
 
                     let calculatedSl = entryPrice - optionRiskPoints
                     const calculatedTarget = entryPrice + optionRiskPoints * (decision.riskRewardRatio || 1.5)
-                    
+
                     const floorPercentage = agentType === "TREND" ? 0 : 0.2
                     const minAllowedSl = Math.max(entryPrice * floorPercentage, 0.05)
                     if (calculatedSl < minAllowedSl) calculatedSl = minAllowedSl
@@ -282,7 +296,11 @@ export default defineWebSocketHandler({
                         aiConfidence: decision.confidence,
                         aiStrike: decision.strike || undefined,
                         aiSetup: decision.setup,
-                        strategyContext: { macroTrend: decision.macroTrend as AIMacroTrend, indexSl: decision.stopLoss, agentType },
+                        strategyContext: {
+                          macroTrend: decision.macroTrend as AIMacroTrend,
+                          indexSl: decision.stopLoss,
+                          agentType,
+                        },
                         vixLevel: vix.current,
                         rsiLevel: tf.rsi,
                         trend15m: tf.trend,
@@ -305,7 +323,10 @@ export default defineWebSocketHandler({
         client.mode = mode || "intraday"
         client.chartTimeframe = msg.data.chartTimeframe || 1
 
-        const positionTokens = client.session.paperTrader.getAllPositions().map((p) => p.token).filter(t => !!t)
+        const positionTokens = client.session.paperTrader
+          .getAllPositions()
+          .map((p) => p.token)
+          .filter((t) => !!t)
         const tokensToSubscribe = Array.from(new Set([token, ...positionTokens]))
 
         client.session.ticker.subscribe(tokensToSubscribe)

@@ -4,7 +4,7 @@ import { ref, onMounted, onUnmounted, watch, watchEffect, nextTick, computed } f
 const user = useSupabaseUser()
 watchEffect(() => {
   if (!user.value) {
-    navigateTo('/login')
+    navigateTo("/login")
   }
 })
 import {
@@ -55,7 +55,12 @@ const agents = ref<Record<string, any>>({
 const activeSpecialist = computed(() => {
   if (agents.value["TREND"] && agents.value["TREND"].status !== "idle") return "TREND"
   if (agents.value["SCALPER"] && agents.value["SCALPER"].status !== "idle") return "SCALPER"
-  if (agents.value["TREND"] && agents.value["SCALPER"] && agents.value["TREND"].lastUpdate > agents.value["SCALPER"].lastUpdate) return "TREND"
+  if (
+    agents.value["TREND"] &&
+    agents.value["SCALPER"] &&
+    agents.value["TREND"].lastUpdate > agents.value["SCALPER"].lastUpdate
+  )
+    return "TREND"
   return "SCALPER"
 })
 
@@ -133,15 +138,15 @@ function toggleTradeExpand(id: string) {
 }
 
 function formatDateIST(dateStr: string) {
-  if (!dateStr) return '—'
-  const date = new Date(dateStr + (dateStr.includes('T') && !dateStr.endsWith('Z') ? 'Z' : ''))
-  return date.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })
+  if (!dateStr) return "—"
+  const date = new Date(dateStr + (dateStr.includes("T") && !dateStr.endsWith("Z") ? "Z" : ""))
+  return date.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })
 }
 
 function formatTimeIST(dateStr: string) {
-  if (!dateStr) return '—'
-  const date = new Date(dateStr + (dateStr.includes('T') && !dateStr.endsWith('Z') ? 'Z' : ''))
-  return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true })
+  if (!dateStr) return "—"
+  const date = new Date(dateStr + (dateStr.includes("T") && !dateStr.endsWith("Z") ? "Z" : ""))
+  return date.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: true })
 }
 
 // Chart Refs
@@ -200,7 +205,7 @@ function connectWebSocket() {
       if (!chart) {
         initChart()
       }
-      
+
       if (!resistanceLine && !supportLine && candleSeries && analysisResult.value) {
         const { resistance, support } = analysisResult.value.tf15m
         resistanceLine = candleSeries.createPriceLine({
@@ -220,9 +225,9 @@ function connectWebSocket() {
           title: "SUPPORT",
         })
       }
-      
+
       updateChartDataForTimeframe()
-      
+
       // Update resistance and support lines dynamically
       if (analysisResult.value && candleSeries) {
         const { resistance, support } = analysisResult.value.tf15m
@@ -284,7 +289,7 @@ function connectWebSocket() {
           text: side === "BUY" ? "BUY" : "SELL",
         })
         candleSeries.setMarkers(markers)
-        
+
         // Refresh history safely ONLY when a trade opens or closes
         fetchHistory()
       }
@@ -306,11 +311,13 @@ function startWatching() {
         data: {
           symbol: symbol.value,
           mode: mode.value,
-          levels: analysisResult.value ? {
-            resistance: analysisResult.value.tf15m.resistance,
-            support: analysisResult.value.tf15m.support,
-            vwap: analysisResult.value.tf15m.vwap,
-          } : undefined,
+          levels: analysisResult.value
+            ? {
+                resistance: analysisResult.value.tf15m.resistance,
+                support: analysisResult.value.tf15m.support,
+                vwap: analysisResult.value.tf15m.vwap,
+              }
+            : undefined,
         },
       })
     )
@@ -324,7 +331,7 @@ async function fetchInitialData() {
     marketStatusMessage.value = data.marketStatusMessage
 
     const last15m = data.candles15m[data.candles15m.length - 1]
-    
+
     analysisResult.value = {
       tf15m: { price: last15m?.close || 0 }, // fake levels so it doesn't crash but allows drawing
       candles1h: data.candles1h,
@@ -387,8 +394,8 @@ function initChart() {
     localization: {
       timeFormatter: (time: number) => {
         const date = new Date(time * 1000)
-        return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })
-      }
+        return date.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })
+      },
     },
     layout: {
       background: { color: "#ffffff" },
@@ -411,8 +418,8 @@ function initChart() {
       secondsVisible: true,
       tickMarkFormatter: (time: number) => {
         const date = new Date(time * 1000)
-        return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })
-      }
+        return date.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })
+      },
     },
     width: chartContainer.value.clientWidth,
     height: 400,
@@ -458,12 +465,12 @@ function initChart() {
 function getGtiColors(gtiScore: any | undefined, isUp: boolean) {
   // Default colors
   let color = isUp ? "#22c55e" : "#ef4444"
-  
+
   if (!gtiScore) return { color, wickColor: color }
 
   // Apply GTI institutional coloring
   const score = gtiScore.composite || 0
-  
+
   if (score > 0.6) {
     color = "#3b82f6" // Strong Institutional Buy (Blue)
   } else if (score > 0.2) {
@@ -484,7 +491,7 @@ function updateChartDataForTimeframe() {
 
   const key = `candles${chartTimeframeStr.value}`
   const candles = analysisResult.value[key]
-  
+
   if (!candles || candles.length === 0) return
 
   const gtiHistory = analysisResult.value.gtiHistory || []
@@ -494,7 +501,7 @@ function updateChartDataForTimeframe() {
     // Find matching GTI score for this candle time if available
     const gtiMatch = gtiHistory.find((g: any) => g.time === c.time)
     const { color, wickColor } = getGtiColors(gtiMatch?.gtiScore, isUp)
-    
+
     return {
       time: c.time as any,
       open: c.open,
@@ -502,12 +509,12 @@ function updateChartDataForTimeframe() {
       low: c.low,
       close: c.close,
       color,
-      wickColor
+      wickColor,
     }
   })
 
   candleSeries.setData(formattedData)
-  
+
   // Set current candle to the last one
   const last = formattedData[formattedData.length - 1]
   if (last) {
@@ -523,10 +530,10 @@ function updateChartFromTick(price: number, gtiScore?: any, tickTimestamp?: stri
   // Use tick timestamp if available, else fallback to Date.now
   const tickTimeMs = tickTimestamp ? new Date(tickTimestamp).getTime() : Date.now()
   const now = Math.floor(tickTimeMs / 1000)
-  
+
   const tfMap: Record<string, number> = { "3m": 180, "15m": 900, "30m": 1800, "1h": 3600 }
   const bucketSecs = tfMap[chartTimeframeStr.value] || 900
-  
+
   if (!currentCandle.value) {
     const isUp = true
     const { color, wickColor } = getGtiColors(gtiScore, isUp)
@@ -537,15 +544,15 @@ function updateChartFromTick(price: number, gtiScore?: any, tickTimestamp?: stri
       low: price,
       close: price,
       color,
-      wickColor
+      wickColor,
     }
   }
-  
+
   // Check if we need to roll over to a new candle
   if (now >= currentCandle.value.time + bucketSecs) {
     const bucketsPassed = Math.floor((now - currentCandle.value.time) / bucketSecs)
-    const newCandleTime = currentCandle.value.time + (bucketsPassed * bucketSecs)
-    
+    const newCandleTime = currentCandle.value.time + bucketsPassed * bucketSecs
+
     currentCandle.value = {
       time: newCandleTime as any,
       open: price,
@@ -553,7 +560,7 @@ function updateChartFromTick(price: number, gtiScore?: any, tickTimestamp?: stri
       low: price,
       close: price,
       color: currentCandle.value.color,
-      wickColor: currentCandle.value.wickColor
+      wickColor: currentCandle.value.wickColor,
     }
   } else {
     // Update current candle OHLC
@@ -561,11 +568,11 @@ function updateChartFromTick(price: number, gtiScore?: any, tickTimestamp?: stri
     if (price > currentCandle.value.high) currentCandle.value.high = price
     if (price < currentCandle.value.low) currentCandle.value.low = price
   }
-  
+
   // Apply live GTI colors if available
   const isUp = currentCandle.value.close >= currentCandle.value.open
   const { color, wickColor } = getGtiColors(gtiScore, isUp)
-  
+
   currentCandle.value.color = color
   currentCandle.value.wickColor = wickColor
 
@@ -575,7 +582,7 @@ function updateChartFromTick(price: number, gtiScore?: any, tickTimestamp?: stri
 function changeTimeframe(tf: string) {
   chartTimeframeStr.value = tf
   updateChartDataForTimeframe()
-  
+
   // Update WS subscription for timeframe
   if (ws && ws.readyState === WebSocket.OPEN) {
     // Re-send watch command with new timeframe
@@ -586,7 +593,7 @@ function changeTimeframe(tf: string) {
         data: {
           symbol: symbol.value,
           mode: mode.value,
-          chartTimeframe: tfMap[tf] || 15
+          chartTimeframe: tfMap[tf] || 15,
         },
       })
     )
@@ -636,7 +643,9 @@ onUnmounted(() => {
           </div>
           <div class="flex flex-col">
             <h1 class="text-xl font-bold tracking-tight text-gray-900">Trading Assistant</h1>
-            <span class="text-xs font-medium" :class="isMarketOpen ? 'text-green-600' : 'text-amber-600'">{{ marketStatusMessage }}</span>
+            <span class="text-xs font-medium" :class="isMarketOpen ? 'text-green-600' : 'text-amber-600'">{{
+              marketStatusMessage
+            }}</span>
           </div>
         </div>
 
@@ -667,7 +676,6 @@ onUnmounted(() => {
           >
             Analyzer Events
           </button>
-
         </nav>
 
         <div class="flex items-center gap-3">
@@ -707,7 +715,6 @@ onUnmounted(() => {
     </header>
 
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-
       <!-- Error Message -->
       <div v-if="error" class="mb-8 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 text-red-700">
         <AlertCircle class="w-5 h-5 shrink-0 mt-0.5" />
@@ -742,11 +749,16 @@ onUnmounted(() => {
                   </h3>
                   <!-- Timeframe selector -->
                   <div class="flex bg-gray-100 rounded-lg p-0.5">
-                    <button 
-                      v-for="tf in ['3m', '15m', '30m', '1h']" :key="tf"
+                    <button
+                      v-for="tf in ['3m', '15m', '30m', '1h']"
+                      :key="tf"
                       @click="changeTimeframe(tf)"
                       class="px-2 py-1 text-xs font-bold rounded-md transition-colors"
-                      :class="chartTimeframeStr === tf ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                      :class="
+                        chartTimeframeStr === tf
+                          ? 'bg-white text-indigo-600 shadow-sm'
+                          : 'text-gray-500 hover:text-gray-700'
+                      "
                     >
                       {{ tf }}
                     </button>
@@ -757,17 +769,29 @@ onUnmounted(() => {
                   <span class="text-sm font-mono font-bold">{{ livePrice.toFixed(2) }}</span>
                 </div>
               </div>
-              
+
               <!-- GTI Legend -->
               <div class="px-4 py-2 bg-gray-50/50 border-b border-gray-100 flex items-center gap-4 overflow-x-auto">
                 <span class="text-[10px] font-black uppercase text-gray-400 tracking-widest flex items-center gap-1">
                   <ShieldCheck class="w-3 h-3" /> GTI Flow:
                 </span>
                 <div class="flex items-center gap-3 text-[10px] font-bold text-gray-600 whitespace-nowrap">
-                  <span class="flex items-center gap-1"><div class="w-2 h-2 rounded bg-blue-500"></div> Strong Buy</span>
-                  <span class="flex items-center gap-1"><div class="w-2 h-2 rounded bg-emerald-500"></div> Buy</span>
-                  <span class="flex items-center gap-1"><div class="w-2 h-2 rounded bg-rose-500"></div> Sell</span>
-                  <span class="flex items-center gap-1"><div class="w-2 h-2 rounded bg-purple-600"></div> Strong Sell</span>
+                  <span class="flex items-center gap-1"
+                    ><div class="w-2 h-2 rounded bg-blue-500"></div>
+                    Strong Buy</span
+                  >
+                  <span class="flex items-center gap-1"
+                    ><div class="w-2 h-2 rounded bg-emerald-500"></div>
+                    Buy</span
+                  >
+                  <span class="flex items-center gap-1"
+                    ><div class="w-2 h-2 rounded bg-rose-500"></div>
+                    Sell</span
+                  >
+                  <span class="flex items-center gap-1"
+                    ><div class="w-2 h-2 rounded bg-purple-600"></div>
+                    Strong Sell</span
+                  >
                 </div>
               </div>
 
@@ -777,15 +801,14 @@ onUnmounted(() => {
             <!-- Agent Status Branching Pipeline Map -->
             <div class="bg-gray-50/50 rounded-2xl p-4 border border-gray-100 overflow-x-auto custom-scrollbar">
               <div class="flex items-center min-w-max justify-center">
-                
                 <!-- 1. Orchestrator -->
-                <AgentCard 
-                  name="Orchestrator" 
-                  :agent="agents['Orchestrator']" 
+                <AgentCard
+                  name="Orchestrator"
+                  :agent="agents['Orchestrator']"
                   :isActive="true"
                   @click="selectedAgentForDetail = 'Orchestrator'"
                 />
-                
+
                 <!-- Wire -->
                 <div class="flex items-center justify-center shrink-0 w-6 relative">
                   <div class="h-[2px] w-full bg-indigo-200"></div>
@@ -793,9 +816,9 @@ onUnmounted(() => {
                 </div>
 
                 <!-- 2. Regime Validator -->
-                <AgentCard 
-                  name="Regime Validator" 
-                  :agent="agents['Regime Validator']" 
+                <AgentCard
+                  name="Regime Validator"
+                  :agent="agents['Regime Validator']"
                   :isActive="true"
                   @click="selectedAgentForDetail = 'Regime Validator'"
                 />
@@ -803,27 +826,37 @@ onUnmounted(() => {
                 <!-- Split to Scalper/Trend -->
                 <div class="flex items-center shrink-0 w-8 h-28 relative">
                   <!-- Top branch -->
-                  <div class="absolute top-1/4 left-0 w-full h-[50%] border-t-2 border-l-2 rounded-tl-xl transition-colors duration-300"
-                       :class="activeSpecialist === 'SCALPER' ? 'border-indigo-400' : 'border-gray-200'"></div>
+                  <div
+                    class="absolute top-1/4 left-0 w-full h-[50%] border-t-2 border-l-2 rounded-tl-xl transition-colors duration-300"
+                    :class="activeSpecialist === 'SCALPER' ? 'border-indigo-400' : 'border-gray-200'"
+                  ></div>
                   <!-- Bottom branch -->
-                  <div class="absolute bottom-1/4 left-0 w-full h-[50%] border-b-2 border-l-2 rounded-bl-xl transition-colors duration-300"
-                       :class="activeSpecialist === 'TREND' ? 'border-indigo-400' : 'border-gray-200'"></div>
-                  
-                  <ChevronRight class="absolute right-0 top-1/4 -mt-1.5 -mr-1 w-3 h-3 transition-colors duration-300 bg-gray-50/50" :class="activeSpecialist === 'SCALPER' ? 'text-indigo-500' : 'text-gray-300'" />
-                  <ChevronRight class="absolute right-0 bottom-1/4 -mb-1.5 -mr-1 w-3 h-3 transition-colors duration-300 bg-gray-50/50" :class="activeSpecialist === 'TREND' ? 'text-indigo-500' : 'text-gray-300'" />
+                  <div
+                    class="absolute bottom-1/4 left-0 w-full h-[50%] border-b-2 border-l-2 rounded-bl-xl transition-colors duration-300"
+                    :class="activeSpecialist === 'TREND' ? 'border-indigo-400' : 'border-gray-200'"
+                  ></div>
+
+                  <ChevronRight
+                    class="absolute right-0 top-1/4 -mt-1.5 -mr-1 w-3 h-3 transition-colors duration-300 bg-gray-50/50"
+                    :class="activeSpecialist === 'SCALPER' ? 'text-indigo-500' : 'text-gray-300'"
+                  />
+                  <ChevronRight
+                    class="absolute right-0 bottom-1/4 -mb-1.5 -mr-1 w-3 h-3 transition-colors duration-300 bg-gray-50/50"
+                    :class="activeSpecialist === 'TREND' ? 'text-indigo-500' : 'text-gray-300'"
+                  />
                 </div>
 
                 <!-- 3. Parallel Agents (Scalper & Trend) -->
                 <div class="flex flex-col gap-2 shrink-0 z-10">
-                  <AgentCard 
-                    name="SCALPER" 
-                    :agent="agents['SCALPER']" 
+                  <AgentCard
+                    name="SCALPER"
+                    :agent="agents['SCALPER']"
                     :isActive="activeSpecialist === 'SCALPER'"
                     @click="selectedAgentForDetail = 'SCALPER'"
                   />
-                  <AgentCard 
-                    name="TREND" 
-                    :agent="agents['TREND']" 
+                  <AgentCard
+                    name="TREND"
+                    :agent="agents['TREND']"
                     :isActive="activeSpecialist === 'TREND'"
                     @click="selectedAgentForDetail = 'TREND'"
                   />
@@ -832,29 +865,42 @@ onUnmounted(() => {
                 <!-- Merge back -->
                 <div class="flex items-center shrink-0 w-8 h-28 relative">
                   <!-- Top branch -->
-                  <div class="absolute top-1/4 right-0 w-full h-[50%] border-t-2 border-r-2 rounded-tr-xl transition-colors duration-300"
-                       :class="activeSpecialist === 'SCALPER' ? 'border-indigo-400' : 'border-gray-200'"></div>
+                  <div
+                    class="absolute top-1/4 right-0 w-full h-[50%] border-t-2 border-r-2 rounded-tr-xl transition-colors duration-300"
+                    :class="activeSpecialist === 'SCALPER' ? 'border-indigo-400' : 'border-gray-200'"
+                  ></div>
                   <!-- Bottom branch -->
-                  <div class="absolute bottom-1/4 right-0 w-full h-[50%] border-b-2 border-r-2 rounded-br-xl transition-colors duration-300"
-                       :class="activeSpecialist === 'TREND' ? 'border-indigo-400' : 'border-gray-200'"></div>
-                       
+                  <div
+                    class="absolute bottom-1/4 right-0 w-full h-[50%] border-b-2 border-r-2 rounded-br-xl transition-colors duration-300"
+                    :class="activeSpecialist === 'TREND' ? 'border-indigo-400' : 'border-gray-200'"
+                  ></div>
+
                   <!-- Center merge wire -->
-                  <div class="absolute top-1/2 left-0 w-full h-[2px] -mt-[1px]" :class="activeSpecialist === 'SCALPER' || activeSpecialist === 'TREND' ? 'bg-indigo-300' : 'bg-gray-200'"></div>
-                  <ChevronRight class="absolute -right-1.5 top-1/2 -mt-1.5 w-3 h-3" :class="activeSpecialist === 'SCALPER' || activeSpecialist === 'TREND' ? 'text-indigo-400' : 'text-gray-300'" />
+                  <div
+                    class="absolute top-1/2 left-0 w-full h-[2px] -mt-[1px]"
+                    :class="
+                      activeSpecialist === 'SCALPER' || activeSpecialist === 'TREND' ? 'bg-indigo-300' : 'bg-gray-200'
+                    "
+                  ></div>
+                  <ChevronRight
+                    class="absolute -right-1.5 top-1/2 -mt-1.5 w-3 h-3"
+                    :class="
+                      activeSpecialist === 'SCALPER' || activeSpecialist === 'TREND'
+                        ? 'text-indigo-400'
+                        : 'text-gray-300'
+                    "
+                  />
                 </div>
 
                 <!-- 4. Risk Manager -->
-                <AgentCard 
-                  name="Risk Manager" 
-                  :agent="agents['Risk Manager']" 
+                <AgentCard
+                  name="Risk Manager"
+                  :agent="agents['Risk Manager']"
                   :isActive="true"
                   @click="selectedAgentForDetail = 'Risk Manager'"
                 />
-                
               </div>
             </div>
-
-
           </div>
 
           <!-- Sidebar Details -->
@@ -945,7 +991,10 @@ onUnmounted(() => {
             </div>
 
             <!-- Technicals & Context (Condensed) -->
-            <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200" v-if="activeTfStats && activeTfStats.trend">
+            <div
+              class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200"
+              v-if="activeTfStats && activeTfStats.trend"
+            >
               <div class="flex items-center justify-between mb-6">
                 <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-2">
                   <TrendingUp class="w-4 h-4" />
@@ -958,13 +1007,31 @@ onUnmounted(() => {
                 <div class="grid grid-cols-2 gap-4">
                   <div class="bg-gray-50 p-3 rounded-xl border border-gray-100">
                     <div class="text-xs text-gray-500 mb-1">Trend</div>
-                    <div class="font-bold text-lg" :class="activeTfStats.trend === 'up' ? 'text-green-600' : activeTfStats.trend === 'down' ? 'text-red-600' : 'text-gray-600'">
-                      {{ (activeTfStats.trend || '').toUpperCase() }}
+                    <div
+                      class="font-bold text-lg"
+                      :class="
+                        activeTfStats.trend === 'up'
+                          ? 'text-green-600'
+                          : activeTfStats.trend === 'down'
+                            ? 'text-red-600'
+                            : 'text-gray-600'
+                      "
+                    >
+                      {{ (activeTfStats.trend || "").toUpperCase() }}
                     </div>
                   </div>
                   <div class="bg-gray-50 p-3 rounded-xl border border-gray-100">
                     <div class="text-xs text-gray-500 mb-1">RSI</div>
-                    <div class="font-bold text-lg" :class="activeTfStats.rsi > 70 ? 'text-red-600' : activeTfStats.rsi < 30 ? 'text-green-600' : 'text-gray-900'">
+                    <div
+                      class="font-bold text-lg"
+                      :class="
+                        activeTfStats.rsi > 70
+                          ? 'text-red-600'
+                          : activeTfStats.rsi < 30
+                            ? 'text-green-600'
+                            : 'text-gray-900'
+                      "
+                    >
                       {{ activeTfStats.rsi.toFixed(2) }}
                     </div>
                   </div>
@@ -978,7 +1045,11 @@ onUnmounted(() => {
                   </div>
                   <div class="flex items-center justify-between">
                     <span class="text-gray-500">VWAP Pos</span>
-                    <span class="font-bold text-xs" :class="activeTfStats.vwapPosition === 'above' ? 'text-green-600' : 'text-red-600'">{{ (activeTfStats.vwapPosition || '').toUpperCase() }}</span>
+                    <span
+                      class="font-bold text-xs"
+                      :class="activeTfStats.vwapPosition === 'above' ? 'text-green-600' : 'text-red-600'"
+                      >{{ (activeTfStats.vwapPosition || "").toUpperCase() }}</span
+                    >
                   </div>
                   <div class="flex items-center justify-between">
                     <span class="text-gray-500">Resistance</span>
@@ -991,16 +1062,24 @@ onUnmounted(() => {
                 </div>
                 <!-- Elliott Wave Context -->
                 <div v-if="activeTfStats.waveContext" class="pt-3 border-t border-gray-100">
-                  <div class="text-xs font-bold text-indigo-600 uppercase mb-2 flex items-center gap-1"><Activity class="w-3 h-3" /> Wave Context</div>
+                  <div class="text-xs font-bold text-indigo-600 uppercase mb-2 flex items-center gap-1">
+                    <Activity class="w-3 h-3" /> Wave Context
+                  </div>
                   <div class="text-sm font-medium text-gray-700 bg-indigo-50 p-2 rounded-lg border border-indigo-100">
-                    Current Wave: <span class="font-bold text-indigo-900">{{ (activeTfStats.waveContext.currentPhase || '').replace('_', ' ') }}</span>
+                    Current Wave:
+                    <span class="font-bold text-indigo-900">{{
+                      (activeTfStats.waveContext.currentPhase || "").replace("_", " ")
+                    }}</span>
                   </div>
                 </div>
               </div>
             </div>
 
             <!-- AI Decision Card (Moved from Main content) -->
-            <div v-if="analysisResult?.aiDecision" class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            <div
+              v-if="analysisResult?.aiDecision"
+              class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden"
+            >
               <div class="p-4 border-b border-gray-100 flex items-center justify-between">
                 <h2 class="text-sm font-bold text-gray-600 uppercase tracking-wider flex items-center gap-2">
                   <ShieldCheck class="w-4 h-4 text-indigo-500" />
@@ -1058,55 +1137,144 @@ onUnmounted(() => {
             </div>
 
             <!-- GTI Real-Time Dashboard Panel -->
-            <div v-if="analysisResult.gtiHistory && analysisResult.gtiHistory.length > 0" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+            <div
+              v-if="analysisResult.gtiHistory && analysisResult.gtiHistory.length > 0"
+              class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200"
+            >
               <div class="flex items-center justify-between mb-6">
                 <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-2">
                   <ShieldCheck class="w-4 h-4 text-indigo-500" />
                   Institutional Flow (GTI)
                 </h3>
               </div>
-              
+
               <div v-if="analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1]?.gtiScore" class="space-y-4">
-                <div class="p-4 rounded-xl flex flex-col gap-1"
+                <div
+                  class="p-4 rounded-xl flex flex-col gap-1"
                   :class="{
-                    'bg-blue-50 border border-blue-100 text-blue-800': analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite > 0.6,
-                    'bg-emerald-50 border border-emerald-100 text-emerald-800': analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite > 0.2 && analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite <= 0.6,
-                    'bg-gray-50 border border-gray-200 text-gray-700': analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite >= -0.2 && analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite <= 0.2,
-                    'bg-rose-50 border border-rose-100 text-rose-800': analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite < -0.2 && analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite >= -0.6,
-                    'bg-purple-50 border border-purple-100 text-purple-800': analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite < -0.6
-                  }">
+                    'bg-blue-50 border border-blue-100 text-blue-800':
+                      analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite > 0.6,
+                    'bg-emerald-50 border border-emerald-100 text-emerald-800':
+                      analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite > 0.2 &&
+                      analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite <= 0.6,
+                    'bg-gray-50 border border-gray-200 text-gray-700':
+                      analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite >= -0.2 &&
+                      analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite <= 0.2,
+                    'bg-rose-50 border border-rose-100 text-rose-800':
+                      analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite < -0.2 &&
+                      analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite >= -0.6,
+                    'bg-purple-50 border border-purple-100 text-purple-800':
+                      analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite < -0.6,
+                  }"
+                >
                   <div class="text-[10px] font-black uppercase tracking-widest opacity-60">Composite Score</div>
                   <div class="text-2xl font-black">
-                    {{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite > 0 ? '+' : '' }}{{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite.toFixed(2) }}
+                    {{
+                      analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite > 0 ? "+" : ""
+                    }}{{
+                      analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite.toFixed(2)
+                    }}
                   </div>
                   <div class="text-xs font-bold mt-1">
-                    {{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.classification.replace(/_/g, ' ') }}
+                    {{
+                      analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.classification.replace(
+                        /_/g,
+                        " "
+                      )
+                    }}
                   </div>
                 </div>
 
                 <div class="grid grid-cols-2 gap-2 text-xs">
                   <div class="p-2 bg-gray-50 rounded-lg border border-gray-100 flex justify-between">
                     <span class="text-gray-500 font-medium">Volume</span>
-                    <span class="font-mono font-bold" :class="analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.volumeAnomaly > 0 ? 'text-green-600' : 'text-red-600'">
-                      {{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.volumeAnomaly > 0 ? '+' : '' }}{{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.volumeAnomaly.toFixed(2) }}
+                    <span
+                      class="font-mono font-bold"
+                      :class="
+                        analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components
+                          .volumeAnomaly > 0
+                          ? 'text-green-600'
+                          : 'text-red-600'
+                      "
+                    >
+                      {{
+                        analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components
+                          .volumeAnomaly > 0
+                          ? "+"
+                          : ""
+                      }}{{
+                        analysisResult.gtiHistory[
+                          analysisResult.gtiHistory.length - 1
+                        ].gtiScore.components.volumeAnomaly.toFixed(2)
+                      }}
                     </span>
                   </div>
                   <div class="p-2 bg-gray-50 rounded-lg border border-gray-100 flex justify-between">
                     <span class="text-gray-500 font-medium">CVD</span>
-                    <span class="font-mono font-bold" :class="analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.cvd > 0 ? 'text-green-600' : 'text-red-600'">
-                      {{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.cvd > 0 ? '+' : '' }}{{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.cvd.toFixed(2) }}
+                    <span
+                      class="font-mono font-bold"
+                      :class="
+                        analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.cvd > 0
+                          ? 'text-green-600'
+                          : 'text-red-600'
+                      "
+                    >
+                      {{
+                        analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.cvd > 0
+                          ? "+"
+                          : ""
+                      }}{{
+                        analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.cvd.toFixed(
+                          2
+                        )
+                      }}
                     </span>
                   </div>
                   <div class="p-2 bg-gray-50 rounded-lg border border-gray-100 flex justify-between">
                     <span class="text-gray-500 font-medium">VWAP Dev</span>
-                    <span class="font-mono font-bold" :class="analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.vwapDeviation > 0 ? 'text-green-600' : 'text-red-600'">
-                      {{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.vwapDeviation > 0 ? '+' : '' }}{{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.vwapDeviation.toFixed(2) }}
+                    <span
+                      class="font-mono font-bold"
+                      :class="
+                        analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components
+                          .vwapDeviation > 0
+                          ? 'text-green-600'
+                          : 'text-red-600'
+                      "
+                    >
+                      {{
+                        analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components
+                          .vwapDeviation > 0
+                          ? "+"
+                          : ""
+                      }}{{
+                        analysisResult.gtiHistory[
+                          analysisResult.gtiHistory.length - 1
+                        ].gtiScore.components.vwapDeviation.toFixed(2)
+                      }}
                     </span>
                   </div>
                   <div class="p-2 bg-gray-50 rounded-lg border border-gray-100 flex justify-between">
                     <span class="text-gray-500 font-medium">OI Signal</span>
-                    <span class="font-mono font-bold" :class="analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.oiSignal > 0 ? 'text-green-600' : analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.oiSignal < 0 ? 'text-red-600' : 'text-gray-600'">
-                      {{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.oiSignal > 0 ? '+' : '' }}{{ analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.oiSignal.toFixed(2) }}
+                    <span
+                      class="font-mono font-bold"
+                      :class="
+                        analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.oiSignal > 0
+                          ? 'text-green-600'
+                          : analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components
+                                .oiSignal < 0
+                            ? 'text-red-600'
+                            : 'text-gray-600'
+                      "
+                    >
+                      {{
+                        analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.oiSignal > 0
+                          ? "+"
+                          : ""
+                      }}{{
+                        analysisResult.gtiHistory[
+                          analysisResult.gtiHistory.length - 1
+                        ].gtiScore.components.oiSignal.toFixed(2)
+                      }}
                     </span>
                   </div>
                 </div>
@@ -1178,9 +1346,7 @@ onUnmounted(() => {
                     <td class="px-6 py-4 text-xs text-gray-500 font-medium">
                       <div v-if="trade.closedAt" class="whitespace-nowrap">
                         {{ formatDateIST(trade.closedAt) }}
-                        <span class="text-[10px] opacity-50 ml-1">{{
-                          formatTimeIST(trade.closedAt)
-                        }}</span>
+                        <span class="text-[10px] opacity-50 ml-1">{{ formatTimeIST(trade.closedAt) }}</span>
                       </div>
                       <span v-else class="text-gray-300">—</span>
                     </td>
@@ -1293,7 +1459,11 @@ onUnmounted(() => {
                               <pre
                                 class="text-[10px] text-indigo-300 font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed"
                               >
-                                {{ typeof trade.strategyContext === 'string' ? JSON.parse(trade.strategyContext) : trade.strategyContext }}
+                                {{
+                                  typeof trade.strategyContext === "string"
+                                    ? JSON.parse(trade.strategyContext)
+                                    : trade.strategyContext
+                                }}
                               </pre>
                             </div>
                           </div>
@@ -1384,9 +1554,7 @@ onUnmounted(() => {
                     <td class="px-6 py-4 text-xs text-gray-500 font-medium">
                       <div class="whitespace-nowrap">
                         {{ formatDateIST(event.createdAt) }}
-                        <span class="text-[10px] opacity-50 ml-1">{{
-                          formatTimeIST(event.createdAt)
-                        }}</span>
+                        <span class="text-[10px] opacity-50 ml-1">{{ formatTimeIST(event.createdAt) }}</span>
                       </div>
                     </td>
                     <td class="px-6 py-4">
@@ -1416,7 +1584,7 @@ onUnmounted(() => {
                           <pre
                             class="text-[10px] text-indigo-300 font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed"
                           >
-                            {{ typeof event.metadata === 'string' ? JSON.parse(event.metadata) : event.metadata }}
+                            {{ typeof event.metadata === "string" ? JSON.parse(event.metadata) : event.metadata }}
                           </pre>
                         </div>
                       </div>
@@ -1434,8 +1602,6 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
-
-
     </main>
 
     <!-- Notifications Toast -->

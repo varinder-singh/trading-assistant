@@ -18,7 +18,7 @@ export class UserSession {
 
   async initialize() {
     await this.paperTrader.initialize()
-    
+
     this.ticker.on("ticks", (ticks: any[]) => {
       ticks.forEach((tick) => {
         this.paperTrader.updatePrice(tick.instrument_token, tick.last_price)

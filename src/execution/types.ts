@@ -35,8 +35,6 @@ export interface PaperPosition {
   timestamp: Date
 }
 
-
-
 export interface TradeResponse {
   success: boolean
   orderId?: string

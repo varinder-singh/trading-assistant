@@ -263,7 +263,7 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
 
     try {
       const provider = getLLMProvider()
-      
+
       // Fetch Memory
       const trend = input.tf15m?.trend || "SIDEWAYS"
       const vix = input.vix?.current || 15
@@ -290,7 +290,11 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
         ]),
       ])
 
-      const cleanJson = (text: string) => text.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim()
+      const cleanJson = (text: string) =>
+        text
+          .replace(/^```(?:json)?\n?/, "")
+          .replace(/\n?```$/, "")
+          .trim()
 
       const technical = JSON.parse(cleanJson(techRes))
       const options = JSON.parse(cleanJson(optRes))
@@ -350,8 +354,7 @@ ${marketDataStr}
       message: `Evaluating risk for ${input.openPosition.symbol}...`,
     })
 
-    let systemMessage =
-      `You are a professional NSE Risk Manager. Your sole task is to manage an OPEN options position based on live technicals and OI flow.
+    let systemMessage = `You are a professional NSE Risk Manager. Your sole task is to manage an OPEN options position based on live technicals and OI flow.
 The position was originally opened by a ${agentType} agent. You must decide whether to HOLD, EXIT, or UPDATE_SL. Respond with valid JSON only.
 
 `

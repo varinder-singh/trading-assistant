@@ -3,7 +3,7 @@ import { isMarketOpen, getMarketStatusMessage } from "@core/utils/market-hours.j
 
 export default defineEventHandler(async (event) => {
   const query = getQuery(event)
-  const symbol = query.symbol as string || "NIFTY"
+  const symbol = (query.symbol as string) || "NIFTY"
   const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
 
   try {
@@ -14,12 +14,12 @@ export default defineEventHandler(async (event) => {
       candles1h: data.candles1h.slice(-100),
       candles30m: data.candles30m ? data.candles30m.slice(-100) : data.candles15m.slice(-100),
       candles15m: data.candles15m.slice(-100),
-      candles3m: data.candles3m.slice(-100)
+      candles3m: data.candles3m.slice(-100),
     }
   } catch (error: any) {
     throw createError({
       statusCode: 500,
-      statusMessage: error.message || "Failed to fetch chart data"
+      statusMessage: error.message || "Failed to fetch chart data",
     })
   }
 })

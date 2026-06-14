@@ -6,23 +6,23 @@ export function generateOIHeatmap(analysis: KiteOptionsAnalysis): string {
   const atmStrike = analysis.atmStrike
   // Sort rows by strike, get 5 below and 5 above ATM
   const sortedRows = [...analysis.rows].sort((a, b) => a.strike - b.strike)
-  
+
   // Find ATM index
-  const atmIndex = sortedRows.findIndex(r => r.strike === atmStrike && r.type === "CE")
+  const atmIndex = sortedRows.findIndex((r) => r.strike === atmStrike && r.type === "CE")
   let startIndex = 0
   let endIndex = sortedRows.length
 
   if (atmIndex !== -1) {
-    const ceRows = sortedRows.filter(r => r.type === "CE")
-    const ceAtmIdx = ceRows.findIndex(r => r.strike === atmStrike)
+    const ceRows = sortedRows.filter((r) => r.type === "CE")
+    const ceAtmIdx = ceRows.findIndex((r) => r.strike === atmStrike)
     const startCEIdx = Math.max(0, ceAtmIdx - 5)
     const endCEIdx = Math.min(ceRows.length - 1, ceAtmIdx + 5)
-    
-    const relevantStrikes = ceRows.slice(startCEIdx, endCEIdx + 1).map(r => r.strike)
-    
+
+    const relevantStrikes = ceRows.slice(startCEIdx, endCEIdx + 1).map((r) => r.strike)
+
     // Filter the main rows by relevant strikes
-    const heatmapRows = sortedRows.filter(r => relevantStrikes.includes(r.strike))
-    
+    const heatmapRows = sortedRows.filter((r) => relevantStrikes.includes(r.strike))
+
     return formatHeatmapTable(heatmapRows, atmStrike)
   }
 
@@ -31,18 +31,19 @@ export function generateOIHeatmap(analysis: KiteOptionsAnalysis): string {
 
 function formatHeatmapTable(rows: any[], atmStrike: number): string {
   // We need to pair CE and PE for the same strike side-by-side
-  const strikes = [...new Set(rows.map(r => r.strike))].sort((a, b) => a.strike - b.strike)
-  
+  const strikes = [...new Set(rows.map((r) => r.strike))].sort((a, b) => a.strike - b.strike)
+
   let output = "\n" + "=".repeat(110) + "\n"
   output += "🔥 LIVE OPTIONS OI HEATMAP\n"
   output += "=".repeat(110) + "\n"
   output += "CALLS (CE)                                         | STRIKE  | PUTS (PE)\n"
-  output += "Buildup         | COI         | LTP      | Delta   |         | Delta   | LTP      | COI         | Buildup\n"
+  output +=
+    "Buildup         | COI         | LTP      | Delta   |         | Delta   | LTP      | COI         | Buildup\n"
   output += "-".repeat(110) + "\n"
 
   for (const strike of strikes) {
-    const ce = rows.find(r => r.strike === strike && r.type === "CE")
-    const pe = rows.find(r => r.strike === strike && r.type === "PE")
+    const ce = rows.find((r) => r.strike === strike && r.type === "CE")
+    const pe = rows.find((r) => r.strike === strike && r.type === "PE")
 
     const strikeStr = strike === atmStrike ? `[${strike}]`.padEnd(7) : strike.toString().padEnd(7)
 
@@ -65,7 +66,7 @@ function formatHeatmapTable(rows: any[], atmStrike: number): string {
 
     output += `${ceStr} | ${strikeStr} | ${peStr}\n`
   }
-  
+
   output += "=".repeat(110) + "\n"
   return output
 }

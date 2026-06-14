@@ -14,7 +14,7 @@ export function validateRegime(orchestrator: any, marketContext: any): Validatio
   const result: ValidationResult = {
     activeAgent: orchestrator.activeAgent,
     wasOverridden: false,
-    checks: []
+    checks: [],
   }
 
   // 1. VIX Safety Filter
@@ -22,7 +22,7 @@ export function validateRegime(orchestrator: any, marketContext: any): Validatio
   const vixCheck: ValidationCheck = {
     name: "VIX Safety Filter",
     passed: vix <= 25,
-    reason: vix > 25 ? `VIX is too high (${vix.toFixed(2)}) for TREND` : undefined
+    reason: vix > 25 ? `VIX is too high (${vix.toFixed(2)}) for TREND` : undefined,
   }
   result.checks.push(vixCheck)
 
@@ -38,9 +38,10 @@ export function validateRegime(orchestrator: any, marketContext: any): Validatio
     const trendAlignmentCheck: ValidationCheck = {
       name: "Trend Alignment Check",
       passed: tf15m.trend === tf1h.trend || tf1h.trend === "neutral",
-      reason: (tf15m.trend !== tf1h.trend && tf1h.trend !== "neutral") 
-        ? `Timeframes are out of alignment (15m: ${tf15m.trend}, 1h: ${tf1h.trend})` 
-        : undefined
+      reason:
+        tf15m.trend !== tf1h.trend && tf1h.trend !== "neutral"
+          ? `Timeframes are out of alignment (15m: ${tf15m.trend}, 1h: ${tf1h.trend})`
+          : undefined,
     }
     result.checks.push(trendAlignmentCheck)
   }

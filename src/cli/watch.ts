@@ -89,16 +89,24 @@ export const watchCommand = new Command("watch")
         },
       })
 
-      const { tf15m: tf, aiDecision: decision, vix, agentType } = await runAnalysis(kc, symbol, mode, context, lastDecision)
+      const {
+        tf15m: tf,
+        aiDecision: decision,
+        vix,
+        agentType,
+      } = await runAnalysis(kc, symbol, mode, context, lastDecision)
       lastDecision = decision
 
       // Save Daily ATM IV for Historical Tracking
       if (marketData.optionsAnalysisZerodha) {
-        const atmRow = marketData.optionsAnalysisZerodha.rows.find((r: any) => r.strike === marketData.optionsAnalysisZerodha.atmStrike && r.type === "CE")
+        const atmRow = marketData.optionsAnalysisZerodha.rows.find(
+          (r: any) => r.strike === marketData.optionsAnalysisZerodha.atmStrike && r.type === "CE"
+        )
         if (atmRow && atmRow.greeks) {
           const { ivHistoryRepo } = await import("../db/repositories/iv-history.js")
-          await ivHistoryRepo.saveDailyIV(symbol, atmRow.greeks.iv)
-            .catch(err => console.error("❌ Failed to save daily IV:", err))
+          await ivHistoryRepo
+            .saveDailyIV(symbol, atmRow.greeks.iv)
+            .catch((err) => console.error("❌ Failed to save daily IV:", err))
         }
       }
 
@@ -118,7 +126,9 @@ export const watchCommand = new Command("watch")
           const quote = await kc.getQuote([`NFO:${option.symbol}`])
           const entryPrice = quote[`NFO:${option.symbol}`]?.last_price || 0
           // Extract Greeks from market data
-          const oiRow = marketData.optionsAnalysisZerodha?.rows?.find((r: any) => r.strike === lastDecision.strike && r.type === type)
+          const oiRow = marketData.optionsAnalysisZerodha?.rows?.find(
+            (r: any) => r.strike === lastDecision.strike && r.type === type
+          )
           const delta = oiRow?.greeks?.delta
           const theta = oiRow?.greeks?.theta
           const vega = oiRow?.greeks?.vega
