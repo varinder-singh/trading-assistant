@@ -17,7 +17,8 @@ describe("PaperTrader Integration Tests", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     // Create a new instance for each test to ensure fresh state
-    trader = new PaperTrader()
+    const mockKc = {} as any
+    trader = new PaperTrader("test-user-id", mockKc)
     // Force set initialized to true and empty positions to avoid real initialization
     ;(trader as any).initialized = true
     ;(trader as any).positions = new Map()

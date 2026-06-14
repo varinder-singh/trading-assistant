@@ -9,6 +9,7 @@ export type KiteOptionInstrumentForAnalysis = {
   strike: number
   tradingsymbol: string
   instrument_token?: number
+  expiry?: string
 }
 
 export type KiteOptionOiRow = {
@@ -21,6 +22,13 @@ export type KiteOptionOiRow = {
   yesterdayOi?: number
   intervalOi?: number
   buildup?: "Long Buildup" | "Short Buildup" | "Short Covering" | "Long Unwinding" | "Neutral"
+  greeks?: {
+    iv: number
+    delta: number
+    gamma: number
+    theta: number
+    vega: number
+  }
 }
 
 export type KiteOptionsAnalysis = {
@@ -38,6 +46,8 @@ export type KiteOptionsAnalysis = {
   support: number
   resistance: number
   marketFlow: "SHORT_COVERING" | "LONG_BUILDUP" | "SHORT_BUILDUP" | "LONG_UNWINDING" | "NEUTRAL"
+  ivRank?: number
+  ivPercentile?: number
   rows: KiteOptionOiRow[]
   windowStats?: {
     topShortCovering: KiteOptionOiRow[]
@@ -80,6 +90,8 @@ class OITracker {
 }
 
 export const oiTracker = new OITracker()
+
+import { getGreeksFromPrice } from "./greeks.js"
 
 export function analyzeOptions(
   quotes: Record<string, KiteOptionQuote>,
@@ -137,6 +149,18 @@ export function analyzeOptions(
     // 3. Yesterday's Comparison
     const yOi = inst.instrument_token ? yesterdayOiMap?.get(inst.instrument_token) : undefined
 
+    // 4. Calculate Greeks
+    let greeks = undefined
+    if (underlyingPrice && inst.expiry) {
+      // Calculate days to expiry
+      const today = new Date()
+      const expiryDate = new Date(inst.expiry)
+      expiryDate.setHours(15, 30, 0, 0)
+      const daysToExpiry = Math.max(0.001, (expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+      
+      greeks = getGreeksFromPrice(ltp, underlyingPrice, inst.strike, daysToExpiry, 0.07, inst.instrument_type)
+    }
+
     const row: KiteOptionOiRow = {
       strike: inst.strike,
       type: inst.instrument_type,
@@ -146,6 +170,7 @@ export function analyzeOptions(
       volume: q.volume ?? 0,
       intervalOi: coi,
       buildup,
+      greeks,
     }
     if (yOi !== undefined) row.yesterdayOi = yOi
     rows.push(row)

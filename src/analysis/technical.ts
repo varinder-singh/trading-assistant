@@ -9,9 +9,11 @@ import { calculateORB } from "../indicators/orb.js"
 import { calculateSwings } from "../indicators/swings.js"
 import { detectWaveStructure } from "../indicators/waves.js"
 import type { DailyContext } from "../types/technical-analysis.js"
+import { calculateVolumeProfile } from "../indicators/volume-profile.js"
 
-export function analyzeDailyContext(candles1d: Candle[]): DailyContext | null {
+export function analyzeDailyContext(candles1d: Candle[], intradayCandles?: Candle[]): DailyContext | null {
   if (candles1d.length < 15) return null
+
 
   const atr14 = calculateATR(candles1d, 14)
   const prevDay = candles1d[candles1d.length - 2]
@@ -27,6 +29,18 @@ export function analyzeDailyContext(candles1d: Candle[]): DailyContext | null {
   const isCompression = pdr < 0.7 * atr14
   const openingRange = calculateORB(candles1d) ?? undefined
 
+  let previousDayVolumeProfile = undefined;
+  if (intradayCandles && intradayCandles.length > 0) {
+    const prevDayStart = prevDay.time;
+    const currentDayStart = currentDay.time;
+    
+    const prevDayIntraday = intradayCandles.filter((c) => c.time >= prevDayStart && c.time < currentDayStart);
+    
+    if (prevDayIntraday.length > 0) {
+       previousDayVolumeProfile = calculateVolumeProfile(prevDayIntraday, 5) ?? undefined; // 5 points tick size default
+    }
+  }
+
   return {
     atr14,
     pdh,
@@ -36,6 +50,7 @@ export function analyzeDailyContext(candles1d: Candle[]): DailyContext | null {
     isCompression,
     currentDayOpen: currentDay.open,
     openingRange,
+    previousDayVolumeProfile,
   }
 }
 

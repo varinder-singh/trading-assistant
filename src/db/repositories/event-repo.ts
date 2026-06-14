@@ -1,5 +1,5 @@
 import { db } from "../database.js"
-import { randomUUID } from "node:crypto"
+import crypto from "node:crypto"
 
 export interface AnalyzerEvent {
   symbol: string
@@ -11,25 +11,26 @@ export interface AnalyzerEvent {
 
 export const eventRepo = {
   async saveEvent(event: AnalyzerEvent) {
-    const id = randomUUID()
+    const id = crypto.randomUUID()
     return await db
-      .insertInto("analyzer_events")
+      .insertInto("marketEvents")
       .values({
         id,
         symbol: event.symbol,
         reason: event.reason,
-        price: event.price,
-        timestamp: event.timestamp,
+        price: String(event.price),
         metadata: event.metadata ? JSON.stringify(event.metadata) : null,
+        createdAt: event.timestamp,
+        updatedAt: event.timestamp,
       })
       .executeTakeFirst()
   },
 
   async getRecentEvents(symbol: string, limit = 10) {
     return await db
-      .selectFrom("analyzer_events")
+      .selectFrom("marketEvents")
       .where("symbol", "=", symbol)
-      .orderBy("timestamp", "desc")
+      .orderBy("createdAt", "desc")
       .limit(limit)
       .selectAll()
       .execute()

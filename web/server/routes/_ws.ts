@@ -1,155 +1,115 @@
-import { createTicker } from "@core/data/kite-ticker.js"
 import { getInstrumentToken, getOptionToken } from "@core/data/kite.js"
 import { LiveAnalyzer } from "@core/analysis/live.js"
-import { paperTrader } from "@core/execution/paper-trader.js"
 import { runAnalysis } from "@core/analysis/trade.js"
 import { eventHub } from "@core/utils/event-hub.js"
 import { eventRepo } from "@core/db/repositories/event-repo.js"
-import kc from "@core/data/kite.js"
+import { candleBuilder } from "@core/data/candle-builder.js"
+import { getIntradayBaseline } from "@core/data/kite-historical.js"
+import { gtiTracker } from "@core/indicators/gti-tracker.js"
+import { gtiRepo } from "@core/db/repositories/gti-repo.js"
+import { sessionManager, UserSession } from "@core/execution/session-manager.js"
+import { db } from "@core/db/database.js"
+import { isMarketOpen } from "@core/utils/market-hours.js"
+import { AIMacroTrend } from "@core/types/analysis.js"
 
-// Shared ticker instance
-let globalTicker: any = null
+/**
+ * Seed CandleBuilder for a specific token if not already seeded.
+ */
+async function seedCandleBuilder(kc: any, token: number) {
+  if (candleBuilder.isSeeded(token)) return
+
+  console.log(`📊 Seeding CandleBuilder for token ${token}...`)
+  try {
+    const [c1m, c3m, c15m, c30m] = await Promise.all([
+      getIntradayBaseline(kc, token, "minute", 2),
+      getIntradayBaseline(kc, token, "3minute", 5),
+      getIntradayBaseline(kc, token, "15minute", 5),
+      getIntradayBaseline(kc, token, "30minute", 5),
+    ])
+    candleBuilder.seed(token, 1, c1m)
+    candleBuilder.seed(token, 3, c3m)
+    candleBuilder.seed(token, 15, c15m)
+    candleBuilder.seed(token, 30, c30m)
+    console.log(`✅ CandleBuilder seeded for token ${token}.`)
+  } catch (err) {
+    console.error(`❌ Failed to seed CandleBuilder for token ${token}:`, err)
+  }
+}
+
+// Map from Peer ID -> Client State
 const clients = new Map<
   string,
   {
     peer: any
+    userId: string
+    session: UserSession
     analyzer: LiveAnalyzer
     symbol: string
     token: number
     mode: "intraday" | "swing"
     lastDecision: any
+    chartTimeframe: number
   }
 >()
 
-function broadcast(msg: any) {
+function broadcastToUser(userId: string, msg: any) {
+  const data = JSON.stringify(msg)
+  for (const client of clients.values()) {
+    if (client.userId === userId) {
+      client.peer.send(data)
+    }
+  }
+}
+
+function broadcastAll(msg: any) {
   const data = JSON.stringify(msg)
   for (const client of clients.values()) {
     client.peer.send(data)
   }
 }
 
-// Subscribe to agent updates from EventHub
 eventHub.on("agent_update", (update) => {
-  broadcast({ type: "agent_update", data: update })
+  broadcastAll({ type: "agent_update", data: update })
 })
 
-// Hijack console logs to broadcast to UI
-const originalLog = console.log
-const originalInfo = console.info
-const originalWarn = console.warn
-const originalError = console.error
-
-function formatLogArgs(args: any[]) {
-  return args
-    .map((a) => {
-      if (typeof a === "object") {
-        try {
-          return JSON.stringify(a)
-        } catch (e) {
-          return String(a)
-        }
-      }
-      return String(a)
+// Global CandleBuilder close listener for GTI
+candleBuilder.on("candle_close", async ({ token, timeframe, candle }) => {
+  const gtiScore = gtiTracker.onCandleClose(token, candle)
+  
+  // Persist to DB
+  const symbol = Array.from(clients.values()).find(c => c.token === token)?.symbol || `TOKEN_${token}`
+  try {
+    await gtiRepo.saveScore({
+      symbol,
+      token,
+      timeframe,
+      candleTime: candle.time,
+      candle,
+      gtiScore
     })
-    .join(" ")
-}
+  } catch (err) {
+    console.error(`[GTI] Failed to persist score for ${symbol}:`, err)
+  }
 
-console.log = (...args: any[]) => {
-  originalLog(...args)
-  broadcast({ type: "log", data: formatLogArgs(args) })
-}
-console.info = (...args: any[]) => {
-  originalInfo(...args)
-  broadcast({ type: "log", data: `[INFO] ${formatLogArgs(args)}` })
-}
-console.warn = (...args: any[]) => {
-  originalWarn(...args)
-  broadcast({ type: "log", data: `[WARN] ${formatLogArgs(args)}` })
-}
-console.error = (...args: any[]) => {
-  originalError(...args)
-  broadcast({ type: "log", data: `[ERROR] ${formatLogArgs(args)}` })
-}
-
-// Listen to paper trader updates globally
-paperTrader.on("portfolio_update", (positions) => {
-  broadcast({ type: "portfolio", data: positions })
-})
-
-paperTrader.on("pnl_update", (positions) => {
-  broadcast({ type: "portfolio", data: positions })
-})
-
-paperTrader.on("initialized", (tokens) => {
-  if (tokens.length > 0) {
-    console.log(`[ws] PaperTrader initialized. Subscribing to ${tokens.length} existing position tokens.`)
-    const ticker = getTicker()
-    ticker.subscribe(tokens)
-    ticker.setMode(ticker.modeFull, tokens)
+  // Route to relevant clients
+  for (const client of clients.values()) {
+    if (client.token === token) {
+      client.analyzer.updateGTI(gtiScore)
+    }
   }
 })
 
-paperTrader.on("notification", (notif) => {
-  broadcast({ type: "notification", data: notif })
-})
-
-paperTrader.on("market_close", () => {
-  console.log("[ws] Market Closed signal received. Stopping ticker.")
-  if (globalTicker) {
-    globalTicker.disconnect()
-    globalTicker = null
+function decodeJwtBase64(token: string) {
+  try {
+    const base64Url = token.split('.')[1]
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+    }).join(''))
+    return JSON.parse(jsonPayload)
+  } catch (e) {
+    return null
   }
-  broadcast({
-    type: "market_closed",
-    message: "Market hours ended (3:30 PM IST). Watching stopped.",
-  })
-})
-
-function getTicker() {
-  if (!globalTicker) {
-    console.log("Initializing Global Kite Ticker...")
-    globalTicker = createTicker()
-
-    globalTicker.on("ticks", (ticks: any[]) => {
-      // Route ticks to relevant clients
-      for (const client of clients.values()) {
-        const tick = ticks.find((t) => t.instrument_token === client.token)
-        if (tick) {
-          client.analyzer.addTick(tick)
-          client.peer.send(
-            JSON.stringify({
-              type: "tick",
-              data: tick,
-            })
-          )
-        }
-      }
-
-      // Update paper trader prices
-      ticks.forEach((tick) => {
-        paperTrader.updatePrice(tick.instrument_token, tick.last_price)
-      })
-    })
-
-    globalTicker.on("connect", () => {
-      console.log("Global WebSocket Connected")
-      // Resubscribe all active tokens (index clients + open paper positions)
-      const clientTokens = Array.from(new Set(Array.from(clients.values()).map((c) => c.token)))
-      const positionTokens = paperTrader.getAllPositions().map((p) => p.token)
-      const allTokens = Array.from(new Set([...clientTokens, ...positionTokens]))
-
-      if (allTokens.length > 0) {
-        console.log(
-          `[ws] Resubscribing to ${allTokens.length} tokens (Clients: ${clientTokens.length}, Positions: ${positionTokens.length})`
-        )
-        globalTicker.subscribe(allTokens)
-        globalTicker.setMode(globalTicker.modeFull, allTokens)
-      }
-    })
-
-    globalTicker.connect()
-  }
-  return globalTicker
 }
 
 export default defineWebSocketHandler({
@@ -164,161 +124,195 @@ export default defineWebSocketHandler({
     try {
       const msg = JSON.parse(text)
 
+      // 1. AUTHENTICATION
+      if (msg.type === "auth") {
+        const payload = decodeJwtBase64(msg.token)
+        if (!payload || !payload.sub) {
+          peer.send(JSON.stringify({ type: "error", message: "Invalid JWT token" }))
+          return
+        }
+
+        const userId = payload.sub
+
+        const brokerAccount = await db.selectFrom('brokerAccounts')
+          .select('accessToken')
+          .where('userId', '=', userId)
+          .where('isActive', '=', true)
+          .executeTakeFirst()
+
+        if (!brokerAccount?.accessToken) {
+          peer.send(JSON.stringify({ type: "error", message: "Zerodha account not linked." }))
+          return
+        }
+
+        // Initialize User Session
+        const session = await sessionManager.getSession(userId, brokerAccount.accessToken)
+
+        // Setup event listeners for this user's paper trader
+        session.paperTrader.on("portfolio_update", (positions) => {
+          broadcastToUser(userId, { type: "portfolio", data: positions })
+        })
+        session.paperTrader.on("pnl_update", (positions) => {
+          broadcastToUser(userId, { type: "portfolio", data: positions })
+        })
+        session.paperTrader.on("notification", (notif) => {
+          broadcastToUser(userId, { type: "notification", data: notif })
+        })
+
+        // Hook up tick routing to LiveAnalyzer
+        session.ticker.on("ticks", (ticks: any[]) => {
+          for (const client of clients.values()) {
+            if (client.userId === userId) {
+              const tick = ticks.find((t) => t.instrument_token === client.token)
+              if (tick) {
+                client.analyzer.addTick(tick)
+                const currentGTI = gtiTracker.getCurrentScore(client.token)
+                client.peer.send(
+                  JSON.stringify({
+                    type: "tick",
+                    data: { ...tick, gtiScore: currentGTI },
+                  })
+                )
+              }
+            }
+          }
+
+          // Also update candle builder globally
+          ticks.forEach((tick) => {
+            candleBuilder.addTick(tick)
+            gtiTracker.addTick(tick)
+          })
+        })
+
+        // Store temporary uninitialized client mapping
+        clients.set(peer.id, {
+          peer,
+          userId,
+          session,
+          analyzer: new LiveAnalyzer(), // dummy
+          symbol: "",
+          token: 0,
+          mode: "intraday",
+          lastDecision: null,
+          chartTimeframe: 15
+        })
+
+        peer.send(JSON.stringify({ type: "authenticated" }))
+        console.log(`[ws] User ${userId} authenticated on peer ${peer.id}`)
+        return
+      }
+
+      // 2. WATCH COMMAND
       if (msg.type === "watch") {
+        const client = clients.get(peer.id)
+        if (!client || !client.userId) {
+          peer.send(JSON.stringify({ type: "error", message: "Not authenticated" }))
+          return
+        }
+
         const { symbol, levels, mode } = msg.data
-        const token = await getInstrumentToken(symbol)
+        const token = await getInstrumentToken(client.session.kc, symbol)
 
         if (!token) {
           peer.send(JSON.stringify({ type: "error", message: `Token not found for ${symbol}` }))
           return
         }
 
+        await seedCandleBuilder(client.session.kc, token)
+
         const analyzer = new LiveAnalyzer()
-        if (levels) {
+
+        if (!isMarketOpen()) {
+          peer.send(JSON.stringify({ type: "market_closed", message: "Market is closed. Operating in read-only mode." }))
+        } else if (levels) {
           analyzer.setLevels(levels)
-        }
 
-        analyzer.on("breakout", async (context) => {
-          const client = clients.get(peer.id)
-          if (!client) return
+          analyzer.on("breakout", async (context) => {
+            console.log(`[ws] Breakout detected for ${symbol}`)
+            peer.send(JSON.stringify({ type: "breakout", data: context }))
 
-          console.log(`[ws] Breakout detected for ${symbol}`)
-          peer.send(JSON.stringify({ type: "breakout", data: context }))
+            await eventRepo.saveEvent({
+              symbol,
+              reason: context.reason,
+              price: context.tick.last_price,
+              timestamp: new Date().toISOString(),
+              metadata: { tick: context.tick },
+            })
 
-          // Persist event to DB
-          await eventRepo.saveEvent({
-            symbol,
-            reason: context.reason,
-            price: context.tick.last_price,
-            timestamp: new Date().toISOString(),
-            metadata: {
-              tick: context.tick,
-            },
-          })
+            try {
+              const analysisResult = await runAnalysis(client.session.kc, symbol, client.mode, context, client.lastDecision)
+              const { tf15m: tf, aiDecision: decision, vix, agentType } = analysisResult
+              client.lastDecision = decision
 
-          try {
-            const analysisResult = await runAnalysis(symbol, client.mode, context, client.lastDecision)
-            const { tf15m: tf, aiDecision: decision, vix, agentType } = analysisResult
-            client.lastDecision = decision
+              peer.send(JSON.stringify({ type: "analysis", data: analysisResult }))
 
-            // Broadcast the new analysis back to the client
-            peer.send(JSON.stringify({ type: "analysis", data: analysisResult }))
+              if (decision && decision.optionAction !== "NONE") {
+                const type = decision.optionAction === "BUY_CE" ? "CE" : "PE"
+                const option = await getOptionToken(client.session.kc, symbol, decision.strike || 0, type)
 
-            // --- Paper Trading Execution ---
-            if (decision) {
-              const type = decision.optionAction === "BUY_CE" ? "CE" : "PE"
-              const option = await getOptionToken(symbol, decision.strike, type)
+                if (option) {
+                  console.log(`[ws] Executing Paper Trade for ${option.symbol} (${agentType} Agent)...`)
+                  client.session.ticker.subscribe([option.token])
+                  client.session.ticker.setMode(client.session.ticker.modeFull, [option.token])
 
-              if (option) {
-                console.log(`[ws] Executing Paper Trade for ${option.symbol} (${agentType} Agent)...`)
-                const ticker = getTicker()
-                ticker.subscribe([option.token])
-                ticker.setMode(ticker.modeFull, [option.token])
+                  const quote = await client.session.kc.getQuote([`NFO:${option.symbol}`])
+                  const entryPrice = quote[`NFO:${option.symbol}`]?.last_price || 0
 
-                const quote = await kc.getQuote([`NFO:${option.symbol}`])
-                const entryPrice = quote[`NFO:${option.symbol}`]?.last_price || 0
+                  if (entryPrice > 0) {
+                    const indexRiskPoints = Math.abs(tf.price - decision.stopLoss)
+                    const estimatedDelta = 0.5
+                    const optionRiskPoints = indexRiskPoints * estimatedDelta
 
-                if (entryPrice <= 0) {
-                  console.error(`❌ [ws] Could not get a valid price for ${option.symbol}. Skipping trade.`)
-                  return
-                }
+                    let calculatedSl = entryPrice - optionRiskPoints
+                    const calculatedTarget = entryPrice + optionRiskPoints * (decision.riskRewardRatio || 1.5)
+                    
+                    const floorPercentage = agentType === "TREND" ? 0 : 0.2
+                    const minAllowedSl = Math.max(entryPrice * floorPercentage, 0.05)
+                    if (calculatedSl < minAllowedSl) calculatedSl = minAllowedSl
 
-                // DYNAMIC RISK CALCULATION: Index Market Structure -> Option Premium
-                // 1. Calculate Index Risk Points
-                const indexPriceAtEntry = tf.price
-                const indexRiskPoints = Math.abs(indexPriceAtEntry - decision.stopLoss)
-
-                // 2. Translate to Option Premium Risk using ATM Delta (~0.5)
-                // If Nifty moves 100 points, ATM option premium moves roughly 50 points.
-                const estimatedDelta = 0.5
-                const optionRiskPoints = indexRiskPoints * estimatedDelta
-
-                // 3. Calculate Final Premium Exit Levels
-                let calculatedSl = entryPrice - optionRiskPoints
-                const calculatedTarget = entryPrice + optionRiskPoints * (decision.riskRewardRatio || 1.5)
-
-                // SAFETY FLOOR: Prevent negative SL.
-                // TREND agent is allowed more breathing room (down to tick size) to avoid SL hunting.
-                // SCALPER and others are capped at 20% to prevent disaster drawdown.
-                const floorPercentage = agentType === "TREND" ? 0 : 0.2
-                const minAllowedSl = Math.max(entryPrice * floorPercentage, 0.05)
-
-                if (calculatedSl < minAllowedSl) {
-                  console.warn(
-                    `⚠️ [ws] Calculated SL (${calculatedSl.toFixed(2)}) is below safety floor for ${agentType}. Capping at: ${minAllowedSl.toFixed(2)}`
-                  )
-                  calculatedSl = minAllowedSl
-                }
-
-                console.log(
-                  `[ws] Risk Translation: Index Risk ${indexRiskPoints.toFixed(2)} pts -> Option Risk ${optionRiskPoints.toFixed(2)} pts`
-                )
-                console.log(
-                  `[ws] Option Entry: ${entryPrice}, Calculated SL: ${calculatedSl.toFixed(2)}, Target: ${calculatedTarget.toFixed(2)} (R:R ${decision.riskRewardRatio || 1.5})`
-                )
-
-                const result = await paperTrader.placeOrder({
-                  symbol: option.symbol,
-                  token: option.token,
-                  strike: decision.strike,
-                  side: "BUY",
-                  quantity: 1,
-                  price: entryPrice,
-                  context: {
-                    aiReasoning: decision.reason,
-                    aiConfidence: decision.confidence,
-                    aiStrike: decision.strike,
-                    aiSetup: decision.setup,
-                    strategyContext: {
-                      macroTrend: decision.macroTrend,
-                      indexSl: decision.stopLoss,
-                      agentType,
-                    },
-                    vixLevel: vix.current,
-                    rsiLevel: tf.rsi,
-                    trend15m: tf.trend,
-                    aiStopLoss: calculatedSl,
-                    aiTarget: calculatedTarget,
-                  },
-                })
-
-                if (result.success) {
-                  console.log(`✅ [ws] Paper Trade executed successfully for ${option.symbol}`)
-                } else {
-                  console.error(`❌ [ws] Paper Trade FAILED for ${option.symbol}: ${result.error}`)
+                    await client.session.paperTrader.placeOrder({
+                      symbol: option.symbol,
+                      token: option.token,
+                      strike: decision.strike || undefined,
+                      side: "BUY",
+                      quantity: 1,
+                      price: entryPrice,
+                      context: {
+                        aiReasoning: decision.reason,
+                        aiConfidence: decision.confidence,
+                        aiStrike: decision.strike || undefined,
+                        aiSetup: decision.setup,
+                        strategyContext: { macroTrend: decision.macroTrend as AIMacroTrend, indexSl: decision.stopLoss, agentType },
+                        vixLevel: vix.current,
+                        rsiLevel: tf.rsi,
+                        trend15m: tf.trend,
+                        aiStopLoss: calculatedSl,
+                        aiTarget: calculatedTarget,
+                      },
+                    })
+                  }
                 }
               }
+            } catch (err) {
+              console.error(`[ws] Error during breakout analysis:`, err)
             }
-          } catch (err) {
-            console.error(`[ws] Error during breakout analysis:`, err)
-          }
-        })
+          })
+        }
 
-        clients.set(peer.id, {
-          peer,
-          analyzer,
-          symbol,
-          token,
-          mode: mode || "intraday",
-          lastDecision: null,
-        })
+        client.analyzer = analyzer
+        client.symbol = symbol
+        client.token = token
+        client.mode = mode || "intraday"
+        client.chartTimeframe = msg.data.chartTimeframe || 1
 
-        const ticker = getTicker()
-        const positionTokens = paperTrader
-          .getAllPositions()
-          .map((p) => p.token)
-          .filter((t) => !!t)
+        const positionTokens = client.session.paperTrader.getAllPositions().map((p) => p.token).filter(t => !!t)
         const tokensToSubscribe = Array.from(new Set([token, ...positionTokens]))
 
-        ticker.subscribe(tokensToSubscribe)
-        ticker.setMode(ticker.modeFull, tokensToSubscribe)
+        client.session.ticker.subscribe(tokensToSubscribe)
+        client.session.ticker.setMode(client.session.ticker.modeFull, tokensToSubscribe)
 
         peer.send(JSON.stringify({ type: "watching", symbol, token }))
-
-        // Send initial portfolio state immediately
-        peer.send(JSON.stringify({ type: "portfolio", data: paperTrader.getAllPositions() }))
-
-        console.log(`[ws] client ${peer.id} watching ${symbol} (${token}) + ${positionTokens.length} positions`)
+        peer.send(JSON.stringify({ type: "portfolio", data: client.session.paperTrader.getAllPositions() }))
       }
     } catch (err) {
       console.error("[ws] error handling message", err)
@@ -328,8 +322,6 @@ export default defineWebSocketHandler({
   close(peer) {
     console.log(`[ws] close ${peer.id}`)
     clients.delete(peer.id)
-
-    // Optional: unsubscribe from ticker if no more clients are watching that token
   },
 
   error(peer, error) {

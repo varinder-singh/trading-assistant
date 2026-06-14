@@ -1,72 +1,201 @@
 import { db } from "../database.js"
-import type { PaperTradesTable } from "../database.js"
-import { randomUUID } from "node:crypto"
+import crypto from "node:crypto"
 
-export type NewPaperTrade = Omit<PaperTradesTable, "id" | "opened_at" | "closed_at" | "exit_price" | "pnl" | "status">
+export interface NewPaperTradeInput {
+  userId: string
+  symbol: string
+  token: number
+  side: "BUY" | "SELL"
+  quantity: number
+  entry_price: number
+  strike_price?: number | null
+  ai_reasoning?: string | null
+  ai_confidence?: number | null
+  vix_level?: number | null
+  rsi_level?: number | null
+  trend_15m?: string | null
+  ai_stop_loss?: number | null
+  ai_target?: number | null
+  setup?: string | null
+  strategy_context?: string | null
+  agentType?: string | null
+}
 
 export class TradeRepository {
-  async insertTrade(trade: NewPaperTrade) {
-    const id = randomUUID()
-    const openedAt = new Date().toISOString()
+  async insertTrade(trade: NewPaperTradeInput) {
+    const id = crypto.randomUUID()
+    const now = new Date().toISOString()
 
+    // 1. Insert Core Trade
     await db
-      .insertInto("paper_trades")
+      .insertInto("trades")
       .values({
-        ...trade,
         id,
-        opened_at: openedAt,
+        userId: trade.userId,
+        brokerAccountId: null, // Paper trade
+        isPaperTrade: true,
+        symbol: trade.symbol,
+        instrumentToken: trade.token,
+        strikePrice: trade.strike_price ? String(trade.strike_price) : null,
+        side: trade.side,
+        quantity: trade.quantity,
         status: "OPEN",
-        exit_price: null,
+        entryPrice: String(trade.entry_price),
+        exitPrice: null,
         pnl: null,
-        closed_at: null,
-      } as any)
+        openedAt: now,
+        closedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      })
       .execute()
+
+    // 2. Insert Analytics Log (ENTRY)
+    const analyticsId = crypto.randomUUID()
+    await db.insertInto("tradeAnalytics").values({
+      id: analyticsId,
+      tradeId: id,
+      eventType: "ENTRY",
+      agentType: trade.agentType || null,
+      symbol: trade.symbol,
+      side: trade.side,
+      metadata: JSON.stringify({
+        aiReasoning: trade.ai_reasoning,
+        aiConfidence: trade.ai_confidence,
+        vixLevel: trade.vix_level,
+        rsiLevel: trade.rsi_level,
+        trend15m: trade.trend_15m,
+        aiStopLoss: trade.ai_stop_loss,
+        aiTarget: trade.ai_target,
+        setup: trade.setup,
+        strategyContext: trade.strategy_context ? JSON.parse(trade.strategy_context) : null
+      }),
+      createdAt: now,
+      updatedAt: now,
+    }).execute()
 
     return id
   }
 
-  async closeTrade(id: string, exitPrice: number, exitReason?: string) {
-    const closedAt = new Date().toISOString()
+  async closeTrade(id: string, exitPrice: number, exitReason?: string, agentType?: string) {
+    const now = new Date().toISOString()
 
     // Fetch the trade to calculate PnL
-    const trade = await db.selectFrom("paper_trades").selectAll().where("id", "=", id).executeTakeFirst()
+    const trade = await db.selectFrom("trades").selectAll().where("id", "=", id).executeTakeFirst()
 
     if (!trade) {
       throw new Error(`Trade with ID ${id} not found`)
     }
 
-    const pnl = (exitPrice - trade.entry_price) * trade.quantity
+    const pnl = (exitPrice - Number(trade.entryPrice)) * trade.quantity
 
     await db
-      .updateTable("paper_trades")
+      .updateTable("trades")
       .set({
-        exit_price: exitPrice,
-        pnl: pnl,
+        exitPrice: String(exitPrice),
+        pnl: String(pnl),
         status: "CLOSED",
-        closed_at: closedAt,
-        exit_reason: exitReason || null,
+        closedAt: now,
+        updatedAt: now,
       })
       .where("id", "=", id)
       .execute()
+
+    // Insert Analytics Log (EXIT)
+    const analyticsId = crypto.randomUUID()
+    await db.insertInto("tradeAnalytics").values({
+      id: analyticsId,
+      tradeId: id,
+      eventType: "EXIT",
+      agentType: agentType || null,
+      symbol: trade.symbol,
+      side: trade.side === "BUY" ? "SELL" : "BUY", // The closing action
+      metadata: JSON.stringify({
+        exitReason: exitReason || null
+      }),
+      createdAt: now,
+      updatedAt: now,
+    }).execute()
   }
 
-  async getOpenTrades() {
-    return await db.selectFrom("paper_trades").selectAll().where("status", "=", "OPEN").execute()
-  }
-
-  async getTodaysTrades() {
-    const today = new Date().toISOString().split("T")[0] // YYYY-MM-DD
-    return await db
-      .selectFrom("paper_trades")
+  async getOpenTrades(userId: string) {
+    return await db.selectFrom("trades")
       .selectAll()
-      .where("opened_at", ">=", `${today}T00:00:00Z`)
-      .orderBy("opened_at", "asc")
+      .where("userId", "=", userId)
+      .where("status", "=", "OPEN")
       .execute()
   }
 
-  async getAllTrades() {
-    return await db.selectFrom("paper_trades").selectAll().orderBy("opened_at", "desc").execute()
+  async getTodaysTrades(userId: string) {
+    const today = new Date().toISOString().split("T")[0] // YYYY-MM-DD
+    return await db
+      .selectFrom("trades")
+      .selectAll()
+      .where("userId", "=", userId)
+      .where("openedAt", ">=", `${today}T00:00:00Z`)
+      .orderBy("openedAt", "asc")
+      .execute()
+  }
+
+  async getAllTrades(userId: string) {
+    const trades = await db.selectFrom("trades")
+      .selectAll()
+      .where("userId", "=", userId)
+      .orderBy("openedAt", "desc")
+      .execute()
+
+    if (trades.length === 0) return []
+
+    const tradeIds = trades.map(t => t.id)
+    
+    const analytics = await db.selectFrom("tradeAnalytics")
+      .selectAll()
+      .where("tradeId", "in", tradeIds)
+      .execute()
+
+    // Map analytics back to trades
+    return trades.map(trade => {
+      const tradeEvents = analytics.filter(a => a.tradeId === trade.id)
+      const entryEvent = tradeEvents.find(a => a.eventType === 'ENTRY')
+      const exitEvent = tradeEvents.find(a => a.eventType === 'EXIT')
+      
+      let aiReasoning, aiConfidence, vixLevel, rsiLevel, trend15m, aiStopLoss, aiTarget, setup, strategyContext, exitReason
+      
+      if (entryEvent?.metadata) {
+        const meta = typeof entryEvent.metadata === 'string' ? JSON.parse(entryEvent.metadata) : entryEvent.metadata
+        aiReasoning = meta.aiReasoning
+        aiConfidence = meta.aiConfidence
+        vixLevel = meta.vixLevel
+        rsiLevel = meta.rsiLevel
+        trend15m = meta.trend15m
+        aiStopLoss = meta.aiStopLoss
+        aiTarget = meta.aiTarget
+        setup = meta.setup
+        strategyContext = meta.strategyContext
+      }
+      
+      if (exitEvent?.metadata) {
+        const meta = typeof exitEvent.metadata === 'string' ? JSON.parse(exitEvent.metadata) : exitEvent.metadata
+        exitReason = meta.exitReason
+      }
+      
+      return {
+        ...trade,
+        aiReasoning,
+        aiConfidence,
+        vixLevel,
+        rsiLevel,
+        trend15m,
+        aiStopLoss,
+        aiTarget,
+        setup,
+        strategyContext,
+        exitReason
+      }
+    })
   }
 }
 
+// We still export a singleton repository instance because it doesn't hold state, 
+// just queries the database. We pass `userId` to its methods.
 export const tradeRepo = new TradeRepository()

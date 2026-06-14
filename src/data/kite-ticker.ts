@@ -1,10 +1,9 @@
 import { KiteTicker } from "kiteconnect"
-import { getAccessToken } from "./kite.js"
 
-export function createTicker() {
+export function createTicker(accessToken: string) {
   const ticker = new KiteTicker({
     api_key: process.env.KITE_API_KEY!,
-    access_token: getAccessToken(),
+    access_token: accessToken,
   })
 
   // Enable auto reconnect with 5 second interval and retry for maximum of 10 times.

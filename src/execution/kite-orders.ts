@@ -1,8 +1,13 @@
-import kc from "../data/kite.js"
+import type { KiteConnect } from "kiteconnect"
 import type { TradeResponse, OrderSide, OrderType } from "./types.js"
 
 export class KiteOrderService {
   private maxLotSize = 1 // Strict risk limit: 1 lot only
+  private kc: KiteConnect
+
+  constructor(kc: KiteConnect) {
+    this.kc = kc
+  }
 
   async placeOrder(params: {
     symbol: string
@@ -37,7 +42,7 @@ export class KiteOrderService {
         orderParams.price = params.price
       }
 
-      const response = await kc.placeOrder("regular", orderParams)
+      const response = await this.kc.placeOrder("regular", orderParams)
 
       return {
         success: true,
@@ -53,6 +58,6 @@ export class KiteOrderService {
   }
 
   async getOrderStatus(orderId: string) {
-    return await kc.getOrderHistory(orderId)
+    return await this.kc.getOrderHistory(orderId)
   }
 }

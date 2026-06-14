@@ -29,8 +29,13 @@ export interface PaperPosition {
   aiTarget?: number
   aiSetup?: string
   strategyContext?: any
+  optionDelta?: number
+  optionTheta?: number
+  optionVega?: number
   timestamp: Date
 }
+
+
 
 export interface TradeResponse {
   success: boolean

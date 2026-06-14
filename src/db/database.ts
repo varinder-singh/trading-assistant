@@ -1,75 +1,133 @@
-import SQLite from "better-sqlite3"
-import { Kysely, SqliteDialect } from "kysely"
-import { fileURLToPath } from "node:url"
-import { dirname, resolve, join } from "node:path"
-import { mkdirSync, existsSync } from "node:fs"
+import { Kysely, PostgresDialect, CamelCasePlugin } from "kysely"
+import pg from "pg"
+import "dotenv/config"
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+const { Pool } = pg
 
-function getDbPath() {
-  if (process.env.DB_PATH) return process.env.DB_PATH
-
-  // Find the root by looking for '.trading-assistant-root' marker
-  let currentDir = __dirname
-  while (currentDir !== dirname(currentDir)) {
-    if (existsSync(join(currentDir, ".trading-assistant-root"))) {
-      return resolve(currentDir, "data/trading.db")
-    }
-    currentDir = dirname(currentDir)
-  }
-
-  // Fallback to process.cwd() logic if marker not found
-  const cwd = process.cwd()
-  const root = cwd.endsWith("/web") || cwd.endsWith("/web/") ? resolve(cwd, "..") : cwd
-  return join(root, "data/trading.db")
+export interface ProfilesTable {
+  id: string
+  fullName: string | null
+  createdAt: string
+  updatedAt: string
 }
 
-const dbPath = getDbPath()
+export interface BrokerAccountsTable {
+  id: string
+  userId: string
+  brokerName: string
+  brokerUserId: string
+  accessToken: string
+  publicToken: string | null
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
 
-// Ensure data directory exists
-mkdirSync(dirname(dbPath), { recursive: true })
-
-export interface PaperTradesTable {
-  id: string // UUID or custom ID
+export interface TradesTable {
+  id: string
+  userId: string
+  brokerAccountId: string | null
+  isPaperTrade: boolean
   symbol: string
-  token: number | null
+  instrumentToken: number | null
+  strikePrice: string | null // numeric mapped to string in pg by default
   side: "BUY" | "SELL"
   quantity: number
-  entry_price: number
-  exit_price: number | null
-  pnl: number | null
-  status: "OPEN" | "CLOSED"
-  ai_reasoning: string | null
-  ai_confidence: number | null
-  vix_level: number | null
-  rsi_level: number | null
-  trend_15m: string | null
-  ai_stop_loss: number | null
-  ai_target: number | null
-  exit_reason: string | null
-  setup: string | null
-  strategy_context: string | null
-  strike_price: number | null
-  opened_at: string // ISO string
-  closed_at: string | null // ISO string
+  status: "OPEN" | "CLOSED" | "REJECTED"
+  entryPrice: string // numeric
+  exitPrice: string | null // numeric
+  pnl: string | null // numeric
+  openedAt: string
+  closedAt: string | null
+  createdAt: string
+  updatedAt: string
 }
 
-export interface AnalyzerEventsTable {
+export interface TradeAnalyticsTable {
+  id: string
+  tradeId: string | null
+  eventType: "ENTRY" | "EXIT" | "UPDATE_SL" | "HOLD"
+  agentType: string | null
+  symbol: string
+  side: "BUY" | "SELL"
+  metadata: any // JSONB
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MarketEventsTable {
   id: string
   symbol: string
   reason: string
-  price: number
+  price: string // numeric
+  metadata: any | null // JSONB
+  createdAt: string
+  updatedAt: string
+}
+
+export interface HistoricalCandlesTable {
+  id: string
+  symbol: string
+  instrumentToken: number
+  timeframe: number
+  candleTime: string // bigint
+  open: string // numeric
+  high: string // numeric
+  low: string // numeric
+  close: string // numeric
+  volume: string // numeric
+  compositeScore: string | null // numeric
+  classification: string | null
+  confidence: string | null // numeric
+  components: any | null // JSONB
+  createdAt: string
+  updatedAt: string
+}
+
+export interface GtiScoresTable {
+  id: string
+  symbol: string
+  token: number
+  timeframe: number
+  candleTime: number
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+  compositeScore: number
+  classification: string
+  confidence: number
+  components: string | null
   timestamp: string
-  metadata: string | null // JSON blob
+}
+
+export interface IvHistoryTable {
+  id: string
+  symbol: string
+  date: string
+  iv: number
+  createdAt: string
 }
 
 export interface Database {
-  paper_trades: PaperTradesTable
-  analyzer_events: AnalyzerEventsTable
+  profiles: ProfilesTable
+  brokerAccounts: BrokerAccountsTable
+  trades: TradesTable
+  tradeAnalytics: TradeAnalyticsTable
+  marketEvents: MarketEventsTable
+  historicalCandles: HistoricalCandlesTable
+  gtiScores: GtiScoresTable
+  ivHistory: IvHistoryTable
 }
 
+const dbUrl = process.env.SUPABASE_DB_URL ?? process.env.DATABASE_URL
+
 export const db = new Kysely<Database>({
-  dialect: new SqliteDialect({
-    database: new SQLite(dbPath),
+  dialect: new PostgresDialect({
+    pool: new Pool({
+      connectionString: dbUrl,
+    }),
   }),
+  plugins: [new CamelCasePlugin()],
 })

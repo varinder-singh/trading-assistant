@@ -15,7 +15,7 @@ export const watchCommand = new Command("watch")
     console.log(`\n🔭 Starting Watch Mode for ${symbol} (${mode})...`)
 
     // 1. Resolve Instrument Token
-    const token = await getInstrumentToken(symbol)
+    const token = await getInstrumentToken(kc, symbol)
     if (!token) {
       console.error(`❌ Could not find instrument token for ${symbol}`)
       return
@@ -25,7 +25,7 @@ export const watchCommand = new Command("watch")
     let lastDecision: any = null
 
     // 2. Get Initial Levels
-    const { tf15m, aiDecision } = await runAnalysis(symbol, mode)
+    const { tf15m, aiDecision } = await runAnalysis(kc, symbol, mode)
     lastDecision = aiDecision
 
     // 3. Setup Analyzer
@@ -89,13 +89,23 @@ export const watchCommand = new Command("watch")
         },
       })
 
-      const { tf15m: tf, aiDecision: decision, vix, agentType } = await runAnalysis(symbol, mode, context, lastDecision)
+      const { tf15m: tf, aiDecision: decision, vix, agentType } = await runAnalysis(kc, symbol, mode, context, lastDecision)
       lastDecision = decision
+
+      // Save Daily ATM IV for Historical Tracking
+      if (marketData.optionsAnalysisZerodha) {
+        const atmRow = marketData.optionsAnalysisZerodha.rows.find((r: any) => r.strike === marketData.optionsAnalysisZerodha.atmStrike && r.type === "CE")
+        if (atmRow && atmRow.greeks) {
+          const { ivHistoryRepo } = await import("../db/repositories/iv-history.js")
+          await ivHistoryRepo.saveDailyIV(symbol, atmRow.greeks.iv)
+            .catch(err => console.error("❌ Failed to save daily IV:", err))
+        }
+      }
 
       // --- Paper Trading Execution ---
       if (lastDecision.optionAction && lastDecision.optionAction !== "NONE" && lastDecision.strike) {
         const type = lastDecision.optionAction === "BUY_CE" ? "CE" : "PE"
-        const option = await getOptionToken(symbol, lastDecision.strike, type)
+        const option = await getOptionToken(kc, symbol, lastDecision.strike, type)
 
         if (option) {
           console.log(`📝 Executing Paper Trade for ${option.symbol}...`)
@@ -107,15 +117,23 @@ export const watchCommand = new Command("watch")
           // Get current price for entry
           const quote = await kc.getQuote([`NFO:${option.symbol}`])
           const entryPrice = quote[`NFO:${option.symbol}`]?.last_price || 0
+          // Extract Greeks from market data
+          const oiRow = marketData.optionsAnalysisZerodha?.rows?.find((r: any) => r.strike === lastDecision.strike && r.type === type)
+          const delta = oiRow?.greeks?.delta
+          const theta = oiRow?.greeks?.theta
+          const vega = oiRow?.greeks?.vega
 
           await paperTrader.placeOrder({
             symbol: option.symbol,
             token: option.token,
             strike: lastDecision.strike,
             side: "BUY",
-            quantity: 1, // Default to 1 lot for safety
+            quantity: 1, // Default to 1 lot for safety, paperTrader will adjust based on delta
             price: entryPrice,
             context: {
+              optionDelta: delta,
+              optionTheta: theta,
+              optionVega: vega,
               aiReasoning: lastDecision.reason,
               aiConfidence: lastDecision.confidence,
               aiStrike: lastDecision.strike,
@@ -128,12 +146,19 @@ export const watchCommand = new Command("watch")
                 macroTrend: lastDecision.macroTrend,
                 indexSl: lastDecision.stopLoss,
                 agentType,
+                reversalScore: marketData.reversalScore,
               },
             },
           })
         }
       }
       // -------------------------------
+
+      // --- Visual Dashboards ---
+      const { generateOIHeatmap } = await import("../analysis/heatmap.js")
+      if (marketData.optionsAnalysisZerodha) {
+        console.log(generateOIHeatmap(marketData.optionsAnalysisZerodha))
+      }
 
       console.log("\n" + "=".repeat(50))
       console.log("🔭 Resuming Watch Mode...")

@@ -1,15 +1,14 @@
 import "dotenv/config"
 import { pathToFileURL } from "node:url"
-import type { Instrument } from "kiteconnect"
+import type { KiteConnect, Instrument } from "kiteconnect"
 import { analyzeOptions, type KiteOptionQuote, type KiteOptionInstrumentForAnalysis } from "../analysis/kite-options.js"
-import kc from "./kite.js"
 import { getYesterdayClosingOI } from "./kite-historical.js"
 
 type KiteOptionInstrument = Instrument & {
   instrument_type: "CE" | "PE"
 }
 
-export async function getOptionChain(symbol: string = "NIFTY") {
+export async function getOptionChain(kc: KiteConnect, symbol: string = "NIFTY") {
   const instruments = await kc.getInstruments("NFO")
 
   const symbolOptions = instruments.filter(
@@ -41,7 +40,8 @@ export async function getOptionChain(symbol: string = "NIFTY") {
       instrument_type: i.instrument_type,
       strike: i.strike,
       tradingsymbol: i.tradingsymbol,
-      instrument_token: Number(i.instrument_token)
+      instrument_token: Number(i.instrument_token),
+      expiry: nearestExpiry
     } as KiteOptionInstrumentForAnalysis))
 
   const symbols = finalOptions.map(
@@ -64,12 +64,14 @@ function isDirectRun() {
 }
 
 async function runStandalone() {
+  const { createKiteClient } = await import("./kite.js")
+  const kc = createKiteClient(process.env.KITE_ACCESS_TOKEN)
   const symbol = "NIFTY"
   const underlyingTicker = symbol === "NIFTY" ? "NSE:NIFTY 50" : symbol === "BANKNIFTY" ? "NSE:NIFTY BANK" : symbol
   
   console.log(`[Test] Fetching ${symbol} chain and underlying price...`)
   const [{ quotes, finalOptions, nearestExpiry }, underlyingQuote] = await Promise.all([
-    getOptionChain(symbol),
+    getOptionChain(kc, symbol),
     kc.getQuote([underlyingTicker])
   ])
 
@@ -77,7 +79,7 @@ async function runStandalone() {
   const tokens = finalOptions.map(opt => opt.instrument_token).filter((t): t is number => !!t)
   
   console.log(`[Test] Fetching yesterday's closing OI for ${tokens.length} contracts...`)
-  const yesterdayOiMap = await getYesterdayClosingOI(tokens)
+  const yesterdayOiMap = await getYesterdayClosingOI(kc, tokens)
 
   const analysis = analyzeOptions(quotes, finalOptions, underlyingPrice, yesterdayOiMap)
 
@@ -90,15 +92,8 @@ async function runStandalone() {
   console.log(`PCR: ${analysis.pcr} (${analysis.sentiment.toUpperCase()})`)
   console.log(`Support: ${analysis.support} | Resistance: ${analysis.resistance}`)
   console.log("-".repeat(50))
-  console.table(analysis.rows.map(r => ({
-    Strike: r.strike,
-    Type: r.type,
-    OI: r.oi.toLocaleString(),
-    'Y-OI': r.yesterdayOi?.toLocaleString() || 'N/A',
-    'COI-Int': r.intervalOi || 0,
-    LTP: r.ltp,
-    State: r.buildup
-  })))
+  const { generateOIHeatmap } = await import("../analysis/heatmap.js")
+  console.log(generateOIHeatmap(analysis))
 }
 
 if (isDirectRun()) {

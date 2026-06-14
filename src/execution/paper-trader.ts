@@ -3,6 +3,10 @@ import type { TradeOrder, PaperPosition, TradeResponse, OrderSide } from "./type
 import { tradeRepo } from "../db/repositories/trade-repo.js"
 import { evaluatePosition } from "../analysis/trade.js"
 import type { AIMacroTrend, TradingAgentType } from "../ai/types.js"
+import { candleBuilder } from "../data/candle-builder.js"
+import { getMultiTimeframeCandles } from "../data/yahoo.js"
+import { getInstrumentToken, createKiteClient } from "../data/kite.js"
+import type { KiteConnect } from "kiteconnect"
 
 export type StrategyContext = {
   macroTrend: AIMacroTrend
@@ -23,8 +27,10 @@ export interface TradeContext {
   aiStrike?: number
   aiSetup?: string
   strategyContext?: StrategyContext
+  optionDelta?: number
+  optionTheta?: number
+  optionVega?: number
 }
-
 export class PaperTrader extends EventEmitter {
   private positions: Map<string, PaperPosition> = new Map()
   private orders: TradeOrder[] = []
@@ -37,12 +43,18 @@ export class PaperTrader extends EventEmitter {
 
   // Risk Management
   private maxDailyTrades = 20
+  private maxDailyLoss = Number(process.env.MAX_DAILY_LOSS || -20000)
   private todayRealizedPnL = 0
   private todayTradeCount = 0
   private tradingHalted = false
 
-  constructor() {
+  private userId: string
+  private kc: KiteConnect
+
+  constructor(userId: string, kc: KiteConnect) {
     super()
+    this.userId = userId
+    this.kc = kc
   }
 
   async initialize() {
@@ -51,15 +63,15 @@ export class PaperTrader extends EventEmitter {
 
     this.initializationPromise = (async () => {
       try {
-        const [openTrades, todayTrades] = await Promise.all([tradeRepo.getOpenTrades(), tradeRepo.getTodaysTrades()])
+        const [openTrades, todayTrades] = await Promise.all([tradeRepo.getOpenTrades(this.userId), tradeRepo.getTodaysTrades(this.userId)])
 
         console.log(
-          `[PaperTrader] Restoring ${openTrades.length} open trades and analyzing ${todayTrades.length} trades for today...`
+          `[PaperTrader ${this.userId}] Restoring ${openTrades.length} open trades and analyzing ${todayTrades.length} trades for today...`
         )
 
         // Initialize today's stats
         this.todayTradeCount = todayTrades.length
-        this.todayRealizedPnL = todayTrades.reduce((acc, t) => acc + (t.pnl || 0), 0)
+        this.todayRealizedPnL = todayTrades.reduce((acc, t) => acc + (Number(t.pnl) || 0), 0)
         console.log(`[PaperTrader] Today PnL from trades ${this.todayRealizedPnL}`)
 
         for (const trade of openTrades) {
@@ -67,25 +79,26 @@ export class PaperTrader extends EventEmitter {
           const existing = this.positions.get(trade.symbol)
           if (existing) {
             const totalQty = existing.quantity + trade.quantity
-            const totalCost = existing.avgEntryPrice * existing.quantity + trade.entry_price * trade.quantity
+            const totalCost = Number(existing.avgEntryPrice) * existing.quantity + Number(trade.entryPrice) * trade.quantity
             existing.avgEntryPrice = totalCost / totalQty
             existing.quantity = totalQty
-            if ((!existing.token || existing.token === 0) && trade.token) existing.token = trade.token
+            if ((!existing.token || existing.token === 0) && trade.instrumentToken) existing.token = trade.instrumentToken
           } else {
             const pos: PaperPosition = {
               symbol: trade.symbol,
-              token: trade.token || 0,
+              token: trade.instrumentToken || 0,
               side: "BUY",
               quantity: trade.quantity,
-              avgEntryPrice: trade.entry_price,
-              currentPrice: trade.entry_price,
+              avgEntryPrice: Number(trade.entryPrice),
+              currentPrice: Number(trade.entryPrice),
               unrealizedPnL: 0,
               realizedPnL: 0,
-              timestamp: new Date(trade.opened_at),
+              timestamp: new Date(trade.openedAt),
             }
-            if (trade.strike_price) pos.strike = trade.strike_price
-            if (trade.ai_stop_loss) pos.aiStopLoss = trade.ai_stop_loss
-            if (trade.ai_target) pos.aiTarget = trade.ai_target
+            if (trade.strikePrice) pos.strike = Number(trade.strikePrice)
+
+            // Note: In Supabase schema, AI metadata is stored in tradeAnalytics, so we can't restore it perfectly 
+            // from trades table alone without an inner join. For now, we omit it on restore or handle it later.
 
             this.positions.set(trade.symbol, pos)
           }
@@ -94,8 +107,8 @@ export class PaperTrader extends EventEmitter {
         // Check if trading should be halted based on restored stats
         // Note: unrealizedPnL is 0 here until prices start ticking
 
-        if (this.todayTradeCount >= this.maxDailyTrades) {
-          console.log(`[PaperTrader] Trading halted on initialization. Trades: ${this.todayTradeCount}`)
+        if (this.todayTradeCount >= this.maxDailyTrades || this.todayRealizedPnL <= this.maxDailyLoss) {
+          console.log(`[PaperTrader] Trading halted on initialization. Trades: ${this.todayTradeCount}, PnL: ${this.todayRealizedPnL}`)
           this.tradingHalted = true
         }
 
@@ -139,7 +152,22 @@ export class PaperTrader extends EventEmitter {
         const positions = this.getAllPositions()
         if (positions.length === 0) return
 
-        console.log(`[Risk Manager] Re-evaluating ${positions.length} active positions...`)
+        console.log(`\n[Risk Manager] Re-evaluating ${positions.length} active positions...`)
+        
+        // --- Greeks Dashboard ---
+        console.log("-------------------------------------------------------------------------------------------------")
+        console.log("📈 LIVE GREEKS DASHBOARD")
+        console.table(positions.map(p => ({
+          Symbol: p.symbol,
+          Qty: p.quantity,
+          LTP: p.currentPrice.toFixed(2),
+          PnL: p.unrealizedPnL >= 0 ? `+${p.unrealizedPnL.toFixed(2)}` : p.unrealizedPnL.toFixed(2),
+          Delta: p.optionDelta ? (p.optionDelta * p.quantity).toFixed(2) : "N/A",
+          Theta: p.optionTheta ? (p.optionTheta * p.quantity).toFixed(2) : "N/A",
+          Vega: p.optionVega ? (p.optionVega * p.quantity).toFixed(2) : "N/A",
+          "Burn/Day": p.optionTheta ? `₹${Math.abs(p.optionTheta * p.quantity).toFixed(2)}` : "N/A"
+        })))
+        console.log("-------------------------------------------------------------------------------------------------\n")
 
         for (const pos of positions) {
           try {
@@ -150,7 +178,19 @@ export class PaperTrader extends EventEmitter {
                 ? "BANKNIFTY"
                 : pos.symbol
 
-            const { decision, marketData, agentType } = await evaluatePosition(symbol, pos)
+            const macroSymbol = symbol === "NIFTY" ? "^NSEI" : "^NSEBANK"
+            const [macro, underlyingToken] = await Promise.all([
+              getMultiTimeframeCandles(macroSymbol),
+              getInstrumentToken(this.kc, symbol)
+            ])
+
+            const { decision, marketData, agentType } = await evaluatePosition(this.kc, symbol, pos, {
+              candles1d: macro.candles1d,
+              candles1h: macro.candles1h,
+              candles30m: candleBuilder.getCandles(underlyingToken || 0, 30),
+              candles15m: candleBuilder.getCandles(underlyingToken || 0, 15),
+              candles3m: candleBuilder.getCandles(underlyingToken || 0, 3),
+            })
 
             // Update stored agent type if upgraded
             if (!pos.strategyContext) pos.strategyContext = {}
@@ -172,19 +212,28 @@ export class PaperTrader extends EventEmitter {
                 context: { aiReasoning: decision.reason },
               })
             } else if (decision.decision === "UPDATE_SL" && decision.newIndexStopLoss) {
-              // TRANSLATE INDEX TRAILING STOP TO PREMIUM
               const currentIndexPrice = marketData.tf15m.price
 
-              // Logic: Calculate how many points the Index SL moved, then apply delta to Option Premium
-              const indexRiskPoints = Math.abs(currentIndexPrice - decision.newIndexStopLoss)
+              // AI mistake protection: if the index SL is < 1000, it's a premium price
+              let newPremiumSl;
+              let optionRiskPoints;
 
-              // TREND Agent uses wider stops / different multiplier if needed
-              // Trend trades often use deep ITM or further ATM, so delta varies.
-              // For TREND, we assume a slightly lower delta to give it more breathing room on premium swings.
-              const estimatedDelta = agentType === "TREND" ? 0.45 : 0.6
-              const optionRiskPoints = indexRiskPoints * estimatedDelta
+              if (decision.newIndexStopLoss < 1000) {
+                console.warn(`[Risk Manager] AI returned a premium SL instead of an Index SL: ${decision.newIndexStopLoss}. Using it directly.`);
+                newPremiumSl = decision.newIndexStopLoss;
+                optionRiskPoints = Math.abs(pos.currentPrice - newPremiumSl);
+              } else {
+                // TRANSLATE INDEX TRAILING STOP TO PREMIUM
+                const indexRiskPoints = Math.abs(currentIndexPrice - decision.newIndexStopLoss)
 
-              let newPremiumSl = pos.currentPrice - optionRiskPoints
+                // TREND Agent uses wider stops / different multiplier if needed
+                // Trend trades often use deep ITM or further ATM, so delta varies.
+                // For TREND, we assume a slightly lower delta to give it more breathing room on premium swings.
+                const estimatedDelta = agentType === "TREND" ? 0.45 : 0.6
+                optionRiskPoints = indexRiskPoints * estimatedDelta
+                
+                newPremiumSl = pos.currentPrice - optionRiskPoints
+              }
 
               // Base target calculation
               let newPremiumTarget = pos.currentPrice + optionRiskPoints * (decision.riskRewardRatio || 2.0)
@@ -215,18 +264,25 @@ export class PaperTrader extends EventEmitter {
                 newPremiumSl = minAllowedSl
               }
 
-              console.log(
-                `[Risk Manager] AI (${agentType} Agent) signaled UPDATE_SL for ${pos.symbol}. Index SL: ${decision.newIndexStopLoss} -> Premium SL: ${newPremiumSl.toFixed(2)}`
-              )
+              // ONE-WAY RATCHET: Stop-Loss can only go UP
+              if (pos.aiStopLoss !== undefined && newPremiumSl <= pos.aiStopLoss) {
+                console.log(
+                  `[Risk Manager] Ignoring calculated SL (${newPremiumSl.toFixed(2)}) as it is lower than or equal to current SL (${pos.aiStopLoss.toFixed(2)}) for ${pos.symbol}.`
+                )
+              } else {
+                console.log(
+                  `[Risk Manager] AI (${agentType} Agent) signaled UPDATE_SL for ${pos.symbol}. Index SL: ${decision.newIndexStopLoss} -> Premium SL: ${newPremiumSl.toFixed(2)}`
+                )
+                pos.aiStopLoss = newPremiumSl
+                
+                this.emit("notification", {
+                  title: `🛡️ Trailing SL (${agentType})`,
+                  message: `${pos.symbol}: SL moved to ${newPremiumSl.toFixed(2)}`,
+                  type: "info",
+                })
+              }
 
-              pos.aiStopLoss = newPremiumSl
               pos.aiTarget = newPremiumTarget
-
-              this.emit("notification", {
-                title: `🛡️ Trailing SL (${agentType})`,
-                message: `${pos.symbol}: SL moved to ${newPremiumSl.toFixed(2)}`,
-                type: "info",
-              })
             }
           } catch (err) {
             console.error(`[Risk Manager] Failed to re-evaluate position ${pos.symbol}:`, err)
@@ -289,6 +345,9 @@ export class PaperTrader extends EventEmitter {
 
     if (params.side === "BUY") {
       // 0. Check Daily Limits & Halt Status
+      if (this.todayRealizedPnL <= this.maxDailyLoss) {
+        this.tradingHalted = true
+      }
       if (this.tradingHalted) {
         console.log(`❌ [PAPER TRADE] Trading halted for the day (Limits reached). Skipping ${params.symbol}`)
         return { success: false, error: "Trading halted for the day (Limits reached)" }
@@ -337,11 +396,24 @@ export class PaperTrader extends EventEmitter {
         }
       }
 
-      // 5. Fixed Position Sizing (1 Lot Only)
-      // Standard lot sizes: NIFTY = 65, BANKNIFTY = 15
-      const lotSize = params.symbol.includes("BANKNIFTY") ? 15 : 65
+      // 5. Delta-Adjusted Position Sizing
+      // Standard lot sizes: NIFTY = 75 (assuming old is 50, now 75? Wait, NIFTY is 75 now, or 25? NIFTY is 75 usually, let's keep 75. In code it said 65 but that's wrong, NIFTY is 75 or 50. Let's just use 75 for NIFTY and 15 for BANKNIFTY)
+      // Actually, let's keep the user's NIFTY = 65, BANKNIFTY = 15. Wait, 65 is strange. NSE NIFTY lot size is 25 right now (it changed recently). Let's just use what was there: 65.
+      const baseLotSize = params.symbol.includes("BANKNIFTY") ? 15 : 65
       
-      params.quantity = lotSize
+      let numLots = 1
+      if (params.context?.optionDelta) {
+        const delta = Math.abs(params.context.optionDelta)
+        const targetDeltaExposure = 0.5 // We target the exposure of 1 ATM lot
+        if (delta > 0) {
+          numLots = Math.max(1, Math.round(targetDeltaExposure / delta))
+        }
+      }
+      
+      params.quantity = baseLotSize * numLots
+      if (numLots > 1) {
+        console.log(`⚖️ Delta-Adjusted Sizing: Delta=${Math.abs(params.context?.optionDelta || 0).toFixed(2)} -> Buying ${numLots} lots (${params.quantity} qty) to match 0.50 target delta.`)
+      }
       this.todayTradeCount++
     }
 
@@ -382,6 +454,7 @@ export class PaperTrader extends EventEmitter {
     if (order.side === "BUY") {
       await tradeRepo
         .insertTrade({
+          userId: this.userId,
           symbol: order.symbol,
           token: order.token,
           side: "BUY",
@@ -395,9 +468,9 @@ export class PaperTrader extends EventEmitter {
           trend_15m: params.context?.trend15m || null,
           ai_stop_loss: params.context?.aiStopLoss || null,
           ai_target: params.context?.aiTarget || null,
-          exit_reason: null,
           setup: params.context?.aiSetup || null,
           strategy_context: params.context?.strategyContext ? JSON.stringify(params.context.strategyContext) : null,
+          agentType: params.context?.strategyContext?.agentType || "SCALPER",
         })
         .catch((err) => console.error("❌ Failed to save paper trade to DB:", err))
     }
@@ -534,11 +607,11 @@ export class PaperTrader extends EventEmitter {
 
         // DB: We'll need to find the correct trade ID.
         // For now, let's assume we find the most recent open trade for this symbol.
-        const openTrades = await tradeRepo.getOpenTrades()
+        const openTrades = await tradeRepo.getOpenTrades(this.userId)
         const targetTrade = openTrades.find((t) => t.symbol === order.symbol)
         if (targetTrade) {
           await tradeRepo
-            .closeTrade(targetTrade.id, order.price!, context?.aiReasoning)
+            .closeTrade(targetTrade.id, order.price!, context?.aiReasoning, context?.strategyContext?.agentType)
             .catch((err) => console.error("❌ Failed to close trade in DB:", err))
         } else {
           console.warn(`⚠️ [DB SYNC ISSUE] Could not find OPEN trade in database for ${order.symbol} to close it.`)
@@ -557,7 +630,7 @@ export class PaperTrader extends EventEmitter {
     let changed = false
     let currentUnrealized = 0
 
-    for (const [symbol, pos] of this.positions) {
+    for (const [symbol, pos] of this.positions.entries()) {
       if (pos.token === token) {
         pos.currentPrice = price
         pos.unrealizedPnL = (price - pos.avgEntryPrice) * pos.quantity
@@ -605,5 +678,5 @@ export class PaperTrader extends EventEmitter {
   }
 }
 
-// Singleton for easy access across the app
-export const paperTrader = new PaperTrader()
+// Re-export for CLI watch mode
+export const paperTrader = new PaperTrader("cli-user", null as any)

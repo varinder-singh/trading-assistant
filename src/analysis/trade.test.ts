@@ -16,7 +16,7 @@ vi.mock("./sentiment.js", () => ({
   analyzeSentiment: vi.fn(() => Promise.resolve({ sentiment: "positive", confidence: 0.8, reason: "test" })),
 }))
 vi.mock("./kite-options.js", () => ({
-  analyzeOptions: vi.fn(() => ({})),
+  analyzeOptions: vi.fn(() => ({ rows: [], atmStrike: 0, flow: "NEUTRAL" })),
 }))
 
 describe("runAnalysis", () => {
@@ -61,7 +61,7 @@ describe("runAnalysis", () => {
       riskRewardRatio: 2,
     })
 
-    const result = await runAnalysis("NIFTY", "intraday")
+    const result = await runAnalysis({ getInstruments: vi.fn().mockResolvedValue([]) } as any, "NIFTY", "intraday")
 
     expect(result.tf1h).toBeDefined()
     expect(result.tf15m).toBeDefined()

@@ -1,4 +1,4 @@
-import type { OpeningRange } from "./analysis.js"
+import type { OpeningRange, VolumeProfile } from "./analysis.js"
 
 // technical analysis
 export type DailyContext = {
@@ -10,4 +10,5 @@ export type DailyContext = {
   isCompression: boolean
   currentDayOpen: number
   openingRange: OpeningRange | undefined
+  previousDayVolumeProfile?: VolumeProfile
 }

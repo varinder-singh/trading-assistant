@@ -12,7 +12,7 @@ export default defineNuxtConfig({
       allowedHosts: [".ngrok-free.app", ".ngrok-free.dev"],
     },
   },
-  modules: ["@nuxtjs/tailwindcss"],
+  modules: ["@nuxtjs/tailwindcss", "@nuxtjs/supabase"],
   alias: {
     "@core": join(__dirname, "../src"),
   },

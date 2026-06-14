@@ -6,7 +6,7 @@ import { sql } from "kysely"
 describe("EventRepository", () => {
   beforeEach(async () => {
     // Clean up before each test
-    await sql`DELETE FROM analyzer_events`.execute(db)
+    await sql`DELETE FROM market_events`.execute(db)
   })
 
   it("should save and retrieve an event", async () => {
@@ -25,8 +25,8 @@ describe("EventRepository", () => {
     const first = recent[0]!
     expect(first.symbol).toBe("NIFTY")
     expect(first.reason).toBe("Breakout")
-    expect(first.price).toBe(18000)
-    expect(JSON.parse(first.metadata!)).toEqual(event.metadata)
+    expect(Number(first.price)).toBe(18000)
+    expect(first.metadata).toEqual(event.metadata)
   })
 
   it("should return events in descending order of timestamp", async () => {

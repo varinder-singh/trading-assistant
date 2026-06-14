@@ -35,3 +35,43 @@ This document outlines proposed ideas for improving the Trading Assistant's mult
 
 ### 5. Automated Journaling & Review
 - **Future**: Use LLMs to generate a "Daily Post-Market Report" that summarizes all trades, the rationale behind them, and lessons learned, automatically saving this to a `JOURNAL.md` or a web dashboard.
+<<<<<<< Updated upstream
+=======
+
+### 6. Wave-GTI Confluence Engine
+- **Future**: Deep integration between Elliott Wave detection (`waves.ts`) and GTI (Global Trading Intelligence) institutional activity scores. Rather than just boosting/reducing confidence, the system would actively override wave phase detection based on institutional flow:
+  - Wave 5 + institutional distribution (GTI < -0.6) → force WAVE_EXHAUSTION phase
+  - Wave 2 pullback + institutional accumulation (GTI > 0.6) → confirm entry zone with higher confidence
+  - Wave 3 + divergent GTI (institutional selling while price rises) → flag INSTITUTIONAL_TRAP
+  - This requires a dedicated `WaveGTIConfluence` interface and a state machine that combines both signals for trade timing.
+
+## Intraday Options Trading Features (Post-GTI)
+
+### 1. Greeks Dashboard (High Priority)
+- **Concept**: Show real-time Delta, Gamma, Theta, Vega for active positions.
+- **Value**: Theta decay is non-linear intraday (accelerates sharply after 2 PM). A visual theta burn indicator would help time exits effectively.
+
+### 2. IV Percentile / IV Rank Tracking (High Priority)
+- **Concept**: Track IV percentile over 30 days to avoid buying options when IV is elevated (preventing IV crush).
+- **Value**: If IV Rank > 70%, the system should prefer selling strategies or skip entirely. Can be computed from existing option chain data.
+
+### 3. Session-Aware Trading Windows
+- **Concept**: Dynamically adjust confidence thresholds and agent selection based on current market session characteristics:
+  - `9:15-9:45`: High volatility, gap fills, institutional opening orders → SCALPER territory
+  - `9:45-11:00`: Trend establishment → TREND agent's sweet spot
+  - `11:00-14:00`: Chop zone, lunch hour → Reduce position size or avoid
+  - `14:00-15:00`: Institutional closing flows → GTI signals most reliable here
+  - `15:00-15:30`: Expiry effects, square-off → Reduce/exit
+
+### 4. Multi-Strike Heatmap
+- **Concept**: Visualize OI changes across strikes as a heatmap.
+- **Value**: Far more powerful than single-strike analysis. It reveals institutional positioning walls (where max pain lies, where institutions are building hedges).
+
+### 5. Delta-Adjusted Position Sizing
+- **Concept**: Position size should be delta-adjusted so that each trade has equivalent notional risk exposure.
+- **Value**: A 0.5 delta ATM option moves very differently from a 0.2 delta OTM option. This normalizes risk.
+
+### 6. Reversal Quality Scoring
+- **Concept**: Score reversal trades before entry (e.g., 1 to 5 confirmations).
+- **Value**: Evaluates if OI, VWAP, volume, and key swing levels support the reversal. Differentiates high-probability setups from low-probability ones.
+>>>>>>> Stashed changes

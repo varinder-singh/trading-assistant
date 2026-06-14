@@ -18,6 +18,9 @@ The Trading Assistant is a multi-agent AI-driven system designed for automated m
 - **Technical Analysis**: Calculates indicators like EMA, VWAP, RSI, ATR, and identifies support/resistance.
 - **Sentiment Analysis**: Analyzes news headlines using LLMs.
 - **Options Analysis**: Processes Zerodha (Kite) options chain data, calculating OI shifts and buildup states.
+- **Greeks Engine**: Implements the Black-Scholes model using Newton-Raphson to dynamically compute IV, Delta, Gamma, Theta, and Vega for active strikes.
+- **Reversal Scoring**: Computes a 0-5 Reversal Quality Score based on Options Defense, VWAP proximity, Volume Climax, structural levels (POC/VAH/VAL), and Institutional Flow (GTI).
+- **OI Heatmap**: Generates a live, multi-strike console heatmap for visualizing open interest changes and buildup states across the chain.
 
 ### 3. Data Layer (`src/data`)
 - **Yahoo Finance**: Source for historical and real-time candle data.
@@ -28,15 +31,15 @@ The Trading Assistant is a multi-agent AI-driven system designed for automated m
 ### 4. Execution Layer (`src/execution`)
 - **PaperTrader**: A simulated trading engine that:
     - Restores state from the database on startup.
-    - Manages active positions and orders.
-    - Implements risk management (Max positions, Daily limits, Cooldowns).
+    - Manages active positions and orders using Delta-Adjusted Position Sizing (targeting a normalized 0.50 delta notional risk).
+    - Implements risk management (Max positions, Daily limits, Cooldowns, IV Crush Protection).
     - Monitors price ticks to trigger SL and Target hits.
-    - Periodically re-evaluates positions using AI.
+    - Periodically re-evaluates positions using AI, updating the live Greeks Dashboard (tracking Delta, Vega, and Theta burn).
 
 ### 5. Database Layer (`src/db`)
-- **SQLite**: Local persistent storage for trades and events.
-- **Kysely**: Type-safe query builder for SQL operations.
-- **Repositories**: Encapsulated data access logic for `paper_trades` and `analyzer_events`.
+- **Supabase (PostgreSQL)**: Cloud persistent storage for trades, events, profiles, and analytical history.
+- **Kysely**: Type-safe query builder for SQL operations against Postgres.
+- **Repositories**: Encapsulated data access logic for `trades`, `trade_analytics`, `gti_scores`, and `iv_history` (used for 30-day IV Rank calculations).
 
 ### 6. Communication Layer (`src/utils`)
 - **EventHub**: A centralized EventEmitter for decoupled communication between components (e.g., price updates, trade notifications).
@@ -56,4 +59,4 @@ The Trading Assistant is a multi-agent AI-driven system designed for automated m
 ## Security & Configuration
 - Configuration is managed via `.env` files.
 - Sensitive tokens are cached locally in `.kite/` (ignored by git).
-- Local SQLite database ensures data privacy.
+- Database credentials securely connect to Supabase PostgreSQL.

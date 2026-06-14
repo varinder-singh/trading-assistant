@@ -174,10 +174,20 @@ Use this to decide if the current live breakout confirms your previous bias.
         if (cleanedInput.previousDecision) {
           cleanedInput.previousDecision = "[OMITTED]"
         }
+        let reversalScoreSection = ""
+        if (input.reversalScore) {
+          reversalScoreSection = `
+## REVERSAL QUALITY SCORE (0 to 5)
+- Bullish Reversal Score: ${input.reversalScore.bullish}/5
+- Bearish Reversal Score: ${input.reversalScore.bearish}/5
+NOTE: Do NOT take a reversal trade (Playbook B) if the score is less than 3/5.
+`
+        }
 
         userPrompt = `Analyze market data and produce a trade decision using DUAL TIMEFRAME analysis with ORDER FLOW focus.
 ${liveContextSection}
 ${previousDecisionSection}
+${reversalScoreSection}
 ## Market Data
 ${JSON.stringify(cleanedInput, null, 2)}
 
