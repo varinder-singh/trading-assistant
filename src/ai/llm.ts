@@ -58,6 +58,11 @@ ${JSON.stringify(input, null, 2)}
         message: `Selected ${result.activeAgent} agent with ${result.confidence}% confidence.`,
         data: result,
       })
+      this.emitUpdate({
+        agent: "Regime Validator",
+        status: "decided",
+        message: `Regime validated. Passing control to ${result.activeAgent}.`,
+      })
 
       return result
     } catch (error: any) {
@@ -267,16 +272,16 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
       // Fetch Memory
       const trend = input.tf15m?.trend || "SIDEWAYS"
       const vix = input.vix?.current || 15
-      const pastTrades = await memoryService.getSimilarTrades(trend, vix)
+      const pastTrades = await memoryService.getRegimeStats(trend, vix)
       const memoryPrompt = memoryService.formatForPrompt(pastTrades)
 
       const marketDataStr = JSON.stringify(input, null, 2)
 
       // 1. Run Technical and Options agents in parallel
       this.emitUpdate({
-        agent: "Ensemble",
+        agent: agentType,
         status: "thinking",
-        message: "Technical and Options agents are analyzing in parallel with Memory access...",
+        message: "Ensemble: Technical & Options agents are analyzing in parallel...",
       })
 
       const [techRes, optRes] = await Promise.all([
@@ -303,9 +308,9 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
       console.log("[AI] Options Agent Bias:", options.bias)
 
       this.emitUpdate({
-        agent: "Consensus",
+        agent: agentType,
         status: "thinking",
-        message: `Technical: ${technical.bias}, Options: ${options.bias}. Determining consensus...`,
+        message: `Ensemble: Technical: ${technical.bias}, Options: ${options.bias}. Determining consensus...`,
       })
 
       // 2. Run Consensus Agent
@@ -328,7 +333,7 @@ ${marketDataStr}
       const result: AISuccessResponse = JSON.parse(cleanJson(consensusRes))
 
       this.emitUpdate({
-        agent: "Consensus",
+        agent: agentType,
         status: "decided",
         message: `${result.decision} signal confirmed by ensemble.`,
         data: { result, technical, options },
@@ -338,7 +343,7 @@ ${marketDataStr}
     } catch (error: any) {
       console.error("[AI] Ensemble Analysis Error:", error)
       this.emitUpdate({
-        agent: "Ensemble",
+        agent: agentType,
         status: "error",
         message: "Ensemble analysis failed. Falling back to single-agent mode.",
       })
@@ -372,7 +377,7 @@ The position was originally opened by a ${agentType} agent. You must decide whet
     // Fetch Memory for Risk Context
     const trend = input.marketData?.tf15m?.trend || "SIDEWAYS"
     const vix = input.marketData?.vix?.current || 15
-    const pastTrades = await memoryService.getSimilarTrades(trend, vix)
+    const pastTrades = await memoryService.getRegimeStats(trend, vix)
     const memoryPrompt = memoryService.formatForPrompt(pastTrades)
 
     const userPrompt = `Evaluate the following open position against current market data:

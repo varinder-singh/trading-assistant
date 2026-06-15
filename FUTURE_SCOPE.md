@@ -44,8 +44,6 @@ This document outlines proposed ideas for improving the Trading Assistant's mult
 ### 5. Automated Journaling & Review
 
 - **Future**: Use LLMs to generate a "Daily Post-Market Report" that summarizes all trades, the rationale behind them, and lessons learned, automatically saving this to a `JOURNAL.md` or a web dashboard.
-  <<<<<<< Updated upstream
-  =======
 
 ### 6. Wave-GTI Confluence Engine
 
@@ -90,4 +88,3 @@ This document outlines proposed ideas for improving the Trading Assistant's mult
 
 - **Concept**: Score reversal trades before entry (e.g., 1 to 5 confirmations).
 - **Value**: Evaluates if OI, VWAP, volume, and key swing levels support the reversal. Differentiates high-probability setups from low-probability ones.
-  > > > > > > > Stashed changes

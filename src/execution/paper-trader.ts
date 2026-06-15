@@ -3,6 +3,7 @@ import type { TradeOrder, PaperPosition, TradeResponse, OrderSide } from "./type
 import { tradeRepo } from "../db/repositories/trade-repo.js"
 import { evaluatePosition } from "../analysis/trade.js"
 import type { AIMacroTrend, TradingAgentType } from "../ai/types.js"
+import { eventHub } from "../utils/event-hub.js"
 import { candleBuilder } from "../data/candle-builder.js"
 import { getMultiTimeframeCandles } from "../data/yahoo.js"
 import { getInstrumentToken, createKiteClient } from "../data/kite.js"
@@ -157,7 +158,20 @@ export class PaperTrader extends EventEmitter {
     setInterval(
       async () => {
         const positions = this.getAllPositions()
-        if (positions.length === 0) return
+        if (positions.length === 0) {
+          eventHub.emit("agent_update", {
+            agent: "Risk Manager",
+            status: "idle",
+            message: "No active positions.",
+          })
+          return
+        }
+
+        eventHub.emit("agent_update", {
+          agent: "Risk Manager",
+          status: "thinking",
+          message: `Re-evaluating ${positions.length} active position(s)...`,
+        })
 
         console.log(`\n[Risk Manager] Re-evaluating ${positions.length} active positions...`)
 
@@ -301,6 +315,12 @@ export class PaperTrader extends EventEmitter {
             console.error(`[Risk Manager] Failed to re-evaluate position ${pos.symbol}:`, err)
           }
         }
+
+        eventHub.emit("agent_update", {
+          agent: "Risk Manager",
+          status: "decided",
+          message: `Positions managed. Holding ${positions.length} active position(s).`,
+        })
       },
       intervalMins * 60 * 1000
     )

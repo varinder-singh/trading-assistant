@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai"
+import { GoogleGenerativeAI, HarmBlockThreshold, HarmCategory } from "@google/generative-ai"
 import type { LLMMessage, LLMOptions, LLMProvider } from "../types.js"
 
 export class GeminiProvider implements LLMProvider {
@@ -28,6 +28,25 @@ export class GeminiProvider implements LLMProvider {
       modelParams.systemInstruction = systemMessage.content
     }
 
+    modelParams.safetySettings = [
+      {
+        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+    ]
+
     console.log(
       `[Gemini] Starting chat with model: ${modelName} (System Instruction: ${modelParams.systemInstruction?.length || 0} chars)`
     )
@@ -42,6 +61,7 @@ export class GeminiProvider implements LLMProvider {
         })),
         generationConfig: {
           temperature: options?.temperature ?? 0.7,
+          responseMimeType: "application/json",
         },
       })
 
