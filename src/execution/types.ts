@@ -32,6 +32,7 @@ export interface PaperPosition {
   optionDelta?: number
   optionTheta?: number
   optionVega?: number
+  optionExpiry?: Date | string
   timestamp: Date
 }
 

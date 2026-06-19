@@ -18,7 +18,7 @@ export default defineEventHandler(async (event) => {
 
   const brokerAccount = await db
     .selectFrom("brokerAccounts")
-    .select("accessToken")
+    .select(["accessToken", "apiKey"])
     .where("userId", "=", userId)
     .where("isActive", "=", true)
     .executeTakeFirst()
@@ -28,7 +28,7 @@ export default defineEventHandler(async (event) => {
   }
 
   // Retrieve or create the user's session (which holds kc, ticker, and paperTrader)
-  const userSession = await sessionManager.getSession(userId, brokerAccount.accessToken)
+  const userSession = await sessionManager.getSession(userId, brokerAccount.accessToken, brokerAccount.apiKey || undefined)
   const kc = userSession.kc
   const paperTrader = userSession.paperTrader
 

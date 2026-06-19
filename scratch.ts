@@ -1,12 +1,8 @@
-import { sessionManager } from "./src/execution/session-manager.js"
-
-async function run() {
-  try {
-    await sessionManager.getSession("test-user", "test-token")
-    console.log("Success")
-  } catch (e) {
-    console.error("Crash:", e)
-    process.exit(1)
-  }
+import { db } from "./src/db/database.js";
+async function fix() {
+    try {
+        await db.schema.alterTable("broker_accounts").addColumn("api_key", "text").addColumn("api_secret_encrypted", "text").execute();
+    } catch(e) {}
+    console.log("Done");
 }
-run()
+fix();

@@ -2,6 +2,7 @@ import { createKiteClient } from "@core/data/kite.js"
 import { serverSupabaseUser } from "#supabase/server"
 import { db } from "@core/db/database.js"
 import crypto from "node:crypto"
+import { decryptSecret } from "@core/utils/crypto.js"
 
 export default defineEventHandler(async (event) => {
   const user = await serverSupabaseUser(event)
@@ -23,8 +24,21 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const kc = createKiteClient()
-    const response = await kc.generateSession(requestToken, process.env.KITE_API_SECRET!)
+    // Check if the user already has a broker account
+    const existing = await db
+      .selectFrom("brokerAccounts")
+      .select(["id", "apiKey", "apiSecretEncrypted"])
+      .where("userId", "=", userId)
+      .where("brokerName", "=", "zerodha")
+      .executeTakeFirst()
+
+    const userApiKey = existing?.apiKey || undefined
+    const userApiSecret = existing?.apiSecretEncrypted
+      ? decryptSecret(existing.apiSecretEncrypted)
+      : process.env.KITE_API_SECRET!
+
+    const kc = createKiteClient(undefined, userApiKey)
+    const response = await kc.generateSession(requestToken, userApiSecret)
 
     const accessToken = response.access_token
     const publicToken = response.public_token
@@ -45,13 +59,7 @@ export default defineEventHandler(async (event) => {
         .execute()
     }
 
-    // Check if the user already has a broker account
-    const existing = await db
-      .selectFrom("brokerAccounts")
-      .select("id")
-      .where("userId", "=", userId)
-      .where("brokerName", "=", "zerodha")
-      .executeTakeFirst()
+    // User profile creation logic is above
 
     if (existing) {
       await db

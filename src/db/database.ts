@@ -18,6 +18,8 @@ export interface BrokerAccountsTable {
   brokerUserId: string
   accessToken: string
   publicToken: string | null
+  apiKey: string | null
+  apiSecretEncrypted: string | null
   isActive: boolean
   createdAt: string
   updatedAt: string

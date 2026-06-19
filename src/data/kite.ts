@@ -1,19 +1,19 @@
 import "dotenv/config"
 import { KiteConnect } from "kiteconnect"
 
-const apiKey = process.env.KITE_API_KEY
-if (!apiKey) {
-  throw new Error("KITE_API_KEY is missing in environment variables. Check your .env file.")
-}
-
 /**
  * Creates a new KiteConnect client instance.
  * For OAuth login, you can create it without an access token.
  * For making API requests, pass the user's access token.
  */
-export function createKiteClient(accessToken?: string) {
+export function createKiteClient(accessToken?: string, apiKey?: string) {
+  const resolvedApiKey = apiKey || process.env.KITE_API_KEY
+  if (!resolvedApiKey) {
+    throw new Error("No Kite API key available. Provide one or set KITE_API_KEY env var.")
+  }
+
   const kc = new KiteConnect({
-    api_key: apiKey!,
+    api_key: resolvedApiKey,
   })
 
   if (accessToken) {
@@ -36,7 +36,7 @@ export async function getInstrumentToken(kc: KiteConnect, symbol: string): Promi
   return instrument?.instrument_token ? Number(instrument.instrument_token) : undefined
 }
 
-export async function getOptionToken(kc: KiteConnect, underlying: string, strike: number, type: "CE" | "PE"): Promise<{ token: number, symbol: string } | undefined> {
+export async function getOptionToken(kc: KiteConnect, underlying: string, strike: number, type: "CE" | "PE"): Promise<{ token: number, symbol: string, expiry: Date } | undefined> {
   const instruments = await kc.getInstruments("NFO")
   
   // Filter for current symbol and strike
@@ -55,7 +55,8 @@ export async function getOptionToken(kc: KiteConnect, underlying: string, strike
 
   return {
     token: Number(target.instrument_token),
-    symbol: target.tradingsymbol
+    symbol: target.tradingsymbol,
+    expiry: target.expiry
   }
 }
 export default createKiteClient(process.env.KITE_ACCESS_TOKEN)

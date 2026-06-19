@@ -9,10 +9,10 @@ export class UserSession {
   ticker: any
   paperTrader: PaperTrader
 
-  constructor(userId: string, accessToken: string) {
+  constructor(userId: string, accessToken: string, apiKey?: string) {
     this.userId = userId
-    this.kc = createKiteClient(accessToken)
-    this.ticker = createTicker(accessToken)
+    this.kc = createKiteClient(accessToken, apiKey)
+    this.ticker = createTicker(accessToken, apiKey)
     this.paperTrader = new PaperTrader(userId, this.kc)
   }
 
@@ -54,12 +54,12 @@ export class UserSession {
 class SessionManager {
   private sessions = new Map<string, UserSession>()
 
-  async getSession(userId: string, accessToken: string): Promise<UserSession> {
+  async getSession(userId: string, accessToken: string, apiKey?: string): Promise<UserSession> {
     if (this.sessions.has(userId)) {
       return this.sessions.get(userId)!
     }
 
-    const session = new UserSession(userId, accessToken)
+    const session = new UserSession(userId, accessToken, apiKey)
     await session.initialize()
     this.sessions.set(userId, session)
     return session

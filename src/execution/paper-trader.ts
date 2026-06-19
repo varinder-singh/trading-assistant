@@ -4,10 +4,11 @@ import { tradeRepo } from "../db/repositories/trade-repo.js"
 import { evaluatePosition } from "../analysis/trade.js"
 import type { AIMacroTrend, TradingAgentType } from "../ai/types.js"
 import { eventHub } from "../utils/event-hub.js"
-import { candleBuilder } from "../data/candle-builder.js"
+import { candleBuilder, seedCandleBuilder } from "../data/candle-builder.js"
 import { getMultiTimeframeCandles } from "../data/yahoo.js"
 import { getInstrumentToken, createKiteClient } from "../data/kite.js"
 import type { KiteConnect } from "kiteconnect"
+import { getGreeksFromPrice } from "../analysis/greeks.js"
 
 export type StrategyContext = {
   macroTrend: AIMacroTrend
@@ -15,6 +16,7 @@ export type StrategyContext = {
   atr14?: number
   indexSl: number
   agentType: TradingAgentType
+  reversalScore?: { bullish: number; bearish: number }
 }
 
 export interface TradeContext {
@@ -31,6 +33,7 @@ export interface TradeContext {
   optionDelta?: number
   optionTheta?: number
   optionVega?: number
+  optionExpiry?: Date | string
 }
 export class PaperTrader extends EventEmitter {
   private positions: Map<string, PaperPosition> = new Map()
@@ -163,6 +166,7 @@ export class PaperTrader extends EventEmitter {
             agent: "Risk Manager",
             status: "idle",
             message: "No active positions.",
+            data: { reason: "Waiting for the AI agents to execute a new trade. Risk limits are reset and ready." }
           })
           return
         }
@@ -171,28 +175,14 @@ export class PaperTrader extends EventEmitter {
           agent: "Risk Manager",
           status: "thinking",
           message: `Re-evaluating ${positions.length} active position(s)...`,
+          data: {
+            rationale: `Analyzing live market data and computing updated Greeks for ${positions.length} open position(s)...`,
+          }
         })
 
         console.log(`\n[Risk Manager] Re-evaluating ${positions.length} active positions...`)
 
-        // --- Greeks Dashboard ---
-        console.log("-------------------------------------------------------------------------------------------------")
-        console.log("📈 LIVE GREEKS DASHBOARD")
-        console.table(
-          positions.map((p) => ({
-            Symbol: p.symbol,
-            Qty: p.quantity,
-            LTP: p.currentPrice.toFixed(2),
-            PnL: p.unrealizedPnL >= 0 ? `+${p.unrealizedPnL.toFixed(2)}` : p.unrealizedPnL.toFixed(2),
-            Delta: p.optionDelta ? (p.optionDelta * p.quantity).toFixed(2) : "N/A",
-            Theta: p.optionTheta ? (p.optionTheta * p.quantity).toFixed(2) : "N/A",
-            Vega: p.optionVega ? (p.optionVega * p.quantity).toFixed(2) : "N/A",
-            "Burn/Day": p.optionTheta ? `₹${Math.abs(p.optionTheta * p.quantity).toFixed(2)}` : "N/A",
-          }))
-        )
-        console.log(
-          "-------------------------------------------------------------------------------------------------\n"
-        )
+
 
         for (const pos of positions) {
           try {
@@ -209,6 +199,10 @@ export class PaperTrader extends EventEmitter {
               getInstrumentToken(this.kc, symbol),
             ])
 
+            if (underlyingToken) {
+              await seedCandleBuilder(this.kc, underlyingToken)
+            }
+
             const { decision, marketData, agentType } = await evaluatePosition(this.kc, symbol, pos, {
               candles1d: macro.candles1d,
               candles1h: macro.candles1h,
@@ -216,6 +210,29 @@ export class PaperTrader extends EventEmitter {
               candles15m: candleBuilder.getCandles(underlyingToken || 0, 15),
               candles3m: candleBuilder.getCandles(underlyingToken || 0, 3),
             })
+
+            // Calculate Greeks dynamically
+            if (pos.optionExpiry && pos.strike && (pos.symbol.endsWith("CE") || pos.symbol.endsWith("PE"))) {
+              const expiryTime = new Date(pos.optionExpiry).getTime()
+              const now = Date.now()
+              const daysToExpiry = Math.max(0, (expiryTime - now) / (1000 * 60 * 60 * 24))
+              const type = pos.symbol.endsWith("CE") ? "CE" : "PE"
+              
+              const greeks = getGreeksFromPrice(
+                pos.currentPrice,
+                marketData.tf15m.price,
+                pos.strike,
+                daysToExpiry,
+                0.07,
+                type
+              )
+              
+              if (greeks) {
+                pos.optionDelta = greeks.delta
+                pos.optionTheta = greeks.theta
+                pos.optionVega = greeks.vega
+              }
+            }
 
             // Update stored agent type if upgraded
             if (!pos.strategyContext) pos.strategyContext = {}
@@ -316,10 +333,33 @@ export class PaperTrader extends EventEmitter {
           }
         }
 
+        // --- Greeks Dashboard ---
+        console.log("-------------------------------------------------------------------------------------------------")
+        console.log("📈 LIVE GREEKS DASHBOARD")
+        console.table(
+          positions.map((p) => ({
+            Symbol: p.symbol,
+            Qty: p.quantity,
+            LTP: p.currentPrice.toFixed(2),
+            PnL: p.unrealizedPnL >= 0 ? `+${p.unrealizedPnL.toFixed(2)}` : p.unrealizedPnL.toFixed(2),
+            Delta: p.optionDelta ? (p.optionDelta * p.quantity).toFixed(2) : "N/A",
+            Theta: p.optionTheta ? (p.optionTheta * p.quantity).toFixed(2) : "N/A",
+            Vega: p.optionVega ? (p.optionVega * p.quantity).toFixed(2) : "N/A",
+            "Burn/Day": p.optionTheta ? `₹${Math.abs(p.optionTheta * p.quantity).toFixed(2)}` : "N/A",
+          }))
+        )
+        console.log(
+          "-------------------------------------------------------------------------------------------------\n"
+        )
+
         eventHub.emit("agent_update", {
           agent: "Risk Manager",
           status: "decided",
           message: `Positions managed. Holding ${positions.length} active position(s).`,
+          data: {
+            rationale: `Risk evaluation completed for ${positions.length} positions. Checked trailing stops, targets, and live Greeks (Delta, Theta, Vega) based on recent market action.`,
+            reason: `Evaluated ${positions.length} positions to ensure no predefined risk limits were breached.`
+          }
         })
       },
       intervalMins * 60 * 1000
@@ -349,7 +389,7 @@ export class PaperTrader extends EventEmitter {
     }
   }
 
-  async squareOffAll() {
+  async squareOffAll(reason: string = "Market Square-off") {
     const positions = this.getAllPositions()
     for (const pos of positions) {
       if (this.exitingPositions.has(pos.symbol)) continue
@@ -360,7 +400,7 @@ export class PaperTrader extends EventEmitter {
         side: "SELL",
         quantity: pos.quantity,
         price: pos.currentPrice,
-        context: { aiReasoning: "Market Square-off" },
+        context: { aiReasoning: reason },
       })
     }
   }
@@ -633,6 +673,7 @@ export class PaperTrader extends EventEmitter {
         if (context?.aiTarget) pos.aiTarget = context.aiTarget
         if (context?.aiSetup) pos.aiSetup = context.aiSetup
         if (context?.strategyContext) pos.strategyContext = context.strategyContext
+        if (context?.optionExpiry) pos.optionExpiry = context.optionExpiry
 
         this.positions.set(order.symbol, pos)
       }

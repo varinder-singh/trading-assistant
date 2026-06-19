@@ -62,6 +62,10 @@ ${JSON.stringify(input, null, 2)}
         agent: "Regime Validator",
         status: "decided",
         message: `Regime validated. Passing control to ${result.activeAgent}.`,
+        data: {
+          rationale: `Validated the current market regime based on multi-timeframe structure, momentum, and institutional activity. The environment dictates the ${result.activeAgent} strategy is optimal.`,
+          marketRegimeConfidence: result.confidence
+        }
       })
 
       return result

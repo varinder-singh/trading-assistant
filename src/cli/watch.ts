@@ -3,7 +3,7 @@ import { runAnalysis } from "../analysis/trade.js"
 import { getInstrumentToken, getOptionToken } from "../data/kite.js"
 import { createTicker } from "../data/kite-ticker.js"
 import { LiveAnalyzer } from "../analysis/live.js"
-import { paperTrader, type StrategyContext } from "../execution/paper-trader.js"
+import { paperTrader } from "../execution/paper-trader.js"
 import { eventRepo } from "../db/repositories/event-repo.js"
 import kc from "../data/kite.js"
 
@@ -37,7 +37,7 @@ export const watchCommand = new Command("watch")
     })
 
     // 4. Setup Ticker
-    const ticker = createTicker()
+    const ticker = createTicker(process.env.KITE_ACCESS_TOKEN || "")
 
     paperTrader.on("market_close", () => {
       console.log("\n🛑 Market closed (3:30 PM IST). Stopping watch mode.")
@@ -89,18 +89,14 @@ export const watchCommand = new Command("watch")
         },
       })
 
-      const {
-        tf15m: tf,
-        aiDecision: decision,
-        vix,
-        agentType,
-      } = await runAnalysis(kc, symbol, mode, context, lastDecision)
+      const marketData = await runAnalysis(kc, symbol, mode, context, lastDecision)
+      const { tf15m: tf, aiDecision: decision, vix, agentType, optionsAnalysis, reversalScore } = marketData
       lastDecision = decision
 
       // Save Daily ATM IV for Historical Tracking
-      if (marketData.optionsAnalysisZerodha) {
-        const atmRow = marketData.optionsAnalysisZerodha.rows.find(
-          (r: any) => r.strike === marketData.optionsAnalysisZerodha.atmStrike && r.type === "CE"
+      if (optionsAnalysis) {
+        const atmRow = optionsAnalysis.rows.find(
+          (r: any) => r.strike === optionsAnalysis.atmStrike && r.type === "CE"
         )
         if (atmRow && atmRow.greeks) {
           const { ivHistoryRepo } = await import("../db/repositories/iv-history.js")
@@ -126,7 +122,7 @@ export const watchCommand = new Command("watch")
           const quote = await kc.getQuote([`NFO:${option.symbol}`])
           const entryPrice = quote[`NFO:${option.symbol}`]?.last_price || 0
           // Extract Greeks from market data
-          const oiRow = marketData.optionsAnalysisZerodha?.rows?.find(
+          const oiRow = optionsAnalysis?.rows?.find(
             (r: any) => r.strike === lastDecision.strike && r.type === type
           )
           const delta = oiRow?.greeks?.delta
@@ -156,7 +152,7 @@ export const watchCommand = new Command("watch")
                 macroTrend: lastDecision.macroTrend,
                 indexSl: lastDecision.stopLoss,
                 agentType,
-                reversalScore: marketData.reversalScore,
+                ...(reversalScore !== undefined && { reversalScore }),
               },
             },
           })
@@ -166,8 +162,8 @@ export const watchCommand = new Command("watch")
 
       // --- Visual Dashboards ---
       const { generateOIHeatmap } = await import("../analysis/heatmap.js")
-      if (marketData.optionsAnalysisZerodha) {
-        console.log(generateOIHeatmap(marketData.optionsAnalysisZerodha))
+      if (optionsAnalysis) {
+        console.log(generateOIHeatmap(optionsAnalysis))
       }
 
       console.log("\n" + "=".repeat(50))

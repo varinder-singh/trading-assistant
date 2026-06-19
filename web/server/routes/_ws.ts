@@ -3,7 +3,7 @@ import { LiveAnalyzer } from "@core/analysis/live.js"
 import { runAnalysis } from "@core/analysis/trade.js"
 import { eventHub } from "@core/utils/event-hub.js"
 import { eventRepo } from "@core/db/repositories/event-repo.js"
-import { candleBuilder } from "@core/data/candle-builder.js"
+import { candleBuilder, seedCandleBuilder } from "@core/data/candle-builder.js"
 import { getIntradayBaseline } from "@core/data/kite-historical.js"
 import { gtiTracker } from "@core/indicators/gti-tracker.js"
 import { gtiRepo } from "@core/db/repositories/gti-repo.js"
@@ -12,29 +12,7 @@ import { db } from "@core/db/database.js"
 import { isMarketOpen } from "@core/utils/market-hours.js"
 import { AIMacroTrend } from "@core/types/analysis.js"
 
-/**
- * Seed CandleBuilder for a specific token if not already seeded.
- */
-async function seedCandleBuilder(kc: any, token: number) {
-  if (candleBuilder.isSeeded(token)) return
 
-  console.log(`📊 Seeding CandleBuilder for token ${token}...`)
-  try {
-    const [c1m, c3m, c15m, c30m] = await Promise.all([
-      getIntradayBaseline(kc, token, "minute", 2),
-      getIntradayBaseline(kc, token, "3minute", 5),
-      getIntradayBaseline(kc, token, "15minute", 5),
-      getIntradayBaseline(kc, token, "30minute", 5),
-    ])
-    candleBuilder.seed(token, 1, c1m)
-    candleBuilder.seed(token, 3, c3m)
-    candleBuilder.seed(token, 15, c15m)
-    candleBuilder.seed(token, 30, c30m)
-    console.log(`✅ CandleBuilder seeded for token ${token}.`)
-  } catch (err) {
-    console.error(`❌ Failed to seed CandleBuilder for token ${token}:`, err)
-  }
-}
 
 // Map from Peer ID -> Client State
 const clients = new Map<
@@ -141,7 +119,7 @@ export default defineWebSocketHandler({
 
         const brokerAccount = await db
           .selectFrom("brokerAccounts")
-          .select("accessToken")
+          .select(["accessToken", "apiKey"])
           .where("userId", "=", userId)
           .where("isActive", "=", true)
           .executeTakeFirst()
@@ -152,7 +130,7 @@ export default defineWebSocketHandler({
         }
 
         // Initialize User Session
-        const session = await sessionManager.getSession(userId, brokerAccount.accessToken)
+        const session = await sessionManager.getSession(userId, brokerAccount.accessToken, brokerAccount.apiKey || undefined)
 
         // Setup event listeners for this user's paper trader
         session.paperTrader.on("portfolio_update", (positions) => {
@@ -292,6 +270,7 @@ export default defineWebSocketHandler({
                       quantity: 1,
                       price: entryPrice,
                       context: {
+                        optionExpiry: option.expiry.toISOString(),
                         aiReasoning: decision.reason,
                         aiConfidence: decision.confidence,
                         aiStrike: decision.strike || undefined,

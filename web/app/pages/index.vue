@@ -19,8 +19,10 @@ import {
   Zap,
   X,
   LogOut,
+  Settings,
   BarChart2,
   ChevronRight,
+  RefreshCcw,
 } from "@lucide/vue"
 import { createChart, CandlestickSeries, CrosshairMode } from "lightweight-charts"
 import type { IChartApi, ISeriesApi } from "lightweight-charts"
@@ -37,6 +39,21 @@ const tradeHistory = ref<any[]>([])
 const analyzerEvents = ref<any[]>([])
 const currentView = ref<"live" | "history" | "events" | "logs">("live")
 const expandedTradeId = ref<string | null>(null)
+const supabase = useSupabaseClient()
+const isLoggingOut = ref(false)
+
+const handleLogout = async () => {
+  try {
+    isLoggingOut.value = true
+    await supabase.auth.signOut()
+    navigateTo("/login")
+  } catch (error) {
+    console.error("Error logging out:", error)
+  } finally {
+    isLoggingOut.value = false
+  }
+}
+
 const notifications = ref<any[]>([])
 const serverLogs = ref<string[]>([])
 const logsContainer = ref<HTMLElement | null>(null)
@@ -110,6 +127,23 @@ async function fetchEvents() {
   }
 }
 
+const isPanicSelling = ref(false)
+async function panicSell() {
+  if (!confirm("Are you sure you want to SQUARE OFF ALL positions?")) return
+  
+  try {
+    isPanicSelling.value = true
+    await $fetch("/api/square-off", { method: "POST" })
+    // The websocket will automatically update the portfolio state
+    alert("Panic sell command sent successfully.")
+  } catch (err: any) {
+    console.error("Failed to panic sell:", err)
+    alert("Failed to panic sell: " + err.message)
+  } finally {
+    isPanicSelling.value = false
+  }
+}
+
 function scrollToBottom() {
   nextTick(() => {
     if (logsContainer.value) {
@@ -167,11 +201,18 @@ const activeTfStats = computed(() => {
 
 // WebSocket
 let ws: WebSocket | null = null
+let reconnectTimer: any = null
+let pingInterval: any = null
+let isIntentionalClose = false
 
 const session = useSupabaseSession()
 
 function connectWebSocket() {
-  if (ws) ws.close()
+  if (ws) {
+    isIntentionalClose = true
+    ws.close()
+  }
+  isIntentionalClose = false
 
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
   ws = new WebSocket(`${protocol}//${window.location.host}/_ws`)
@@ -183,6 +224,14 @@ function connectWebSocket() {
     } else {
       console.error("No Supabase session found for WebSocket auth")
     }
+
+    // Keep connection alive
+    clearInterval(pingInterval)
+    pingInterval = setInterval(() => {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "ping" }))
+      }
+    }, 30000)
   }
 
   ws.onmessage = (event) => {
@@ -299,6 +348,18 @@ function connectWebSocket() {
         message: msg.message,
         type: "info",
       })
+    }
+  }
+
+  ws.onclose = () => {
+    clearInterval(pingInterval)
+    console.log("WS Closed.")
+    if (!isIntentionalClose) {
+      console.log("Attempting to reconnect in 3 seconds...")
+      clearTimeout(reconnectTimer)
+      reconnectTimer = setTimeout(() => {
+        connectWebSocket()
+      }, 3000)
     }
   }
 }
@@ -626,7 +687,10 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  isIntentionalClose = true
   if (ws) ws.close()
+  clearTimeout(reconnectTimer)
+  clearInterval(pingInterval)
 })
 </script>
 
@@ -709,6 +773,33 @@ onUnmounted(() => {
               class="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"
             ></span>
             {{ loading ? "Analyzing..." : "Analyze" }}
+          </button>
+          
+          <div class="h-8 w-px bg-gray-200 mx-1"></div>
+
+          <a
+            href="/api/auth/kite/login"
+            class="p-2 text-gray-500 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
+            title="Refresh Kite Token"
+          >
+            <RefreshCcw class="w-5 h-5" />
+          </a>
+
+          <NuxtLink
+            to="/profile"
+            class="p-2 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+            title="Settings & Profile"
+          >
+            <Settings class="w-5 h-5" />
+          </NuxtLink>
+
+          <button
+            @click="handleLogout"
+            :disabled="isLoggingOut"
+            class="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            title="Logout"
+          >
+            <LogOut class="w-5 h-5" />
           </button>
         </div>
       </div>
@@ -911,10 +1002,20 @@ onUnmounted(() => {
               class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden"
             >
               <div class="p-4 bg-indigo-50 border-b border-indigo-100">
-                <h3 class="text-sm font-bold text-indigo-700 uppercase flex items-center gap-2">
-                  <ShieldCheck class="w-4 h-4" />
-                  Paper Portfolio
-                </h3>
+                <div class="flex items-center justify-between">
+                  <h3 class="text-sm font-bold text-indigo-700 uppercase flex items-center gap-2">
+                    <ShieldCheck class="w-4 h-4" />
+                    Paper Portfolio
+                  </h3>
+                  <button
+                    @click="panicSell"
+                    :disabled="isPanicSelling"
+                    class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded shadow-sm disabled:opacity-50 transition-colors flex items-center gap-1"
+                  >
+                    <span v-if="isPanicSelling">Squaring Off...</span>
+                    <span v-else>PANIC SELL ALL</span>
+                  </button>
+                </div>
               </div>
               <div class="p-4 space-y-4">
                 <div
