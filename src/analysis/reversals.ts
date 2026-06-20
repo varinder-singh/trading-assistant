@@ -65,7 +65,7 @@ export function calculateReversalScore(
     const currentCandle = candles3m[candles3m.length - 1]
     const avgVolume = candles3m.slice(0, -1).reduce((sum, c) => sum + c.volume, 0) / (candles3m.length - 1)
 
-    if (currentCandle.volume > avgVolume * 1.5) {
+    if (currentCandle && currentCandle.volume > avgVolume * 1.5) {
       breakdown.volumeClimax = true
       score++
     }

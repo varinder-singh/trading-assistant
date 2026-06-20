@@ -1,7 +1,7 @@
 import { PaperTrader } from "./paper-trader.js"
 import { createTicker } from "../data/kite-ticker.js"
 import { createKiteClient } from "../data/kite.js"
-import type { KiteTicker, KiteConnect } from "kiteconnect"
+import type { KiteTicker, Connect as KiteConnect } from "kiteconnect"
 
 export class UserSession {
   userId: string

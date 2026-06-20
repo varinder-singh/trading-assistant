@@ -1,6 +1,6 @@
 import "dotenv/config"
 import { pathToFileURL } from "node:url"
-import type { KiteConnect, Instrument } from "kiteconnect"
+import type { Connect as KiteConnect, Instrument } from "kiteconnect"
 import { analyzeOptions, type KiteOptionQuote, type KiteOptionInstrumentForAnalysis } from "../analysis/kite-options.js"
 import { getYesterdayClosingOI } from "./kite-historical.js"
 
@@ -76,7 +76,7 @@ async function runStandalone() {
   ])
 
   const underlyingPrice = underlyingQuote[underlyingTicker]?.last_price || 0
-  const tokens = finalOptions.map(opt => opt.instrument_token).filter((t): t is number => !!t)
+  const tokens = finalOptions.map((opt: any) => opt.instrument_token).filter((t: any): t is number => !!t)
   
   console.log(`[Test] Fetching yesterday's closing OI for ${tokens.length} contracts...`)
   const yesterdayOiMap = await getYesterdayClosingOI(kc, tokens)

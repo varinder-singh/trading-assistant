@@ -2,7 +2,7 @@ import { createKiteClient } from "@core/data/kite.js"
 import { serverSupabaseUser } from "#supabase/server"
 import { db } from "@core/db/database.js"
 import crypto from "node:crypto"
-import { decryptSecret } from "@core/utils/crypto.js"
+import { decryptSecret, encryptSecret } from "@core/utils/crypto.js"
 
 export default defineEventHandler(async (event) => {
   const user = await serverSupabaseUser(event)
@@ -65,7 +65,7 @@ export default defineEventHandler(async (event) => {
       await db
         .updateTable("brokerAccounts")
         .set({
-          accessToken,
+          accessToken: encryptSecret(accessToken),
           publicToken,
           brokerUserId,
           isActive: true,
@@ -83,7 +83,7 @@ export default defineEventHandler(async (event) => {
           userId: userId,
           brokerName: "zerodha",
           brokerUserId,
-          accessToken,
+          accessToken: encryptSecret(accessToken),
           publicToken,
           isActive: true,
           createdAt: new Date().toISOString(),

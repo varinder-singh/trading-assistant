@@ -45,6 +45,7 @@ export type MarketContext = {
   vix: VixData
   mode: MarketMode
   time: string
+  gtiScore?: import("../types/analysis.js").GTIScore
 }
 export type AIDecision = "BUY" | "SELL" | "NO_TRADE" | "HOLD"
 export type AIMarketActivitySetup = "TRUE_BREAKOUT" | "INSTITUTIONAL_TRAP" | "TREND_CONTINUATION" | "NONE"

@@ -1,9 +1,10 @@
-import type { KiteConnect } from "kiteconnect"
+import type { Connect as KiteConnect } from "kiteconnect"
 import type { TradeResponse, OrderSide, OrderType } from "./types.js"
 
 export class KiteOrderService {
   private maxLotSize = 1 // Strict risk limit: 1 lot only
   private kc: KiteConnect
+  private inFlightOrders: Set<string> = new Set()
 
   constructor(kc: KiteConnect) {
     this.kc = kc
@@ -16,6 +17,13 @@ export class KiteOrderService {
     type: OrderType
     price?: number
   }): Promise<TradeResponse> {
+    const lockKey = `${params.side}_${params.symbol}`
+    if (this.inFlightOrders.has(lockKey)) {
+      console.log(`❌ [KITE TRADE] Order already in-flight for ${lockKey}. Rejecting duplicate.`)
+      return { success: false, error: "Order already in progress" }
+    }
+    this.inFlightOrders.add(lockKey)
+
     try {
       // 1. Strict Risk Check
       if (params.quantity > this.maxLotSize) {
@@ -54,6 +62,8 @@ export class KiteOrderService {
         success: false,
         error: error.message || "Unknown error during order placement",
       }
+    } finally {
+      this.inFlightOrders.delete(lockKey)
     }
   }
 

@@ -1,6 +1,7 @@
 import { serverSupabaseUser } from "#supabase/server"
 import { db } from "@core/db/database.js"
 import { sessionManager } from "@core/execution/session-manager.js"
+import { decryptSecret } from "@core/utils/crypto.js"
 
 export default defineEventHandler(async (event) => {
   const user = await serverSupabaseUser(event)
@@ -25,7 +26,7 @@ export default defineEventHandler(async (event) => {
   }
 
   // Retrieve the user's session
-  const userSession = await sessionManager.getSession(userId, brokerAccount.accessToken)
+  const userSession = await sessionManager.getSession(userId, decryptSecret(brokerAccount.accessToken))
   const paperTrader = userSession.paperTrader
 
   try {

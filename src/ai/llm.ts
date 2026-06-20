@@ -23,7 +23,7 @@ export class LLMService {
     eventHub.emit("agent_update", update)
   }
 
-  public async evaluateMarketState(input: any): Promise<OrchestratorResponse> {
+  public async evaluateMarketState(input: any, userId: string = ""): Promise<OrchestratorResponse> {
     console.log("[AI] Starting evaluateMarketState (Orchestrator)...")
     this.emitUpdate({
       agent: "Orchestrator",
@@ -266,7 +266,8 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
 
   public async analyzeWithEnsemble(
     input: any,
-    agentType: TradingAgentType = "SCALPER"
+    agentType: TradingAgentType = "SCALPER",
+    userId: string = ""
   ): Promise<AISuccessResponse | undefined> {
     console.log(`[AI] Starting Ensemble Analysis (${agentType} regime)...`)
 
@@ -276,7 +277,7 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
       // Fetch Memory
       const trend = input.tf15m?.trend || "SIDEWAYS"
       const vix = input.vix?.current || 15
-      const pastTrades = await memoryService.getRegimeStats(trend, vix)
+      const pastTrades = await memoryService.getRegimeStats(userId, trend, vix)
       const memoryPrompt = memoryService.formatForPrompt(pastTrades)
 
       const marketDataStr = JSON.stringify(input, null, 2)
@@ -355,7 +356,7 @@ ${marketDataStr}
     }
   }
 
-  public async managePositionWithAI(input: any, agentType: TradingAgentType = "SCALPER") {
+  public async managePositionWithAI(input: any, agentType: TradingAgentType = "SCALPER", userId: string = "") {
     console.log(`[AI] Starting managePositionWithAI using ${agentType} agent...`)
     this.emitUpdate({
       agent: "Risk Manager",
@@ -381,7 +382,7 @@ The position was originally opened by a ${agentType} agent. You must decide whet
     // Fetch Memory for Risk Context
     const trend = input.marketData?.tf15m?.trend || "SIDEWAYS"
     const vix = input.marketData?.vix?.current || 15
-    const pastTrades = await memoryService.getRegimeStats(trend, vix)
+    const pastTrades = await memoryService.getRegimeStats(userId, trend, vix)
     const memoryPrompt = memoryService.formatForPrompt(pastTrades)
 
     const userPrompt = `Evaluate the following open position against current market data:

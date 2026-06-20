@@ -6,6 +6,11 @@ const ALGORITHM = "aes-256-gcm"
 // Get encryption key from env, fallback to a consistent development key if not set.
 // A strong 32-byte key is required for aes-256.
 const ENCRYPTION_KEY_STR = process.env.ENCRYPTION_KEY || "a_very_insecure_dev_key_must_chg"
+
+if (process.env.NODE_ENV === "production" && ENCRYPTION_KEY_STR === "a_very_insecure_dev_key_must_chg") {
+  throw new Error("CRITICAL SECURITY ERROR: You must set a secure ENCRYPTION_KEY environment variable in production.")
+}
+
 const ENCRYPTION_KEY = crypto.scryptSync(ENCRYPTION_KEY_STR, "salt", 32)
 
 /**

@@ -32,16 +32,17 @@ let lastCacheSymbol: string | null = null
 export async function runAnalysis(
   kc: any, // KiteConnect instance
   symbol: string,
-  mode: "intraday" | "swing",
+  mode: "intraday" | "swing" = "intraday",
   liveContext?: any,
   previousDecision?: any,
   injectedCandles?: {
     candles1d: Candle[]
     candles1h: Candle[]
-    candles30m: Candle[]
+    candles30m?: Candle[]
     candles15m: Candle[]
     candles3m: Candle[]
-  }
+  },
+  userId: string = ""
 ): Promise<TradeTechnicalAnalysis> {
   const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
 
@@ -77,7 +78,7 @@ export async function runAnalysis(
     throw new Error("No 15-minute candles found.")
   }
 
-  const { tf1h, tf30m, tf15m, tf3m } = analyzeMultiTimeframe(candles1h, candles30m, candles15m, candles3m)
+  const { tf1h, tf30m, tf15m, tf3m } = analyzeMultiTimeframe(candles1h, candles30m || [], candles15m, candles3m)
   const dailyContext = analyzeDailyContext(candles1d, candles15m)
 
   const { quotes, finalOptions } = kiteData
@@ -109,7 +110,6 @@ export async function runAnalysis(
     console.log(`[Circuit Breaker] Aborting analysis for ${symbol}: ${reason}`)
     return {
       tf1h,
-      tf30m,
       tf15m,
       tf3m,
       dailyContext,
@@ -117,7 +117,6 @@ export async function runAnalysis(
       sentiment: { sentiment: "neutral", confidence: 1, reason: "Skipped due to circuit breaker" },
       optionsAnalysis: optionsAnalysisZerodha,
       candles1h: candles1h.slice(-100),
-      candles30m: candles30m.slice(-100),
       candles15m: candles15m.slice(-100),
       candles3m: candles3m.slice(-100),
       agentType: "SCALPER",
@@ -144,13 +143,12 @@ export async function runAnalysis(
   // Get current GTI score for the watched token (if available)
   const underlyingToken = await getInstrumentToken(kc, symbol)
   if (underlyingToken) {
-    gtiTracker.setMarketContext(underlyingToken, tf15m.vwap, dailyContext?.atr14 || 1, optionsAnalysisZerodha.flow)
+    gtiTracker.setMarketContext(underlyingToken, tf15m.vwap, dailyContext?.atr14 || 1, { sentiment: optionsAnalysisZerodha.sentiment })
   }
   const gtiScore = gtiTracker.getCurrentScore(underlyingToken || 0)
 
   const marketContext: MarketContext = {
     tf1h,
-    tf30m,
     tf15m,
     tf3m,
     dailyContext,
@@ -163,7 +161,7 @@ export async function runAnalysis(
   if (gtiScore && gtiScore.confidence > 0) {
     marketContext.gtiScore = gtiScore
   }
-  const orchestrator = await llmService.evaluateMarketState(marketContext)
+  const orchestrator = await llmService.evaluateMarketState(marketContext, userId)
   const validation = validateRegime(orchestrator, marketContext)
   if (validation.wasOverridden) {
     console.warn(`[RegimeValidator] OVERRIDE: ${orchestrator.activeAgent} → ${validation.activeAgent}`)
@@ -179,7 +177,6 @@ export async function runAnalysis(
   // We mock a temporary TradeTechnicalAnalysis object just to calculate the score
   const tempAnalysisForScore = {
     tf1h,
-    tf30m,
     tf15m,
     tf3m,
     dailyContext,
@@ -187,10 +184,9 @@ export async function runAnalysis(
     sentiment,
     optionsAnalysis: optionsAnalysisZerodha,
     candles1h,
-    candles30m,
     candles15m,
     candles3m,
-    agentType: activeAgent,
+    agentType: activeAgent as import("../ai/types.js").TradingAgentType,
   } as TradeTechnicalAnalysis
 
   const reversalScore = {
@@ -202,7 +198,6 @@ export async function runAnalysis(
   const aiDecision = await llmService.analyzeWithEnsemble(
     {
       tf1h,
-      tf30m,
       tf15m,
       tf3m,
       dailyContext,
@@ -214,13 +209,13 @@ export async function runAnalysis(
       previousDecision,
       reversalScore, // Pass the reversal score to the AI
     },
-    activeAgent
+    activeAgent as import("../ai/types.js").TradingAgentType,
+    userId
   )
 
   if (!aiDecision) {
     return {
       tf1h,
-      tf30m,
       tf15m,
       tf3m,
       dailyContext,
@@ -242,10 +237,9 @@ export async function runAnalysis(
       sentiment,
       optionsAnalysis: optionsAnalysisZerodha,
       candles1h: candles1h.slice(-100),
-      candles30m: candles30m.slice(-100),
       candles15m: candles15m.slice(-100),
       candles3m: candles3m.slice(-100),
-      agentType: activeAgent || "SCALPER",
+      agentType: (activeAgent || "SCALPER") as import("../ai/types.js").TradingAgentType,
       gtiHistory: gtiTracker.getHistory(0),
     }
   }
@@ -321,8 +315,8 @@ export async function runAnalysis(
     )
   }
   console.log(`VWAP (15m): ${tf15m.vwap.toFixed(2)} (${tf15m.vwapPosition})`)
-  console.log(`Resistance (15m): ${tf15m.resistance.toFixed(2)}`)
-  console.log(`Support (15m): ${tf15m.support.toFixed(2)}`)
+  console.log(`Resistance (15m): ${tf15m.resistance.toFixed(2)})`)
+  console.log(`Support (15m): ${tf15m.support.toFixed(2)})`)
 
   if (gtiScore.confidence > 0) {
     logSection("🏦 GTI — Institutional Activity")
@@ -346,10 +340,10 @@ export async function runAnalysis(
     sentiment,
     optionsAnalysis: optionsAnalysisZerodha,
     candles1h: candles1h.slice(-100),
-    candles30m: candles30m.slice(-100),
+    candles30m: candles30m ? candles30m.slice(-100) : [],
     candles15m: candles15m.slice(-100),
     candles3m: candles3m.slice(-100),
-    agentType: activeAgent,
+    agentType: (activeAgent || "SCALPER") as import("../ai/types.js").TradingAgentType,
     gtiHistory: gtiTracker.getHistory(0), // Will be overridden by WS server with actual token
   }
 
@@ -366,10 +360,11 @@ export async function evaluatePosition(
   injectedCandles?: {
     candles1d: Candle[]
     candles1h: Candle[]
-    candles30m: Candle[]
+    candles30m?: Candle[]
     candles15m: Candle[]
     candles3m: Candle[]
-  }
+  },
+  userId: string = ""
 ) {
   const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
 
@@ -409,7 +404,7 @@ export async function evaluatePosition(
     kiteData = k
   }
 
-  const { tf1h, tf30m, tf15m, tf3m } = analyzeMultiTimeframe(candles1h, candles30m, candles15m, candles3m)
+  const { tf1h, tf30m, tf15m, tf3m } = analyzeMultiTimeframe(candles1h, candles30m || [], candles15m, candles3m)
   const dailyContext = analyzeDailyContext(candles1d, candles15m)
 
   const { quotes, finalOptions } = kiteData
@@ -417,9 +412,7 @@ export async function evaluatePosition(
   // Analyze Options
   const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price, yesterdayOiCache, 5)
 
-  const marketData: MarketContext = {
     tf1h,
-    tf30m,
     tf15m,
     tf3m,
     dailyContext,
@@ -433,7 +426,7 @@ export async function evaluatePosition(
   // If the position was opened by SCALPER, check if orchestrator wants to upgrade to TREND
   let agentType: TradingAgentType = openPosition.strategyContext?.agentType || "SCALPER"
 
-  const orchestrator = await llmService.evaluateMarketState(marketData)
+  const orchestrator = await llmService.evaluateMarketState(marketData, userId)
   const validation = validateRegime(orchestrator, marketData)
   if (validation.wasOverridden) {
     console.warn(`[RegimeValidator] OVERRIDE: ${orchestrator.activeAgent} → ${validation.activeAgent}`)
@@ -449,7 +442,8 @@ export async function evaluatePosition(
       openPosition,
       marketData,
     },
-    agentType
+    agentType,
+    userId
   )
 
   if (decision.decision === "EXIT") {

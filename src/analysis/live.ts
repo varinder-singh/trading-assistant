@@ -22,6 +22,9 @@ export class LiveAnalyzer extends EventEmitter {
   private windowSizeMs = 60 * 1000 // 1 minute window for volatility
   private lastTriggerTime = 0
   private triggerCooldownMs = 5 * 60 * 1000 // 5 minutes cooldown between AI calls
+  private lastGTIScore?: GTIScore
+  private gtiSurgeThreshold = 1.5
+  private priceAtLastGTICheck = 0
 
   constructor() {
     super()

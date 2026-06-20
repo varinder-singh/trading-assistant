@@ -1,61 +1,34 @@
-import { getInstrumentToken, getOptionToken } from "@core/data/kite.js"
+import { createClient } from "@supabase/supabase-js"
 import { LiveAnalyzer } from "@core/analysis/live.js"
-import { runAnalysis } from "@core/analysis/trade.js"
 import { eventHub } from "@core/utils/event-hub.js"
-import { eventRepo } from "@core/db/repositories/event-repo.js"
-import { candleBuilder, seedCandleBuilder } from "@core/data/candle-builder.js"
-import { getIntradayBaseline } from "@core/data/kite-historical.js"
+import { candleBuilder } from "@core/data/candle-builder.js"
 import { gtiTracker } from "@core/indicators/gti-tracker.js"
 import { gtiRepo } from "@core/db/repositories/gti-repo.js"
-import { sessionManager, UserSession } from "@core/execution/session-manager.js"
+import { sessionManager } from "@core/execution/session-manager.js"
 import { db } from "@core/db/database.js"
-import { isMarketOpen } from "@core/utils/market-hours.js"
-import { AIMacroTrend } from "@core/types/analysis.js"
+import { decryptSecret } from "@core/utils/crypto.js"
 
-
-
-// Map from Peer ID -> Client State
-const clients = new Map<
-  string,
-  {
-    peer: any
-    userId: string
-    session: UserSession
-    analyzer: LiveAnalyzer
-    symbol: string
-    token: number
-    mode: "intraday" | "swing"
-    lastDecision: any
-    chartTimeframe: number
-  }
->()
-
-function broadcastToUser(userId: string, msg: any) {
-  const data = JSON.stringify(msg)
-  for (const client of clients.values()) {
-    if (client.userId === userId) {
-      client.peer.send(data)
-    }
-  }
-}
-
-function broadcastAll(msg: any) {
-  const data = JSON.stringify(msg)
-  for (const client of clients.values()) {
-    client.peer.send(data)
-  }
-}
+// Initialize Supabase client for JWT verification
+const supabaseUrl = process.env.SUPABASE_URL || ""
+const supabaseKey = process.env.SUPABASE_KEY || ""
+const supabase = createClient(supabaseUrl, supabaseKey)
 
 eventHub.on("agent_update", (update) => {
-  broadcastAll({ type: "agent_update", data: update })
+  // If the update has a userId, broadcast only to that user for privacy
+  if (update.userId) {
+    wsConnectionManager.broadcastToUser(update.userId, { type: "agent_update", data: update })
+  } else {
+    wsConnectionManager.broadcastAll({ type: "agent_update", data: update })
+  }
 })
 
 // Global CandleBuilder close listener for GTI
 candleBuilder.on("candle_close", async ({ token, timeframe, candle }) => {
   const gtiScore = gtiTracker.onCandleClose(token, candle)
 
+  const clients = wsConnectionManager.getAllClients()
   // Persist to DB
-  const symbol = Array.from(clients.values()).find((c) => c.token === token)?.symbol || `TOKEN_${token}`
+  const symbol = clients.find((c) => c.token === token)?.symbol || `TOKEN_${token}`
   try {
     await gtiRepo.saveScore({
       symbol,
@@ -70,30 +43,12 @@ candleBuilder.on("candle_close", async ({ token, timeframe, candle }) => {
   }
 
   // Route to relevant clients
-  for (const client of clients.values()) {
+  for (const client of clients) {
     if (client.token === token) {
       client.analyzer.updateGTI(gtiScore)
     }
   }
 })
-
-function decodeJwtBase64(token: string) {
-  try {
-    const base64Url = token.split(".")[1]
-    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/")
-    const jsonPayload = decodeURIComponent(
-      atob(base64)
-        .split("")
-        .map(function (c) {
-          return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2)
-        })
-        .join("")
-    )
-    return JSON.parse(jsonPayload)
-  } catch (e) {
-    return null
-  }
-}
 
 export default defineWebSocketHandler({
   open(peer) {
@@ -109,13 +64,14 @@ export default defineWebSocketHandler({
 
       // 1. AUTHENTICATION
       if (msg.type === "auth") {
-        const payload = decodeJwtBase64(msg.token)
-        if (!payload || !payload.sub) {
-          peer.send(JSON.stringify({ type: "error", message: "Invalid JWT token" }))
+        // SECURE JWT VERIFICATION: Use Supabase to verify the signature and ensure it hasn't expired/been revoked
+        const { data: { user }, error } = await supabase.auth.getUser(msg.token)
+        if (error || !user) {
+          peer.send(JSON.stringify({ type: "error", message: "Invalid or expired JWT token" }))
           return
         }
 
-        const userId = payload.sub
+        const userId = user.id
 
         const brokerAccount = await db
           .selectFrom("brokerAccounts")
@@ -130,22 +86,23 @@ export default defineWebSocketHandler({
         }
 
         // Initialize User Session
-        const session = await sessionManager.getSession(userId, brokerAccount.accessToken, brokerAccount.apiKey || undefined)
+        const session = await sessionManager.getSession(userId, decryptSecret(brokerAccount.accessToken), brokerAccount.apiKey || undefined)
 
         // Setup event listeners for this user's paper trader
         session.paperTrader.on("portfolio_update", (positions) => {
-          broadcastToUser(userId, { type: "portfolio", data: positions })
+          wsConnectionManager.broadcastToUser(userId, { type: "portfolio", data: positions })
         })
         session.paperTrader.on("pnl_update", (positions) => {
-          broadcastToUser(userId, { type: "portfolio", data: positions })
+          wsConnectionManager.broadcastToUser(userId, { type: "portfolio", data: positions })
         })
         session.paperTrader.on("notification", (notif) => {
-          broadcastToUser(userId, { type: "notification", data: notif })
+          wsConnectionManager.broadcastToUser(userId, { type: "notification", data: notif })
         })
 
         // Hook up tick routing to LiveAnalyzer
         session.ticker.on("ticks", (ticks: any[]) => {
-          for (const client of clients.values()) {
+          const clients = wsConnectionManager.getAllClients()
+          for (const client of clients) {
             if (client.userId === userId) {
               const tick = ticks.find((t) => t.instrument_token === client.token)
               if (tick) {
@@ -169,7 +126,7 @@ export default defineWebSocketHandler({
         })
 
         // Store temporary uninitialized client mapping
-        clients.set(peer.id, {
+        wsConnectionManager.addClient(peer.id, {
           peer,
           userId,
           session,
@@ -188,131 +145,7 @@ export default defineWebSocketHandler({
 
       // 2. WATCH COMMAND
       if (msg.type === "watch") {
-        const client = clients.get(peer.id)
-        if (!client || !client.userId) {
-          peer.send(JSON.stringify({ type: "error", message: "Not authenticated" }))
-          return
-        }
-
-        const { symbol, levels, mode } = msg.data
-        const token = await getInstrumentToken(client.session.kc, symbol)
-
-        if (!token) {
-          peer.send(JSON.stringify({ type: "error", message: `Token not found for ${symbol}` }))
-          return
-        }
-
-        await seedCandleBuilder(client.session.kc, token)
-
-        const analyzer = new LiveAnalyzer()
-
-        if (!isMarketOpen()) {
-          peer.send(
-            JSON.stringify({ type: "market_closed", message: "Market is closed. Operating in read-only mode." })
-          )
-        } else if (levels) {
-          analyzer.setLevels(levels)
-
-          analyzer.on("breakout", async (context) => {
-            console.log(`[ws] Breakout detected for ${symbol}`)
-            peer.send(JSON.stringify({ type: "breakout", data: context }))
-
-            await eventRepo.saveEvent({
-              symbol,
-              reason: context.reason,
-              price: context.tick.last_price,
-              timestamp: new Date().toISOString(),
-              metadata: { tick: context.tick },
-            })
-
-            try {
-              const analysisResult = await runAnalysis(
-                client.session.kc,
-                symbol,
-                client.mode,
-                context,
-                client.lastDecision
-              )
-              const { tf15m: tf, aiDecision: decision, vix, agentType } = analysisResult
-              client.lastDecision = decision
-
-              peer.send(JSON.stringify({ type: "analysis", data: analysisResult }))
-
-              if (decision && decision.optionAction !== "NONE") {
-                const type = decision.optionAction === "BUY_CE" ? "CE" : "PE"
-                const option = await getOptionToken(client.session.kc, symbol, decision.strike || 0, type)
-
-                if (option) {
-                  console.log(`[ws] Executing Paper Trade for ${option.symbol} (${agentType} Agent)...`)
-                  client.session.ticker.subscribe([option.token])
-                  client.session.ticker.setMode(client.session.ticker.modeFull, [option.token])
-
-                  const quote = await client.session.kc.getQuote([`NFO:${option.symbol}`])
-                  const entryPrice = quote[`NFO:${option.symbol}`]?.last_price || 0
-
-                  if (entryPrice > 0) {
-                    const indexRiskPoints = Math.abs(tf.price - decision.stopLoss)
-                    const estimatedDelta = 0.5
-                    const optionRiskPoints = indexRiskPoints * estimatedDelta
-
-                    let calculatedSl = entryPrice - optionRiskPoints
-                    const calculatedTarget = entryPrice + optionRiskPoints * (decision.riskRewardRatio || 1.5)
-
-                    const floorPercentage = agentType === "TREND" ? 0 : 0.2
-                    const minAllowedSl = Math.max(entryPrice * floorPercentage, 0.05)
-                    if (calculatedSl < minAllowedSl) calculatedSl = minAllowedSl
-
-                    await client.session.paperTrader.placeOrder({
-                      symbol: option.symbol,
-                      token: option.token,
-                      strike: decision.strike || undefined,
-                      side: "BUY",
-                      quantity: 1,
-                      price: entryPrice,
-                      context: {
-                        optionExpiry: option.expiry.toISOString(),
-                        aiReasoning: decision.reason,
-                        aiConfidence: decision.confidence,
-                        aiStrike: decision.strike || undefined,
-                        aiSetup: decision.setup,
-                        strategyContext: {
-                          macroTrend: decision.macroTrend as AIMacroTrend,
-                          indexSl: decision.stopLoss,
-                          agentType,
-                        },
-                        vixLevel: vix.current,
-                        rsiLevel: tf.rsi,
-                        trend15m: tf.trend,
-                        aiStopLoss: calculatedSl,
-                        aiTarget: calculatedTarget,
-                      },
-                    })
-                  }
-                }
-              }
-            } catch (err) {
-              console.error(`[ws] Error during breakout analysis:`, err)
-            }
-          })
-        }
-
-        client.analyzer = analyzer
-        client.symbol = symbol
-        client.token = token
-        client.mode = mode || "intraday"
-        client.chartTimeframe = msg.data.chartTimeframe || 1
-
-        const positionTokens = client.session.paperTrader
-          .getAllPositions()
-          .map((p) => p.token)
-          .filter((t) => !!t)
-        const tokensToSubscribe = Array.from(new Set([token, ...positionTokens]))
-
-        client.session.ticker.subscribe(tokensToSubscribe)
-        client.session.ticker.setMode(client.session.ticker.modeFull, tokensToSubscribe)
-
-        peer.send(JSON.stringify({ type: "watching", symbol, token }))
-        peer.send(JSON.stringify({ type: "portfolio", data: client.session.paperTrader.getAllPositions() }))
+        await handleWatchCommand(peer, msg)
       }
     } catch (err) {
       console.error("[ws] error handling message", err)
@@ -321,7 +154,7 @@ export default defineWebSocketHandler({
 
   close(peer) {
     console.log(`[ws] close ${peer.id}`)
-    clients.delete(peer.id)
+    wsConnectionManager.removeClient(peer.id)
   },
 
   error(peer, error) {

@@ -35,7 +35,7 @@ export function calculateVolumeProfile(
 
     for (let i = startBin; i <= endBin; i++) {
       if (i >= 0 && i < binCount) {
-        bins[i] += volPerBin
+        bins[i] = (bins[i] ?? 0) + volPerBin
       }
     }
   }
@@ -43,8 +43,9 @@ export function calculateVolumeProfile(
   let pocBin = 0
   let maxVol = -1
   for (let i = 0; i < binCount; i++) {
-    if (bins[i] > maxVol) {
-      maxVol = bins[i]
+    const binVol = bins[i] ?? 0
+    if (binVol > maxVol) {
+      maxVol = binVol
       pocBin = i
     }
   }
@@ -53,13 +54,13 @@ export function calculateVolumeProfile(
 
   // Calculate Value Area expanding symmetrically from POC
   let targetVol = totalVolume * valueAreaPct
-  let currentVol = bins[pocBin]
+  let currentVol = bins[pocBin] ?? 0
   let upBin = pocBin + 1
   let downBin = pocBin - 1
 
   while (currentVol < targetVol && (upBin < binCount || downBin >= 0)) {
-    const volUp = upBin < binCount ? bins[upBin] : 0
-    const volDown = downBin >= 0 ? bins[downBin] : 0
+    const volUp = upBin < binCount ? (bins[upBin] ?? 0) : 0
+    const volDown = downBin >= 0 ? (bins[downBin] ?? 0) : 0
 
     // Expand towards the side with more volume
     if (volUp >= volDown && upBin < binCount) {
@@ -107,7 +108,7 @@ export function calculateVolumeProfile(
   for (let i = 0; i < binCount; i++) {
     nodes.push({
       price: roundedMin + i * tickSize,
-      volume: bins[i],
+      volume: bins[i] ?? 0,
     })
   }
 

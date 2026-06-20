@@ -26,6 +26,7 @@ describe("runAnalysis", () => {
     vi.mocked(yahoo.getMultiTimeframeCandles).mockResolvedValue({
       candles1d: Array(20).fill(mockCandle),
       candles1h: [mockCandle],
+      candles30m: [],
       candles15m: [mockCandle],
       candles3m: [mockCandle],
     })

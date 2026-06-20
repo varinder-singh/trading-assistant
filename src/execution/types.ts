@@ -29,9 +29,9 @@ export interface PaperPosition {
   aiTarget?: number
   aiSetup?: string
   strategyContext?: any
-  optionDelta?: number
-  optionTheta?: number
-  optionVega?: number
+  optionDelta?: number | undefined
+  optionTheta?: number | undefined
+  optionVega?: number | undefined
   optionExpiry?: Date | string
   timestamp: Date
 }

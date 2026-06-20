@@ -7,7 +7,7 @@ import { eventHub } from "../utils/event-hub.js"
 import { candleBuilder, seedCandleBuilder } from "../data/candle-builder.js"
 import { getMultiTimeframeCandles } from "../data/yahoo.js"
 import { getInstrumentToken, createKiteClient } from "../data/kite.js"
-import type { KiteConnect } from "kiteconnect"
+import type { Connect as KiteConnect } from "kiteconnect"
 import { getGreeksFromPrice } from "../analysis/greeks.js"
 
 export type StrategyContext = {
@@ -44,6 +44,7 @@ export class PaperTrader extends EventEmitter {
   private recentExits: Map<string, Date> = new Map()
   public maxConcurrentPositions = Number(process.env.MAX_PAPER_POSITIONS || 2)
   public entryCooldownMins = Number(process.env.ENTRY_COOLDOWN_MINS || 15)
+  private inFlightOrders: Set<string> = new Set()
 
   // Risk Management
   private maxDailyTrades = 20
@@ -96,7 +97,7 @@ export class PaperTrader extends EventEmitter {
             const pos: PaperPosition = {
               symbol: trade.symbol,
               token: trade.instrumentToken || 0,
-              side: "BUY",
+              side: trade.side,
               quantity: trade.quantity,
               avgEntryPrice: Number(trade.entryPrice),
               currentPrice: Number(trade.entryPrice),
@@ -416,7 +417,15 @@ export class PaperTrader extends EventEmitter {
   }): Promise<TradeResponse> {
     await this.initialize()
 
-    if (params.side === "BUY") {
+    const lockKey = `${params.side}_${params.symbol}_${params.strike || "ANY"}`
+    if (this.inFlightOrders.has(lockKey)) {
+      console.log(`❌ [PAPER TRADE] Order already in-flight for ${lockKey}. Rejecting duplicate.`)
+      return { success: false, error: "Order already in progress" }
+    }
+    this.inFlightOrders.add(lockKey)
+
+    try {
+      if (params.side === "BUY") {
       // 0. Check Daily Limits & Halt Status
       if (this.todayRealizedPnL <= this.maxDailyLoss) {
         this.tradingHalted = true
@@ -641,6 +650,9 @@ export class PaperTrader extends EventEmitter {
     }
 
     return { success: true, orderId }
+    } finally {
+      this.inFlightOrders.delete(lockKey)
+    }
   }
 
   private async updatePosition(order: TradeOrder, context?: TradeContext) {

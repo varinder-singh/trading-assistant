@@ -1,5 +1,5 @@
 import "dotenv/config"
-import type { KiteConnect } from "kiteconnect"
+import type { Connect as KiteConnect } from "kiteconnect"
 import type { Candle } from "../types/analysis.js"
 
 /**

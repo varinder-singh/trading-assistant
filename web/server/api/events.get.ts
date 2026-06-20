@@ -1,6 +1,12 @@
 import { eventRepo } from "@core/db/repositories/event-repo.js"
+import { serverSupabaseUser } from "#supabase/server"
 
 export default defineEventHandler(async (event) => {
+  const user = await serverSupabaseUser(event)
+  if (!user) {
+    throw createError({ statusCode: 401, statusMessage: "Unauthorized" })
+  }
+
   const query = getQuery(event)
   const symbol = (query.symbol as string) || "NIFTY"
 

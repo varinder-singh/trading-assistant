@@ -4,6 +4,7 @@ import { serverSupabaseUser } from "#supabase/server"
 import { db } from "@core/db/database.js"
 import { sessionManager } from "@core/execution/session-manager.js"
 import { isMarketOpen } from "@core/utils/market-hours.js"
+import { decryptSecret } from "@core/utils/crypto.js"
 
 export default defineEventHandler(async (event) => {
   const user = await serverSupabaseUser(event)
@@ -28,7 +29,7 @@ export default defineEventHandler(async (event) => {
   }
 
   // Retrieve or create the user's session (which holds kc, ticker, and paperTrader)
-  const userSession = await sessionManager.getSession(userId, brokerAccount.accessToken, brokerAccount.apiKey || undefined)
+  const userSession = await sessionManager.getSession(userId, decryptSecret(brokerAccount.accessToken), brokerAccount.apiKey || undefined)
   const kc = userSession.kc
   const paperTrader = userSession.paperTrader
 

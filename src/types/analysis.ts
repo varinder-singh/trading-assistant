@@ -85,6 +85,7 @@ export type TechnicalAnalysis = {
   swings?: SwingPoint[] | undefined
   waveContext?: WaveContext | undefined
   openingRange?: OpeningRange | undefined
+  gtiScore?: import("./analysis.js").GTIScore
 }
 
 export type TradeTechnicalAnalysis = {
@@ -105,4 +106,16 @@ export type TradeTechnicalAnalysis = {
     bullish: number
     bearish: number
   }
+}
+
+export interface GTIScore {
+  composite: number
+  classification: string
+  confidence: number
+  components: Record<string, number>
+}
+
+export interface GTICandleData {
+  candle: Candle
+  gtiScore: GTIScore
 }
