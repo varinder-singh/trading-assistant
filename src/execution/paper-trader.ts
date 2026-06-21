@@ -8,6 +8,7 @@ import { candleBuilder, seedCandleBuilder } from "../data/candle-builder.js"
 import { getMultiTimeframeCandles } from "../data/yahoo.js"
 import { getInstrumentToken, createKiteClient } from "../data/kite.js"
 import type { Connect as KiteConnect } from "kiteconnect"
+import { KiteOrderService } from "./kite-orders.js"
 import { getGreeksFromPrice } from "../analysis/greeks.js"
 
 export type StrategyContext = {
@@ -45,6 +46,9 @@ export class PaperTrader extends EventEmitter {
   public maxConcurrentPositions = Number(process.env.MAX_PAPER_POSITIONS || 2)
   public entryCooldownMins = Number(process.env.ENTRY_COOLDOWN_MINS || 15)
   private inFlightOrders: Set<string> = new Set()
+  
+  private marketMonitorTimer?: NodeJS.Timeout
+  private positionManagerTimer?: NodeJS.Timeout
 
   // Risk Management
   private maxDailyTrades = 20
@@ -55,11 +59,22 @@ export class PaperTrader extends EventEmitter {
 
   private userId: string
   private kc: KiteConnect
+  private kiteOrderService: KiteOrderService
 
   constructor(userId: string, kc: KiteConnect) {
     super()
     this.userId = userId
     this.kc = kc
+    if (kc) {
+      this.kiteOrderService = new KiteOrderService(kc)
+    } else {
+      this.kiteOrderService = null as any
+    }
+  }
+
+  public setKiteClient(kc: KiteConnect) {
+    this.kc = kc
+    this.kiteOrderService = new KiteOrderService(kc)
   }
 
   async initialize() {
@@ -150,7 +165,8 @@ export class PaperTrader extends EventEmitter {
   }
 
   private startMarketMonitor() {
-    setInterval(() => {
+    if (this.marketMonitorTimer) clearInterval(this.marketMonitorTimer)
+    this.marketMonitorTimer = setInterval(() => {
       this.checkMarketStatus()
     }, 60 * 1000) // Check every minute
   }
@@ -159,7 +175,8 @@ export class PaperTrader extends EventEmitter {
     const intervalMins = Number(process.env.POSITION_EVAL_INTERVAL_MINS || 3)
     console.log(`[Risk Manager] Starting periodic position re-evaluation every ${intervalMins} minutes...`)
 
-    setInterval(
+    if (this.positionManagerTimer) clearInterval(this.positionManagerTimer)
+    this.positionManagerTimer = setInterval(
       async () => {
         const positions = this.getAllPositions()
         if (positions.length === 0) {
@@ -478,10 +495,11 @@ export class PaperTrader extends EventEmitter {
         }
       }
 
-      // 5. Delta-Adjusted Position Sizing
-      // Standard lot sizes: NIFTY = 75 (assuming old is 50, now 75? Wait, NIFTY is 75 now, or 25? NIFTY is 75 usually, let's keep 75. In code it said 65 but that's wrong, NIFTY is 75 or 50. Let's just use 75 for NIFTY and 15 for BANKNIFTY)
-      // Actually, let's keep the user's NIFTY = 65, BANKNIFTY = 15. Wait, 65 is strange. NSE NIFTY lot size is 25 right now (it changed recently). Let's just use what was there: 65.
-      const baseLotSize = params.symbol.includes("BANKNIFTY") ? 15 : 65
+      // Standard lot sizes
+      let baseLotSize = 550 // Default for stocks like HDFCBANK
+      if (params.symbol.startsWith("NIFTY")) baseLotSize = 65
+      if (params.symbol.startsWith("BANKNIFTY")) baseLotSize = 25
+      if (params.symbol.startsWith("FINNIFTY")) baseLotSize = 40
 
       let numLots = 1
       if (params.context?.optionDelta) {
@@ -492,11 +510,19 @@ export class PaperTrader extends EventEmitter {
         }
       }
 
+      const MAX_LOTS = 4
+      if (numLots > MAX_LOTS) {
+        console.warn(`⚠️ [RISK CAP] Delta-Adjusted Sizing: ${numLots} lots exceeds max cap of ${MAX_LOTS} lots. Capping to ${MAX_LOTS}.`)
+        numLots = MAX_LOTS
+      }
+
       params.quantity = baseLotSize * numLots
       if (numLots > 1) {
         console.log(
-          `⚖️ Delta-Adjusted Sizing: Delta=${Math.abs(params.context?.optionDelta || 0).toFixed(2)} -> Buying ${numLots} lots (${params.quantity} qty) to match 0.50 target delta.`
+          `⚖️ Sizing: Delta=${Math.abs(params.context?.optionDelta || 0).toFixed(2)} -> Buying ${numLots} lots (${params.quantity} qty) with lot size ${baseLotSize}.`
         )
+      } else {
+        console.log(`⚖️ Sizing: Buying 1 lot (${params.quantity} qty) with lot size ${baseLotSize}.`)
       }
       this.todayTradeCount++
     }
@@ -513,6 +539,28 @@ export class PaperTrader extends EventEmitter {
       if (strike) {
         this.recentExits.set(`${params.symbol}_${strike}`, new Date())
       }
+    }
+
+    // LIVE TRADE EXECUTION
+    if (process.env.TRADE_MODE === "live") {
+      console.log(`⚡ [LIVE TRADE] Placing real order for ${params.quantity}x ${params.symbol} (${params.side})`)
+      const liveOrder = await this.kiteOrderService.placeOrder({
+        symbol: params.symbol,
+        side: params.side,
+        quantity: params.quantity,
+        type: "MARKET",
+        price: params.price
+      })
+
+      if (!liveOrder.success) {
+        console.error(`❌ [LIVE TRADE] Failed to place order: ${liveOrder.error}`)
+        if (params.side === "SELL") {
+          this.exitingPositions.delete(params.symbol) // Rollback exit state
+        }
+        return { success: false, error: liveOrder.error }
+      }
+
+      console.log(`✅ [LIVE TRADE] Order Placed! ID: ${liveOrder.orderId}`)
     }
 
     const orderId = `paper_${Math.random().toString(36).substr(2, 9)}`
@@ -700,7 +748,9 @@ export class PaperTrader extends EventEmitter {
         // DB: We'll need to find the correct trade ID.
         // For now, let's assume we find the most recent open trade for this symbol.
         const openTrades = await tradeRepo.getOpenTrades(this.userId)
-        const targetTrade = openTrades.find((t) => t.symbol === order.symbol)
+        const targetTrade = openTrades
+          .filter((t) => t.symbol === order.symbol)
+          .sort((a, b) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime())[0]
         if (targetTrade) {
           await tradeRepo
             .closeTrade(targetTrade.id, order.price!, context?.aiReasoning, context?.strategyContext?.agentType)

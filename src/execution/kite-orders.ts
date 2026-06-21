@@ -2,7 +2,7 @@ import type { Connect as KiteConnect } from "kiteconnect"
 import type { TradeResponse, OrderSide, OrderType } from "./types.js"
 
 export class KiteOrderService {
-  private maxLotSize = 1 // Strict risk limit: 1 lot only
+  private maxQuantity = 5000 // Strict catastrophic risk limit (allows 9 lots of 550 shares for stock options)
   private kc: KiteConnect
   private inFlightOrders: Set<string> = new Set()
 
@@ -25,11 +25,11 @@ export class KiteOrderService {
     this.inFlightOrders.add(lockKey)
 
     try {
-      // 1. Strict Risk Check
-      if (params.quantity > this.maxLotSize) {
+      // 1. Strict Catastrophic Risk Check (Business logic handles lot sizing)
+      if (params.quantity > this.maxQuantity) {
         return {
           success: false,
-          error: `Risk Limit Exceeded: Max lot size is ${this.maxLotSize}`,
+          error: `Risk Limit Exceeded: Max catastrophic quantity is ${this.maxQuantity} shares`,
         }
       }
 

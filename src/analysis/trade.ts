@@ -331,7 +331,6 @@ export async function runAnalysis(
 
   const baseAnalysis: Omit<TradeTechnicalAnalysis, "reversalScore"> = {
     tf1h,
-    tf30m,
     tf15m,
     tf3m,
     dailyContext,
@@ -412,6 +411,7 @@ export async function evaluatePosition(
   // Analyze Options
   const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price, yesterdayOiCache, 5)
 
+  const marketData: MarketContext = {
     tf1h,
     tf15m,
     tf3m,

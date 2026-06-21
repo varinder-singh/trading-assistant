@@ -237,6 +237,23 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
 
       try {
         const result: AISuccessResponse = JSON.parse(cleanedText)
+
+        // Validation & Guardrails
+        if (result.decision === "BUY") {
+          if (result.confidence < 0 || result.confidence > 100) {
+            result.confidence = Math.min(Math.max(result.confidence, 0), 100)
+          }
+          if (result.stopLoss && result.entry && result.stopLoss >= result.entry) {
+            console.warn(`[AI Validation] Invalid Stop Loss (${result.stopLoss}) >= Entry (${result.entry}). AI Hallucination detected, overriding.`)
+            // Default 0.5% index move for Nifty/BankNifty fallback
+            result.stopLoss = result.entry * 0.995 
+          }
+          if (result.targets && result.targets.length > 0 && result.targets[0] !== undefined && result.entry && result.targets[0] <= result.entry) {
+            console.warn(`[AI Validation] Invalid Target (${result.targets[0]}) <= Entry (${result.entry}). AI Hallucination detected, overriding.`)
+            result.targets[0] = result.entry * 1.01 
+          }
+        }
+
         this.emitUpdate({
           agent: agentType,
           status: "decided",

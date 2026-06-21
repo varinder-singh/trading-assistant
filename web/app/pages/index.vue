@@ -215,7 +215,7 @@ function connectWebSocket() {
   isIntentionalClose = false
 
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
-  ws = new WebSocket(`${protocol}//${window.location.host}/_ws`)
+  ws = new WebSocket(`${protocol}//${window.location.host}/websocket`)
 
   ws.onopen = () => {
     console.log("WS Connected, authenticating...")
