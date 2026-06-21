@@ -9,6 +9,6 @@ export type DailyContext = {
   pdr: number
   isCompression: boolean
   currentDayOpen: number
-  openingRange: OpeningRange | undefined
-  previousDayVolumeProfile?: VolumeProfile
+  openingRange?: OpeningRange | undefined
+  previousDayVolumeProfile?: VolumeProfile | undefined
 }

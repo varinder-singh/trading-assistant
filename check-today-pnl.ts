@@ -3,18 +3,18 @@ import { db } from "./src/db/database.js"
 async function checkTodayTrades() {
   const today = new Date().toISOString().split("T")[0]
   const trades = await db
-    .selectFrom("paper_trades")
+    .selectFrom("trades")
     .selectAll()
-    .where("opened_at", ">=", `${today}T00:00:00Z`)
+    .where("openedAt", ">=", `${today}T00:00:00Z`)
     .execute()
 
   console.log(`Checking trades for ${today}:`)
   console.log("ID | Symbol | Qty | Entry | Exit | PnL (DB) | Calculated PnL")
   console.log("---|---|---|---|---|---|---")
   for (const t of trades) {
-    const calculatedPnL = t.exit_price ? (t.exit_price - t.entry_price) * t.quantity : null
+    const calculatedPnL = t.exitPrice ? (Number(t.exitPrice) - Number(t.entryPrice)) * t.quantity : null
     console.log(
-      `${t.id.slice(0, 8)} | ${t.symbol} | ${t.quantity} | ${t.entry_price} | ${t.exit_price} | ${t.pnl} | ${calculatedPnL}`
+      `${t.id.slice(0, 8)} | ${t.symbol} | ${t.quantity} | ${t.entryPrice} | ${t.exitPrice} | ${t.pnl} | ${calculatedPnL}`
     )
   }
   process.exit(0)

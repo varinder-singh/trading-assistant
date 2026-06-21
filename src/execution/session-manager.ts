@@ -1,19 +1,20 @@
 import { PaperTrader } from "./paper-trader.js"
 import { createTicker } from "../data/kite-ticker.js"
 import { createKiteClient } from "../data/kite.js"
-import type { KiteTicker, Connect as KiteConnect } from "kiteconnect"
+import type { Connect as KiteConnect } from "kiteconnect"
 
 export class UserSession {
-  userId: string
-  kc: any
-  ticker: any
-  paperTrader: PaperTrader
+  public userId: string
+  public kc: KiteConnect
+  public ticker: ReturnType<typeof createTicker>
+  public paperTrader: PaperTrader
 
-  constructor(userId: string, accessToken: string, apiKey?: string) {
+  constructor(userId: string, accessToken: string, apiKey?: string, tradeMode: "PAPER" | "REAL" = "PAPER") {
     this.userId = userId
     this.kc = createKiteClient(accessToken, apiKey)
     this.ticker = createTicker(accessToken, apiKey)
     this.paperTrader = new PaperTrader(userId, this.kc)
+    this.paperTrader.setTradeMode(tradeMode)
   }
 
   async initialize() {
@@ -54,12 +55,14 @@ export class UserSession {
 class SessionManager {
   private sessions = new Map<string, UserSession>()
 
-  async getSession(userId: string, accessToken: string, apiKey?: string): Promise<UserSession> {
+  async getSession(userId: string, accessToken: string, apiKey?: string, tradeMode: "PAPER" | "REAL" = "PAPER"): Promise<UserSession> {
     if (this.sessions.has(userId)) {
-      return this.sessions.get(userId)!
+      const session = this.sessions.get(userId)!
+      session.paperTrader.setTradeMode(tradeMode)
+      return session
     }
 
-    const session = new UserSession(userId, accessToken, apiKey)
+    const session = new UserSession(userId, accessToken, apiKey, tradeMode)
     await session.initialize()
     this.sessions.set(userId, session)
     return session
@@ -71,6 +74,10 @@ class SessionManager {
       session.destroy()
       this.sessions.delete(userId)
     }
+  }
+
+  getExistingSession(userId: string): UserSession | undefined {
+    return this.sessions.get(userId)
   }
 }
 

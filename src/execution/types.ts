@@ -39,5 +39,5 @@ export interface PaperPosition {
 export interface TradeResponse {
   success: boolean
   orderId?: string
-  error?: string
+  error?: string | undefined
 }

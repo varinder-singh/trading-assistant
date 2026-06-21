@@ -2,6 +2,7 @@ export type KiteOptionQuote = {
   last_price?: number
   oi?: number
   volume?: number
+  greeks?: { iv: number; delta: number; gamma: number; theta: number; vega: number } | undefined
 }
 
 export type KiteOptionInstrumentForAnalysis = {
@@ -28,7 +29,7 @@ export type KiteOptionOiRow = {
     gamma: number
     theta: number
     vega: number
-  }
+  } | undefined
 }
 
 export type KiteOptionsAnalysis = {
@@ -150,8 +151,8 @@ export function analyzeOptions(
     const yOi = inst.instrument_token ? yesterdayOiMap?.get(inst.instrument_token) : undefined
 
     // 4. Calculate Greeks
-    let greeks = undefined
-    if (underlyingPrice && inst.expiry) {
+    let greeks = q.greeks || undefined
+    if (!greeks && underlyingPrice && inst.expiry) {
       // Calculate days to expiry
       const today = new Date()
       const expiryDate = new Date(inst.expiry)

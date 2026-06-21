@@ -7,6 +7,7 @@ const { Pool } = pg
 export interface ProfilesTable {
   id: string
   fullName: string | null
+  tradeMode: "PAPER" | "REAL"
   createdAt: string
   updatedAt: string
 }

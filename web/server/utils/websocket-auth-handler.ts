@@ -22,6 +22,14 @@ export async function handleAuthCommand(peer: any, msg: any) {
 
   const userId = user.id
 
+  const profile = await db
+    .selectFrom("profiles")
+    .select(["tradeMode"])
+    .where("id", "=", userId)
+    .executeTakeFirst()
+
+  const tradeMode = profile?.tradeMode || "PAPER"
+
   const brokerAccount = await db
     .selectFrom("brokerAccounts")
     .select(["accessToken", "apiKey"])
@@ -35,7 +43,7 @@ export async function handleAuthCommand(peer: any, msg: any) {
   }
 
   // Initialize User Session
-  const session = await sessionManager.getSession(userId, decryptSecret(brokerAccount.accessToken), brokerAccount.apiKey || undefined)
+  const session = await sessionManager.getSession(userId, decryptSecret(brokerAccount.accessToken), brokerAccount.apiKey || undefined, tradeMode)
 
   // Setup event listeners for this user's paper trader
   session.paperTrader.on("portfolio_update", (positions) => {

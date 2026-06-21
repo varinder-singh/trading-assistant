@@ -17,6 +17,9 @@ const profileSuccess = ref("")
 const fullName = ref("")
 const email = ref("")
 
+const tradeMode = ref<"PAPER"|"REAL">("PAPER")
+const changingTradeMode = ref(false)
+
 const kiteApiKey = ref("")
 const kiteApiSecret = ref("")
 const hasSavedApiSecret = ref(false)
@@ -34,6 +37,7 @@ const fetchProfile = async () => {
     if (data.value) {
       fullName.value = data.value.fullName || ""
       email.value = data.value.email || user.value?.email || ""
+      tradeMode.value = data.value.tradeMode || "PAPER"
     }
   } catch (err: any) {
     console.error("Failed to load profile:", err)
@@ -107,6 +111,44 @@ const saveProfile = async () => {
   }
 }
 
+// Toggle Trade Mode
+const toggleTradeMode = async (newMode: "PAPER" | "REAL", force = false) => {
+  if (newMode === "REAL") {
+    const confirmReal = window.confirm("WARNING: Switching to REAL mode will place actual trades with real money. Are you absolutely sure?")
+    if (!confirmReal) return
+  }
+
+  try {
+    changingTradeMode.value = true
+    profileError.value = ""
+    profileSuccess.value = ""
+
+    await $fetch("/api/profile/trade-mode", {
+      method: "PUT",
+      body: { tradeMode: newMode, force }
+    })
+
+    tradeMode.value = newMode
+    profileSuccess.value = `Successfully switched to ${newMode} mode.`
+    
+    // Clear success message after 3 seconds
+    setTimeout(() => {
+      profileSuccess.value = ""
+    }, 3000)
+  } catch (err: any) {
+    if (err.response?.status === 409 && err.response?._data?.statusMessage === "OPEN_REAL_TRADES") {
+      const confirmForce = window.confirm(err.response._data.message + "\\n\\nDo you want to force switch to PAPER anyway?")
+      if (confirmForce) {
+        return toggleTradeMode("PAPER", true)
+      }
+    } else {
+      profileError.value = "Failed to switch mode: " + (err.response?._data?.message || err.message)
+    }
+  } finally {
+    changingTradeMode.value = false
+  }
+}
+
 onMounted(() => {
   fetchProfile()
   fetchConnections()
@@ -129,6 +171,40 @@ onMounted(() => {
 
     <main class="max-w-4xl mx-auto px-4 py-8 space-y-8">
       
+      <!-- Trade Mode Settings -->
+      <section class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="p-6 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div :class="tradeMode === 'REAL' ? 'bg-red-100' : 'bg-blue-100'" class="p-2 rounded-lg transition-colors">
+              <ShieldCheck :class="tradeMode === 'REAL' ? 'text-red-600' : 'text-blue-600'" class="w-5 h-5 transition-colors" />
+            </div>
+            <div>
+              <h2 class="text-lg font-semibold">Trading Mode</h2>
+              <p class="text-sm text-gray-500">Determine if the AI places trades with real money</p>
+            </div>
+          </div>
+          
+          <div class="flex items-center gap-3">
+            <span class="text-sm font-medium" :class="tradeMode === 'REAL' ? 'text-gray-500' : 'text-blue-600'">PAPER</span>
+            <button 
+              @click="toggleTradeMode(tradeMode === 'PAPER' ? 'REAL' : 'PAPER')"
+              :disabled="changingTradeMode"
+              class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2 disabled:opacity-50"
+              :class="tradeMode === 'REAL' ? 'bg-red-600' : 'bg-gray-200'"
+              role="switch"
+            >
+              <span class="sr-only">Toggle trading mode</span>
+              <span 
+                aria-hidden="true" 
+                class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                :class="tradeMode === 'REAL' ? 'translate-x-5' : 'translate-x-0'"
+              ></span>
+            </button>
+            <span class="text-sm font-medium" :class="tradeMode === 'REAL' ? 'text-red-600' : 'text-gray-500'">REAL</span>
+          </div>
+        </div>
+      </section>
+
       <!-- Profile Settings -->
       <section class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <div class="p-6 border-b border-gray-100 bg-gray-50/50 flex items-center gap-3">

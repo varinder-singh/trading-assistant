@@ -98,6 +98,7 @@ export type TradeTechnicalAnalysis = {
   sentiment: AISentimentResponse
   optionsAnalysis: KiteOptionsAnalysis
   candles1h: Candle[]
+  candles30m: Candle[]
   candles15m: Candle[]
   candles3m: Candle[]
   agentType: TradingAgentType
