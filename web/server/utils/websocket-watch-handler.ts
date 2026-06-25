@@ -113,6 +113,7 @@ export async function handleWatchCommand(peer: any, msg: any) {
                   trend15m: tf.trend,
                   aiStopLoss: calculatedSl,
                   aiTarget: calculatedTarget,
+                  lotSize: result.lotSize,
                 },
               })
             }

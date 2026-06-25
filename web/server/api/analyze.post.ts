@@ -93,6 +93,7 @@ export default defineEventHandler(async (event) => {
               trend15m: tf.trend,
               aiStopLoss: calculatedSl,
               aiTarget: calculatedTarget,
+              lotSize: result.lotSize,
             },
           })
         }
