@@ -22,7 +22,7 @@ async function testGemini(modelName: string) {
 }
 
 async function run() {
-  await testGemini("gemini-2.5-flash-lite")
+  await testGemini("gemini-3.5-flash")
   console.log("---")
   await testGemini("gemini-2.0-flash")
   console.log("---")
