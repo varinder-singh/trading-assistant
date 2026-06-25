@@ -219,6 +219,7 @@ export async function runAnalysis(
       liveContext,
       previousDecision,
       reversalScore, // Pass the reversal score to the AI
+      symbol,
     },
     activeAgent as import("../ai/types.js").TradingAgentType,
     userId

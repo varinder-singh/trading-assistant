@@ -347,9 +347,10 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
       const provider = getLLMProvider()
 
       // Fetch Memory
+      const symbol = input.symbol || "NIFTY"
       const trend = input.tf15m?.trend || "SIDEWAYS"
       const vix = input.vix?.current || 15
-      const pastTrades = await memoryService.getRegimeStats(userId, trend, vix)
+      const pastTrades = await memoryService.getRegimeStats(userId, symbol, trend, vix)
       const memoryPrompt = memoryService.formatForPrompt(pastTrades)
 
       const cleanedInput = this.sanitizeForLLM(input)
@@ -453,9 +454,10 @@ The position was originally opened by a ${agentType} agent. You must decide whet
     }
 
     // Fetch Memory for Risk Context
+    const symbol = input.openPosition?.symbol || "NIFTY"
     const trend = input.marketData?.tf15m?.trend || "SIDEWAYS"
     const vix = input.marketData?.vix?.current || 15
-    const pastTrades = await memoryService.getRegimeStats(userId, trend, vix)
+    const pastTrades = await memoryService.getRegimeStats(userId, symbol, trend, vix)
     const memoryPrompt = memoryService.formatForPrompt(pastTrades)
 
     const cleanedMarketData = this.sanitizeForLLM({ marketData: input.marketData }).marketData

@@ -22,7 +22,7 @@ export class MemoryService {
   /**
    * Fetches similar past trades and computes statistical metrics to provide context for the current decision.
    */
-  async getRegimeStats(userId: string, trend: string, vix: number): Promise<RegimeStats | null> {
+  async getRegimeStats(userId: string, symbol: string, trend: string, vix: number): Promise<RegimeStats | null> {
     if (!userId) return null;
     try {
       const allTrades = await db
@@ -40,6 +40,7 @@ export class MemoryService {
         .where("trades.status", "=", "CLOSED")
         .where("trades.isPaperTrade", "=", true)
         .where("trades.userId", "=", userId)
+        .where("trades.symbol", "=", symbol)
         .where(sql<string>`trade_analytics.metadata->>'trend15m'`, "=", trend)
         .where(sql<number>`CAST(trade_analytics.metadata->>'vixLevel' AS NUMERIC)`, ">=", vix - 2)
         .where(sql<number>`CAST(trade_analytics.metadata->>'vixLevel' AS NUMERIC)`, "<=", vix + 2)
