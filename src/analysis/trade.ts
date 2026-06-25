@@ -120,6 +120,7 @@ export async function runAnalysis(
     console.log(`[Circuit Breaker] Aborting analysis for ${symbol}: ${reason}`)
     return {
       tf1h,
+      tf30m,
       tf15m,
       tf3m,
       dailyContext,
@@ -160,6 +161,7 @@ export async function runAnalysis(
 
   const marketContext: MarketContext = {
     tf1h,
+    tf30m,
     tf15m,
     tf3m,
     dailyContext,
@@ -188,6 +190,7 @@ export async function runAnalysis(
   // We mock a temporary TradeTechnicalAnalysis object just to calculate the score
   const tempAnalysisForScore = {
     tf1h,
+    tf30m,
     tf15m,
     tf3m,
     dailyContext,
@@ -209,6 +212,7 @@ export async function runAnalysis(
   const aiDecision = await llmService.analyzeWithEnsemble(
     {
       tf1h,
+      tf30m,
       tf15m,
       tf3m,
       dailyContext,
@@ -228,6 +232,7 @@ export async function runAnalysis(
   if (!aiDecision) {
     return {
       tf1h,
+      tf30m,
       tf15m,
       tf3m,
       dailyContext,
@@ -344,6 +349,7 @@ export async function runAnalysis(
 
   const baseAnalysis: Omit<TradeTechnicalAnalysis, "reversalScore"> = {
     tf1h,
+    tf30m,
     tf15m,
     tf3m,
     dailyContext,
@@ -400,7 +406,7 @@ export async function evaluatePosition(
       candles3m = macro.candles3m
     }
 
-    ;[vix, kiteData] = await Promise.all([getIndiaVix(), getOptionChain(kc, symbol)])
+    [vix, kiteData] = await Promise.all([getIndiaVix(), getOptionChain(kc, symbol)])
   } else {
     const [candlesData, v, k] = await Promise.all([
       getMultiTimeframeCandles(ticker),
@@ -427,6 +433,7 @@ export async function evaluatePosition(
 
   const marketData: MarketContext = {
     tf1h,
+    tf30m,
     tf15m,
     tf3m,
     dailyContext,

@@ -38,6 +38,7 @@ export interface OrchestratorResponse {
 
 export type MarketContext = {
   tf1h: TechnicalAnalysis
+  tf30m: TechnicalAnalysis
   tf15m: TechnicalAnalysis
   tf3m: TechnicalAnalysis
   dailyContext: DailyContext | null
