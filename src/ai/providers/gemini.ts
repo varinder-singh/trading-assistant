@@ -14,7 +14,7 @@ export class GeminiProvider implements LLMProvider {
       this.genAI = new GoogleGenerativeAI(apiKey)
     }
 
-    const modelName = options?.model || "gemini-2.5-flash-lite"
+    const modelName = options?.model || "gemini-3.5-flash"
 
     // Extract system message if present
     const systemMessage = messages.find((m) => m.role === "system")
