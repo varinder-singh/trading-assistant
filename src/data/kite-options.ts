@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url"
 import type { Connect as KiteConnect, Instrument } from "kiteconnect"
 import { analyzeOptions, type KiteOptionQuote, type KiteOptionInstrumentForAnalysis } from "../analysis/kite-options.js"
 import { getYesterdayClosingOI } from "./kite-historical.js"
+import { resolveKiteUnderlying } from "../utils/symbol.js"
 
 type KiteOptionInstrument = Instrument & {
   instrument_type: "CE" | "PE"
@@ -50,7 +51,9 @@ export async function getOptionChain(kc: KiteConnect, symbol: string = "NIFTY") 
 
   const quotes = await kc.getQuote(symbols) as Record<string, KiteOptionQuote>
 
-  return { quotes, finalOptions, nearestExpiry, selectedStrikes: [...new Set(selectedStrikes)] }
+  const lotSize = filtered.length > 0 ? (filtered[0]?.lot_size || 0) : 0
+
+  return { quotes, finalOptions, nearestExpiry, selectedStrikes: [...new Set(selectedStrikes)], lotSize }
 }
 
 function isDirectRun() {
@@ -66,8 +69,8 @@ function isDirectRun() {
 async function runStandalone() {
   const { createKiteClient } = await import("./kite.js")
   const kc = createKiteClient(process.env.KITE_ACCESS_TOKEN)
-  const symbol = "NIFTY"
-  const underlyingTicker = symbol === "NIFTY" ? "NSE:NIFTY 50" : symbol === "BANKNIFTY" ? "NSE:NIFTY BANK" : symbol
+  const symbol = process.argv[2] || "NIFTY"
+  const underlyingTicker = resolveKiteUnderlying(symbol)
   
   console.log(`[Test] Fetching ${symbol} chain and underlying price...`)
   const [{ quotes, finalOptions, nearestExpiry }, underlyingQuote] = await Promise.all([

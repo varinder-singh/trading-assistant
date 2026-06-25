@@ -51,7 +51,7 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const result = await runAnalysis(kc, symbol, mode || "intraday")
+    const result = await runAnalysis(kc, symbol, mode || "intraday", undefined, undefined, undefined, userId)
     const { tf15m: tf, aiDecision: decision, vix, agentType } = result
 
     if (decision && decision.optionAction !== "NONE" && decision.decision !== "HOLD") {

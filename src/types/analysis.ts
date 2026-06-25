@@ -107,6 +107,7 @@ export type TradeTechnicalAnalysis = {
     bullish: number
     bearish: number
   }
+  lotSize?: number
 }
 
 export interface GTIScore {

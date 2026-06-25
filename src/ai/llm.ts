@@ -23,6 +23,68 @@ export class LLMService {
     eventHub.emit("agent_update", update)
   }
 
+  private sanitizeForLLM(input: any): any {
+    if (!input) return input
+
+    // Deep clone carefully to avoid modifying the original running context state
+    const cleaned = JSON.parse(JSON.stringify(input))
+
+    // 1. Downsample Ticks (max 15 evenly spaced ticks representing the entire window)
+    const downsampleTicks = (ticks: any[]) => {
+      if (!Array.isArray(ticks) || ticks.length <= 15) return ticks
+      const step = Math.max(1, Math.floor(ticks.length / 15))
+      return ticks.filter((_, i) => i % step === 0 || i === ticks.length - 1)
+    }
+
+    if (cleaned.liveContext && Array.isArray(cleaned.liveContext.recentTicks)) {
+      cleaned.liveContext.recentTicks = downsampleTicks(cleaned.liveContext.recentTicks)
+    }
+
+    if (cleaned.marketData?.liveContext && Array.isArray(cleaned.marketData.liveContext.recentTicks)) {
+      cleaned.marketData.liveContext.recentTicks = downsampleTicks(cleaned.marketData.liveContext.recentTicks)
+    }
+
+    // 2. Truncate Swings (keep only last 10)
+    const truncateSwings = (tf: any) => {
+      if (tf && Array.isArray(tf.swings) && tf.swings.length > 10) {
+        tf.swings = tf.swings.slice(-10)
+      }
+    }
+
+    truncateSwings(cleaned.tf1h)
+    truncateSwings(cleaned.tf15m)
+    truncateSwings(cleaned.tf3m)
+    if (cleaned.marketData) {
+      truncateSwings(cleaned.marketData.tf1h)
+      truncateSwings(cleaned.marketData.tf15m)
+      truncateSwings(cleaned.marketData.tf3m)
+    }
+
+    // 3. Strip Raw Historical Candles (they consume massive tokens)
+    const stripCandles = (obj: any) => {
+      if (!obj) return
+      delete obj.candles1h
+      delete obj.candles15m
+      delete obj.candles30m
+      delete obj.candles3m
+      delete obj.candles1d
+    }
+
+    stripCandles(cleaned)
+    stripCandles(cleaned.marketData)
+
+    // 4. Compress Previous Decision Context
+    if (cleaned.previousDecision) {
+      cleaned.previousDecision = {
+        decision: cleaned.previousDecision.decision,
+        setup: cleaned.previousDecision.setup,
+        reason: cleaned.previousDecision.reason,
+      }
+    }
+
+    return cleaned
+  }
+
   public async evaluateMarketState(input: any, userId: string = ""): Promise<OrchestratorResponse> {
     console.log("[AI] Starting evaluateMarketState (Orchestrator)...")
     this.emitUpdate({
@@ -32,9 +94,10 @@ export class LLMService {
     })
 
     const systemMessage = ORCHESTRATOR_PROMPT
+    const cleanedInput = this.sanitizeForLLM(input)
     const userPrompt = `Evaluate the current macro context to decide the active trading agent:
 ## MARKET DATA
-${JSON.stringify(input, null, 2)}
+${JSON.stringify(cleanedInput, null, 2)}
 `
     try {
       const provider = getLLMProvider()
@@ -128,7 +191,7 @@ ${JSON.stringify(input, null, 2)}
       const wave5Target = input.tf15m?.waveContext?.wave5Target || input.marketData?.tf15m?.waveContext?.wave5Target
       if (wave5Target) {
         systemMessage = systemMessage.replace(
-          /`Wave 5 Target = Wave 4 Low \+ \(1\.0 \* \(Wave 1 High - Wave 1 Low\)\)`/g,
+          /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,
           `The mathematical Wave 5 Exhaustion Target is exactly ${wave5Target.toFixed(2)}. If price enters within 5 points of this level, shift trailing stop tightly.`
         )
       }
@@ -140,55 +203,47 @@ ${JSON.stringify(input, null, 2)}
       if (input.prompt) {
         userPrompt = input.prompt
       } else {
+        const cleanedInput = this.sanitizeForLLM(input)
+
         let liveContextSection = ""
-        if (input.liveContext) {
-          const oiInsights = input.optionsAnalysisZerodha?.windowStats
-            ? `\n- OI Window Insights (${input.optionsAnalysisZerodha.windowStats.intervalMins}m): Top Short Covering: ${input.optionsAnalysisZerodha.windowStats.topShortCovering.map((r: any) => r.symbol).join(", ")}`
+        if (cleanedInput.liveContext) {
+          const oiInsights = cleanedInput.optionsAnalysisZerodha?.windowStats
+            ? `\n- OI Window Insights (${cleanedInput.optionsAnalysisZerodha.windowStats.intervalMins}m): Top Short Covering: ${cleanedInput.optionsAnalysisZerodha.windowStats.topShortCovering.map((r: any) => r.symbol).join(", ")}`
             : ""
-          const flowInsight = input.optionsAnalysisZerodha?.marketFlow
-            ? `\n- Aggregate Market Flow: ${input.optionsAnalysisZerodha.marketFlow}`
+          const flowInsight = cleanedInput.optionsAnalysisZerodha?.marketFlow
+            ? `\n- Aggregate Market Flow: ${cleanedInput.optionsAnalysisZerodha.marketFlow}`
             : ""
 
           liveContextSection = `
 ## REAL-TIME WEBSOCKET CONTEXT (TRULY LIVE)
-- Trigger Reason: ${input.liveContext.reason}
-- Last Price: ${input.liveContext.tick.last_price}${oiInsights}${flowInsight}
-- Momentum: ${input.liveContext.reason.includes("Volatility") ? "High Volatility detected" : "Price Action driven"}
-- Recent Ticks (last 60s): ${JSON.stringify(input.liveContext.recentTicks.map((t: any) => t.last_price))}
+- Trigger Reason: ${cleanedInput.liveContext.reason}
+- Last Price: ${cleanedInput.liveContext.tick.last_price}${oiInsights}${flowInsight}
+- Momentum: ${cleanedInput.liveContext.reason.includes("Volatility") ? "High Volatility detected" : "Price Action driven"}
+- Recent Ticks (sampled 60s): ${JSON.stringify(cleanedInput.liveContext.recentTicks.map((t: any) => t.last_price || t))}
 
 NOTE: This real-time data takes PRECEDENCE over historical candles.
 `
         }
 
         let previousDecisionSection = ""
-        if (input.previousDecision) {
+        if (cleanedInput.previousDecision) {
           previousDecisionSection = `
 ## PREVIOUS AI DECISION (FEEDBACK LOOP)
 Your last analysis resulted in:
-- Decision: ${input.previousDecision.decision}
-- Setup: ${input.previousDecision.setup}
-- Reason: ${input.previousDecision.reason}
+- Decision: ${cleanedInput.previousDecision.decision}
+- Setup: ${cleanedInput.previousDecision.setup}
+- Reason: ${cleanedInput.previousDecision.reason}
 
 Use this to decide if the current live breakout confirms your previous bias.
 `
         }
 
-        const cleanedInput = { ...input }
-        if (cleanedInput.liveContext) {
-          cleanedInput.liveContext = {
-            ...cleanedInput.liveContext,
-            recentTicks: "[OMITTED]",
-          }
-        }
-        if (cleanedInput.previousDecision) {
-          cleanedInput.previousDecision = "[OMITTED]"
-        }
         let reversalScoreSection = ""
-        if (input.reversalScore) {
+        if (cleanedInput.reversalScore) {
           reversalScoreSection = `
 ## REVERSAL QUALITY SCORE (0 to 5)
-- Bullish Reversal Score: ${input.reversalScore.bullish}/5
-- Bearish Reversal Score: ${input.reversalScore.bearish}/5
+- Bullish Reversal Score: ${cleanedInput.reversalScore.bullish}/5
+- Bearish Reversal Score: ${cleanedInput.reversalScore.bearish}/5
 NOTE: Do NOT take a reversal trade (Playbook B) if the score is less than 3/5.
 `
         }
@@ -297,7 +352,8 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
       const pastTrades = await memoryService.getRegimeStats(userId, trend, vix)
       const memoryPrompt = memoryService.formatForPrompt(pastTrades)
 
-      const marketDataStr = JSON.stringify(input, null, 2)
+      const cleanedInput = this.sanitizeForLLM(input)
+      const marketDataStr = JSON.stringify(cleanedInput, null, 2)
 
       // 1. Run Technical and Options agents in parallel
       this.emitUpdate({
@@ -391,7 +447,7 @@ The position was originally opened by a ${agentType} agent. You must decide whet
     const wave5Target = input.tf15m?.waveContext?.wave5Target || input.marketData?.tf15m?.waveContext?.wave5Target
     if (wave5Target) {
       systemMessage = systemMessage.replace(
-        /`Wave 5 Target = Wave 4 Low \+ \(1\.0 \* \(Wave 1 High - Wave 1 Low\)\)`/g,
+        /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,
         `The mathematical Wave 5 Exhaustion Target is exactly ${wave5Target.toFixed(2)}. If price enters within 5 points of this level, shift trailing stop tightly.`
       )
     }
@@ -402,6 +458,7 @@ The position was originally opened by a ${agentType} agent. You must decide whet
     const pastTrades = await memoryService.getRegimeStats(userId, trend, vix)
     const memoryPrompt = memoryService.formatForPrompt(pastTrades)
 
+    const cleanedMarketData = this.sanitizeForLLM({ marketData: input.marketData }).marketData
     const userPrompt = `Evaluate the following open position against current market data:
 
 ${memoryPrompt}
@@ -410,7 +467,7 @@ ${memoryPrompt}
 ${JSON.stringify(input.openPosition, null, 2)}
 
 ## CURRENT MARKET DATA
-${JSON.stringify(input.marketData, null, 2)}
+${JSON.stringify(cleanedMarketData, null, 2)}
 
 ## Required Output (JSON only)
 {

@@ -57,7 +57,9 @@ export async function handleWatchCommand(peer: any, msg: any) {
           symbol,
           client.mode,
           context,
-          client.lastDecision
+          client.lastDecision,
+          undefined,
+          client.userId
         )
         const { tf15m: tf, aiDecision: decision, vix, agentType } = analysisResult
         client.lastDecision = decision

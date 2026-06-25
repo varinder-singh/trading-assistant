@@ -23,6 +23,7 @@ export class MemoryService {
    * Fetches similar past trades and computes statistical metrics to provide context for the current decision.
    */
   async getRegimeStats(userId: string, trend: string, vix: number): Promise<RegimeStats | null> {
+    if (!userId) return null;
     try {
       const allTrades = await db
         .selectFrom("trades")
@@ -32,16 +33,16 @@ export class MemoryService {
           "trades.side",
           "trades.pnl",
           "trades.status",
-          sql<string>`trade_analytics.metadata->>'ai_reasoning'`.as("ai_reasoning"),
-          sql<string>`trade_analytics.metadata->>'trend_15m'`.as("trend_15m"),
-          sql<number>`CAST(trade_analytics.metadata->>'vix_level' AS NUMERIC)`.as("vix_level"),
+          sql<string>`trade_analytics.metadata->>'aiReasoning'`.as("ai_reasoning"),
+          sql<string>`trade_analytics.metadata->>'trend15m'`.as("trend_15m"),
+          sql<number>`CAST(trade_analytics.metadata->>'vixLevel' AS NUMERIC)`.as("vix_level"),
         ])
         .where("trades.status", "=", "CLOSED")
         .where("trades.isPaperTrade", "=", true)
         .where("trades.userId", "=", userId)
-        .where(sql<string>`trade_analytics.metadata->>'trend_15m'`, "=", trend)
-        .where(sql<number>`CAST(trade_analytics.metadata->>'vix_level' AS NUMERIC)`, ">=", vix - 2)
-        .where(sql<number>`CAST(trade_analytics.metadata->>'vix_level' AS NUMERIC)`, "<=", vix + 2)
+        .where(sql<string>`trade_analytics.metadata->>'trend15m'`, "=", trend)
+        .where(sql<number>`CAST(trade_analytics.metadata->>'vixLevel' AS NUMERIC)`, ">=", vix - 2)
+        .where(sql<number>`CAST(trade_analytics.metadata->>'vixLevel' AS NUMERIC)`, "<=", vix + 2)
         .orderBy("trades.closedAt", "desc")
         .execute()
 

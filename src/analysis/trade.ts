@@ -14,6 +14,7 @@ import { cooldownManager } from "../utils/cooldown.js"
 import type { Candle, TradeTechnicalAnalysis } from "../types/analysis.js"
 import { getInstrumentToken } from "../data/kite.js"
 import { gtiTracker } from "../indicators/gti-tracker.js"
+import { resolveYahooTicker } from "../utils/symbol.js"
 
 const llmService = new LLMService()
 
@@ -44,7 +45,7 @@ export async function runAnalysis(
   },
   userId: string = ""
 ): Promise<TradeTechnicalAnalysis> {
-  const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
+  const ticker = resolveYahooTicker(symbol)
 
   let candles1d, candles1h, candles30m, candles15m, candles3m
   let headlines, vix, kiteData
@@ -81,7 +82,7 @@ export async function runAnalysis(
   const { tf1h, tf30m, tf15m, tf3m } = analyzeMultiTimeframe(candles1h, candles30m || [], candles15m, candles3m)
   const dailyContext = analyzeDailyContext(candles1d, candles15m)
 
-  const { quotes, finalOptions } = kiteData
+  const { quotes, finalOptions, lotSize } = kiteData
 
   // Establish Baseline Yesterday OI
   if (!yesterdayOiCache || lastCacheSymbol !== symbol) {
@@ -104,6 +105,15 @@ export async function runAnalysis(
   const ivStats = await ivHistoryRepo.getIvStats(symbol, currentIv, 30)
   optionsAnalysisZerodha.ivRank = ivStats.ivRank
   optionsAnalysisZerodha.ivPercentile = ivStats.ivPercentile
+
+  // --- OPTIMIZE LLM PAYLOAD ---
+  // Truncate rows to keep only ATM and +/- 2 strikes to save tokens
+  const atmIdx = optionsAnalysisZerodha.rows.findIndex(r => r.strike === optionsAnalysisZerodha.atmStrike && r.type === "CE")
+  if (atmIdx !== -1) {
+    const startIdx = Math.max(0, atmIdx - 4)
+    const endIdx = Math.min(optionsAnalysisZerodha.rows.length, atmIdx + 6)
+    optionsAnalysisZerodha.rows = optionsAnalysisZerodha.rows.slice(startIdx, endIdx)
+  }
 
   if (cooldownManager.isOnCooldown(symbol) || vix.current > 25) {
     const reason = cooldownManager.isOnCooldown(symbol) ? "Symbol on Cooldown" : "VIX > 25 Circuit Breaker"
@@ -346,6 +356,7 @@ export async function runAnalysis(
     candles3m: candles3m.slice(-100),
     agentType: (activeAgent || "SCALPER") as import("../ai/types.js").TradingAgentType,
     gtiHistory: gtiTracker.getHistory(0), // Will be overridden by WS server with actual token
+    lotSize: lotSize || 1,
   }
 
   return {
@@ -367,7 +378,7 @@ export async function evaluatePosition(
   },
   userId: string = ""
 ) {
-  const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
+  const ticker = resolveYahooTicker(symbol)
 
   let candles1d, candles1h, candles30m, candles15m, candles3m
   let vix, kiteData

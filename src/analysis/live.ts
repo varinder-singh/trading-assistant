@@ -36,7 +36,14 @@ export class LiveAnalyzer extends EventEmitter {
 
   addTick(tick: LiveTick) {
     tick.received_at = Date.now()
-    this.ticks.push(tick)
+    
+    const lastTick = this.ticks.length > 0 ? this.ticks[this.ticks.length - 1] : null
+    if (lastTick && lastTick.last_price === tick.last_price) {
+      lastTick.received_at = tick.received_at
+    } else {
+      this.ticks.push(tick)
+    }
+
     this.cleanupOldTicks()
     this.checkTriggers(tick)
   }
@@ -97,6 +104,9 @@ export class LiveAnalyzer extends EventEmitter {
       const tickTime = t.received_at ?? now
       return now - tickTime < this.windowSizeMs
     })
+    if (this.ticks.length > 500) {
+      this.ticks = this.ticks.slice(-500)
+    }
   }
 
   private checkTriggers(tick: LiveTick) {

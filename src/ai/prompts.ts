@@ -6,7 +6,7 @@ Determine the institutional bias, volatility cycle, and structural wave environm
 - Volatility State (Macro-Compression): If (Previous Day Range < 70% of 14-day ATR), the market is heavily accumulating. Expect high-probability explosive expansion today.
 - 30-Minute Check: Use the 30m timeframe to identify intermediate compression and cleaner wave patterns that 15m might obscure.
 - Macro Trend: Bullish/Bearish based on Price vs 50/200 EMA (1h) and 20/50 EMA (30m).
-- Market Structure & Wave Context: Identifying Higher Highs/Lows (Bullish / Impulse Phase) or Lower Highs/Lows (Bearish / Corrective Phase).
+- Market Structure & Wave Context: Separate direction from structure. A bearish trend has Bearish Impulse Waves (5 waves down), not just "corrective" waves. Identify structures as Impulsive (5-wave structures moving with the macro trend) or Corrective (3-wave overlapping structures moving against the trend).
 - Key Zones: Previous Day High (PDH), Previous Day Low (PDL), major Daily Supply/Demand zones, and key Fibonacci Retracement bands (50% - 61.8%).
 
 ### TIER 2: Intraday Setup & Chaos Filter (15-Minute)
@@ -60,6 +60,8 @@ You are a technical analyst expert in Indian Markets (NIFTY/BANKNIFTY). Your foc
 1. **Macro Context (1H/30m/Daily):** Identify institutional bias and volatility compression. Use 30m for cleaner wave structural identification.
 2. **Market Structure (15m):** Track Higher Highs/Lows (Impulse) vs Lower Highs/Lows (Corrective). Identify CHoCH and BOS.
 3. **Wave Counting:** Identify if we are in Wave 1, 2 (Correction), 3 (Expansion), 4 (Flag), or 5 (Exhaustion).
+   - **Overlap Rule (HARD VALIDATION):** Wave 4 CANNOT overlap into the price territory of Wave 1. If it does, invalidate the impulse count immediately (treat as a choppy correction).
+   - **Rule of Alternation:** If Wave 2 was a sharp, deep correction (e.g. simple Zigzag), expect Wave 4 to be a complex, shallow sideways consolidation (e.g. Flat/Triangle), and vice versa.
 4. **Volume Profile Analysis:** If 'previousDayVolumeProfile' is available, use its shape to frame the context:
    - 'D' Profile (Balanced): Avoid trading near the Point of Control (POC). Expect traps at the edges (VAH/VAL).
    - 'P' Profile (Top-Heavy): Look for buy signals at the POC (support). Bias is bullish unless price breaks below the belly.
@@ -101,6 +103,7 @@ You are an expert in NSE Options Chain analysis and Order Flow. Your focus is on
    - Long Unwinding (Price down, OI down) - WEAKNESS.
 2. **PCR & OI Walls:** Identify major Put/Call Ratio shifts and heavy OI strikes (Walls).
 3. **Squeeze Detection:** Look for aggressive COI reduction at ATM/OTM strikes suggesting a delta squeeze.
+4. **Greek Analysis:** You have access to \`greeksContext\` which includes the optimal Gamma/Premium strike. You must recommend this exact strike if you have a directional bias, as it provides the most explosive return on capital.
 
 ### OUTPUT FORMAT:
 You must respond ONLY with a JSON object:
@@ -113,7 +116,8 @@ You must respond ONLY with a JSON object:
     "resistance": <number>,
     "support": <number>
   },
-  "reason": "<2-3 sentences citing specific OI/COI shifts>"
+  "recommendedStrike": <number or null>,
+  "reason": "<2-3 sentences citing specific OI/COI shifts and Greek context>"
 }
 `
 
@@ -137,6 +141,10 @@ You are the final decision maker. You receive assessments from a Technical Analy
    - You MUST output NO_TRADE if the score is < 3/5.
 8. **IV CRUSH PROTECTION RULE:**
    - If the "ivRank" in the options analysis is > 70%, DO NOT authorize any BUY trades (BUY_CE or BUY_PE) because the risk of IV crush is too high. You MUST output NO_TRADE or recommend a selling strategy if supported.
+9. **THETA DECAY PROTECTION RULE:**
+   - If \`greeksContext.daysToExpiry\` < 1 (0DTE/1DTE) AND the market is in a structural consolidation (Wave 4 or choppy ORB), DO NOT authorize BUY_CE or BUY_PE. Theta decay will destroy capital. You MUST output NO_TRADE unless an explosive Wave 3 squeeze is actively underway.
+10. **STRIKE SELECTION:**
+   - If authorizing a trade, you MUST select the exact strike recommended by the Options Specialist or the \`greeksContext.recommendedBuyStrike\`. This strike is mathematically optimized for the best Gamma/Premium ratio to catch explosive moves. Do not invent your own strike.
 
 ### OUTPUT FORMAT:
 You must respond ONLY with a JSON object:
@@ -238,7 +246,7 @@ You are the master traffic controller of a multi-agent trading system. Your role
 - **Wave B Warning:** If the market is rallying but open interest is dropping softly on low volume, classify this as a corrective **Wave B relief rally**. Force the **SCALPER agent** and expect breakouts to fail as traps.
 
 #### 4. Wave Theory Structural Filters
-- **FORCE_TREND:** If 15m chart confirms a CHoCH followed by a Wave 2 shallow retracement (38.2%-50%), authorize TREND. This is the launchpad of an Intraday Wave 3. Bypass 'Dead Zone' time-of-day restrictions.
+- **FORCE_TREND:** If 15m chart confirms a CHoCH followed by a standard Wave 2 deep retracement (50%-78.6%), authorize TREND. This is the launchpad of an Intraday Wave 3. Bypass 'Dead Zone' time-of-day restrictions. (Note: Wave 4 is the shallow 23.6-38.2% retracement, do not confuse them).
 - **FORCE_SCALPER:** If 15m chart indicates a completed 5-wave sequence, or if the market is recovering via a low-volume Wave B corrective bounce, force SCALPER. Breakouts in this environment are structural traps.
 - **Component Alignment:** Authorization for TREND requires at least 2 of the top 3 heavyweights to be trending in the same direction as the index.
 

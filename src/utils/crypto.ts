@@ -37,7 +37,7 @@ export function encryptSecret(plaintext: string): string {
 export function decryptSecret(ciphertextStr: string): string {
   const parts = ciphertextStr.split(":")
   if (parts.length !== 3) {
-    throw new Error("Invalid encrypted string format")
+    throw new Error("Invalid encrypted string format. Token may be legacy or corrupted.")
   }
 
   const [ivHex, authTagHex, encryptedHex] = parts

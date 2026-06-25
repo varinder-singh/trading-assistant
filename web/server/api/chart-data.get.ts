@@ -1,5 +1,6 @@
 import { getMultiTimeframeCandles } from "@core/data/yahoo.js"
 import { isMarketOpen, getMarketStatusMessage } from "@core/utils/market-hours.js"
+import { resolveYahooTicker } from "@core/utils/symbol.js"
 import { serverSupabaseUser } from "#supabase/server"
 
 export default defineEventHandler(async (event) => {
@@ -10,7 +11,7 @@ export default defineEventHandler(async (event) => {
 
   const query = getQuery(event)
   const symbol = (query.symbol as string) || "NIFTY"
-  const ticker = symbol === "NIFTY" ? "^NSEI" : symbol === "BANKNIFTY" ? "^NSEBANK" : symbol
+  const ticker = resolveYahooTicker(symbol)
 
   try {
     const data = await getMultiTimeframeCandles(ticker)

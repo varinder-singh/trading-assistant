@@ -10,6 +10,7 @@ import { getInstrumentToken } from "../data/kite.js";
 import type { Connect as KiteConnect } from "kiteconnect";
 import { KiteOrderService } from "./kite-orders.js";
 import { getGreeksFromPrice } from "../analysis/greeks.js";
+import { resolveYahooTicker } from "../utils/symbol.js";
 
 export type StrategyContext = {
   macroTrend: AIMacroTrend;
@@ -35,6 +36,7 @@ export interface TradeContext {
   optionTheta?: number;
   optionVega?: number;
   optionExpiry?: Date | string;
+  lotSize?: number;
 }
 export class PaperTrader extends EventEmitter {
   private positions: Map<string, PaperPosition> = new Map();
@@ -226,7 +228,7 @@ export class PaperTrader extends EventEmitter {
                 ? "BANKNIFTY"
                 : pos.symbol;
 
-            const macroSymbol = symbol === "NIFTY" ? "^NSEI" : "^NSEBANK";
+            const macroSymbol = resolveYahooTicker(symbol);
             const [macro, underlyingToken] = await Promise.all([
               getMultiTimeframeCandles(macroSymbol),
               getInstrumentToken(this.kc, symbol),
@@ -247,6 +249,7 @@ export class PaperTrader extends EventEmitter {
                 candles15m: candleBuilder.getCandles(underlyingToken || 0, 15),
                 candles3m: candleBuilder.getCandles(underlyingToken || 0, 3),
               },
+              this.userId
             );
 
             // Calculate Greeks dynamically
@@ -312,11 +315,14 @@ export class PaperTrader extends EventEmitter {
                 // TRANSLATE INDEX TRAILING STOP TO PREMIUM
                 const indexRiskPoints = Math.abs(currentIndexPrice - decision.newIndexStopLoss);
 
-                // TREND Agent uses wider stops / different multiplier if needed
-                // Trend trades often use deep ITM or further ATM, so delta varies.
-                // For TREND, we assume a slightly lower delta to give it more breathing room on premium swings.
-                const estimatedDelta = agentType === "TREND" ? 0.45 : 0.6;
-                optionRiskPoints = indexRiskPoints * estimatedDelta;
+                // Calculate Risk Points using the exact Black-Scholes Delta if available, otherwise fallback to estimation
+                // Delta is negative for PE, so we take the absolute value
+                const dynamicDelta = pos.optionDelta ? Math.abs(pos.optionDelta) : (agentType === "TREND" ? 0.45 : 0.6);
+                
+                // For TREND agent, we can apply a small buffer to prevent premature shakeouts due to gamma spikes.
+                const effectiveDelta = agentType === "TREND" ? Math.max(0.1, dynamicDelta * 0.9) : Math.max(0.1, dynamicDelta);
+                
+                optionRiskPoints = indexRiskPoints * effectiveDelta;
 
                 newPremiumSl = pos.currentPrice - optionRiskPoints;
               }
@@ -535,10 +541,7 @@ export class PaperTrader extends EventEmitter {
         }
 
         // Standard lot sizes
-        let baseLotSize = 550; // Default for stocks like HDFCBANK
-        if (params.symbol.startsWith("NIFTY")) baseLotSize = 65;
-        if (params.symbol.startsWith("BANKNIFTY")) baseLotSize = 25;
-        if (params.symbol.startsWith("FINNIFTY")) baseLotSize = 40;
+        let baseLotSize = params.context?.lotSize || 1;
 
         let numLots = 1;
         if (params.context?.optionDelta) {
@@ -672,8 +675,10 @@ export class PaperTrader extends EventEmitter {
             params.context?.strategyContext?.indexSl || pos.aiStopLoss + fallbackOffset;
           const indexRisk = Math.abs(indexPrice - pos.aiStopLoss);
           const agentType = params.context?.strategyContext?.agentType || "SCALPER";
-          const delta = agentType === "TREND" ? 0.45 : 0.6;
-          const premiumRisk = indexRisk * delta;
+          
+          const dynamicDelta = params.context?.optionDelta ? Math.abs(params.context.optionDelta) : (pos.optionDelta ? Math.abs(pos.optionDelta) : (agentType === "TREND" ? 0.45 : 0.6));
+          const effectiveDelta = agentType === "TREND" ? Math.max(0.1, dynamicDelta * 0.9) : Math.max(0.1, dynamicDelta);
+          const premiumRisk = indexRisk * effectiveDelta;
 
           const oldSl = pos.aiStopLoss;
           pos.aiStopLoss = Math.max(order.price! - premiumRisk, 0.05);
@@ -689,8 +694,10 @@ export class PaperTrader extends EventEmitter {
             params.context?.strategyContext?.indexSl || pos.aiTarget + fallbackOffset;
           const indexGain = Math.abs(pos.aiTarget - indexPrice);
           const agentType = params.context?.strategyContext?.agentType || "SCALPER";
-          const delta = agentType === "TREND" ? 0.45 : 0.6;
-          const premiumGain = indexGain * delta;
+          
+          const dynamicDelta = params.context?.optionDelta ? Math.abs(params.context.optionDelta) : (pos.optionDelta ? Math.abs(pos.optionDelta) : (agentType === "TREND" ? 0.45 : 0.6));
+          const effectiveDelta = agentType === "TREND" ? Math.max(0.1, dynamicDelta * 0.9) : Math.max(0.1, dynamicDelta);
+          const premiumGain = indexGain * effectiveDelta;
 
           const oldTarget = pos.aiTarget;
           pos.aiTarget = order.price! + premiumGain;
@@ -788,6 +795,7 @@ export class PaperTrader extends EventEmitter {
         if (context?.aiSetup) pos.aiSetup = context.aiSetup;
         if (context?.strategyContext) pos.strategyContext = context.strategyContext;
         if (context?.optionExpiry) pos.optionExpiry = context.optionExpiry;
+        if (context?.optionDelta) pos.optionDelta = context.optionDelta;
 
         this.positions.set(order.symbol, pos);
       }

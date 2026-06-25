@@ -19,24 +19,23 @@ export const gtiRepo = {
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
     return await db
-      .insertInto("historicalCandles")
+      .insertInto("gtiScores")
       .values({
         id,
         symbol: data.symbol,
-        instrumentToken: data.token,
+        token: data.token,
         timeframe: data.timeframe,
-        candleTime: String(data.candleTime),
-        open: String(data.candle.open),
-        high: String(data.candle.high),
-        low: String(data.candle.low),
-        close: String(data.candle.close),
-        volume: String(data.candle.volume),
-        compositeScore: String(data.gtiScore.composite),
+        candleTime: data.candleTime,
+        open: data.candle.open,
+        high: data.candle.high,
+        low: data.candle.low,
+        close: data.candle.close,
+        volume: data.candle.volume,
+        compositeScore: data.gtiScore.composite,
         classification: data.gtiScore.classification,
-        confidence: String(data.gtiScore.confidence),
+        confidence: data.gtiScore.confidence,
         components: JSON.stringify(data.gtiScore.components),
-        createdAt: now,
-        updatedAt: now,
+        timestamp: now,
       })
       .executeTakeFirst()
   },
@@ -46,7 +45,7 @@ export const gtiRepo = {
    */
   async getScoresBySymbol(symbol: string, timeframe: number, limit = 50) {
     return await db
-      .selectFrom("historicalCandles")
+      .selectFrom("gtiScores")
       .where("symbol", "=", symbol)
       .where("timeframe", "=", timeframe)
       .orderBy("candleTime", "desc")
@@ -63,10 +62,10 @@ export const gtiRepo = {
     // We assume candleTime is stored as a Unix timestamp or similar, or createdAt can be used.
     // If createdAt represents when it was inserted, we filter by createdAt.
     return await db
-      .selectFrom("historicalCandles")
+      .selectFrom("gtiScores")
       .where("symbol", "=", symbol)
-      .where("createdAt", ">=", `${date}T00:00:00`)
-      .where("createdAt", "<", `${date}T23:59:60`)
+      .where("timestamp", ">=", `${date}T00:00:00`)
+      .where("timestamp", "<", `${date}T23:59:60`)
       .orderBy("candleTime", "asc")
       .selectAll()
       .execute()

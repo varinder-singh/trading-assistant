@@ -39,8 +39,9 @@ describe("runAnalysis", () => {
     vi.mocked(kiteOptions.getOptionChain).mockResolvedValue({
       quotes: {},
       finalOptions: [],
-      nearestExpiry: "2024-05-30",
+      nearestExpiry: "2024-05-30T00:00:00.000Z",
       selectedStrikes: [],
+      lotSize: 75,
     })
     vi.mocked(LLMService.prototype.evaluateMarketState).mockResolvedValue({
       activeAgent: "SCALPER",

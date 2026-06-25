@@ -47,7 +47,7 @@ class WsConnectionManager {
           symbol,
           token,
           timeframe,
-          candleTime: candle.time,
+          candleTime: candle.timestamp,
           candle,
           gtiScore,
         })

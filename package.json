@@ -12,6 +12,7 @@
     "check": "tsc --noEmit",
     "kite:options": "NODE_OPTIONS='--no-warnings' node --loader ts-node/esm src/data/kite-options.ts",
     "kite:token": "NODE_OPTIONS='--no-warnings' node --loader ts-node/esm src/scripts/kite-access-token.ts",
+    "iv:snapshot": "NODE_OPTIONS='--no-warnings' tsx src/scripts/snapshot-daily-iv.ts",
     "dashboard:dev": "cd web && npm run dev",
     "dashboard:build": "cd web && npm run build",
     "db:migrate": "NODE_OPTIONS='--no-warnings' tsx src/db/migrate.ts",

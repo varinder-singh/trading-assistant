@@ -50,6 +50,12 @@ export type KiteOptionsAnalysis = {
   ivRank?: number
   ivPercentile?: number
   rows: KiteOptionOiRow[]
+  greeksContext?: {
+    daysToExpiry: number
+    atmGreeks: { delta: number; gamma: number; theta: number; iv: number; vega: number }
+    recommendedBuyStrikeCE: { strike: number; rationale: string; expectedGamma: number; gammaPremiumRatio: number }
+    recommendedBuyStrikePE: { strike: number; rationale: string; expectedGamma: number; gammaPremiumRatio: number }
+  }
   windowStats?: {
     topShortCovering: KiteOptionOiRow[]
     topLongBuildup: KiteOptionOiRow[]
@@ -126,6 +132,16 @@ export function analyzeOptions(
     }
   }
 
+  // Calculate global days to expiry
+  let globalDaysToExpiry = 0
+  const firstInstrument = instruments.find(i => i.expiry)
+  if (firstInstrument && firstInstrument.expiry) {
+    const today = new Date()
+    const expiryDate = new Date(firstInstrument.expiry)
+    expiryDate.setHours(15, 30, 0, 0)
+    globalDaysToExpiry = Math.max(0.001, (expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+  }
+
   for (const inst of instruments) {
     const key = `NFO:${inst.tradingsymbol}`
     const q = quotes[key]
@@ -150,16 +166,9 @@ export function analyzeOptions(
     // 3. Yesterday's Comparison
     const yOi = inst.instrument_token ? yesterdayOiMap?.get(inst.instrument_token) : undefined
 
-    // 4. Calculate Greeks
     let greeks = q.greeks || undefined
     if (!greeks && underlyingPrice && inst.expiry) {
-      // Calculate days to expiry
-      const today = new Date()
-      const expiryDate = new Date(inst.expiry)
-      expiryDate.setHours(15, 30, 0, 0)
-      const daysToExpiry = Math.max(0.001, (expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-
-      greeks = getGreeksFromPrice(ltp, underlyingPrice, inst.strike, daysToExpiry, 0.07, inst.instrument_type)
+      greeks = getGreeksFromPrice(ltp, underlyingPrice, inst.strike, globalDaysToExpiry || 0.001, 0.07, inst.instrument_type)
     }
 
     const row: KiteOptionOiRow = {
@@ -218,6 +227,58 @@ export function analyzeOptions(
   const sentiment = pcr > 1.2 ? "bullish" : pcr < 0.8 ? "bearish" : "neutral"
   const atmSentiment = pcrAtm > 1.2 ? "bullish" : pcrAtm < 0.8 ? "bearish" : "neutral"
 
+  // Greeks Context and Strike Selection
+  let atmGreeks = { delta: 0, gamma: 0, theta: 0, iv: 0, vega: 0 }
+  const ceRows = rows.filter(r => r.type === "CE" && r.ltp > 0 && r.greeks)
+  const peRows = rows.filter(r => r.type === "PE" && r.ltp > 0 && r.greeks)
+
+  const atmCe = ceRows.find(r => r.strike === atmStrike)
+  if (atmCe && atmCe.greeks) {
+    atmGreeks = { ...atmCe.greeks }
+  } else {
+    const atmPe = peRows.find(r => r.strike === atmStrike)
+    if (atmPe && atmPe.greeks) {
+      atmGreeks = { ...atmPe.greeks }
+    }
+  }
+
+  const getBestGammaStrike = (optionRows: KiteOptionOiRow[]) => {
+    // We want strikes that have a reasonable delta (e.g. 0.25 to 0.65) to avoid deep OTM or deep ITM
+    const validRows = optionRows.filter(r => {
+       if (!r.greeks) return false;
+       const absDelta = Math.abs(r.greeks.delta);
+       return absDelta >= 0.25 && absDelta <= 0.65;
+    });
+    
+    if (validRows.length === 0) return optionRows.length > 0 ? optionRows[0] : null;
+
+    return validRows.reduce((best, current) => {
+       const bestRatio = best.greeks!.gamma / best.ltp;
+       const currentRatio = current.greeks!.gamma / current.ltp;
+       return currentRatio > bestRatio ? current : best;
+    });
+  }
+
+  const bestCe = getBestGammaStrike(ceRows);
+  const bestPe = getBestGammaStrike(peRows);
+
+  const greeksContext = {
+    daysToExpiry: globalDaysToExpiry,
+    atmGreeks,
+    recommendedBuyStrikeCE: bestCe ? {
+      strike: bestCe.strike,
+      rationale: `Selected based on optimal Gamma/Premium ratio (${(bestCe.greeks!.gamma / bestCe.ltp).toFixed(5)}) for explosive moves.`,
+      expectedGamma: bestCe.greeks!.gamma,
+      gammaPremiumRatio: bestCe.greeks!.gamma / bestCe.ltp
+    } : { strike: atmStrike, rationale: "Default ATM", expectedGamma: 0, gammaPremiumRatio: 0 },
+    recommendedBuyStrikePE: bestPe ? {
+      strike: bestPe.strike,
+      rationale: `Selected based on optimal Gamma/Premium ratio (${(bestPe.greeks!.gamma / bestPe.ltp).toFixed(5)}) for explosive moves.`,
+      expectedGamma: bestPe.greeks!.gamma,
+      gammaPremiumRatio: bestPe.greeks!.gamma / bestPe.ltp
+    } : { strike: atmStrike, rationale: "Default ATM", expectedGamma: 0, gammaPremiumRatio: 0 }
+  }
+
   return {
     pcr: Number(pcr.toFixed(2)),
     pcrAtm: Number(pcrAtm.toFixed(2)),
@@ -233,6 +294,7 @@ export function analyzeOptions(
     support,
     resistance,
     marketFlow,
+    greeksContext,
     rows: rows.sort((a, b) => a.strike - b.strike || a.type.localeCompare(b.type)),
     windowStats: {
       topShortCovering: [...rows]
