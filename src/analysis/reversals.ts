@@ -1,5 +1,4 @@
-import type { TradeTechnicalAnalysis, VolumeProfile } from "../types/analysis.js"
-import type { KiteOptionsAnalysis } from "./kite-options.js"
+import type { TradeTechnicalAnalysis } from "../types/analysis.js"
 
 export interface ReversalScoreResult {
   score: number
