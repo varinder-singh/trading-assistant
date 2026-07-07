@@ -1,34 +1,34 @@
 <script setup lang="ts">
-import { ref } from "vue"
-import { TrendingUp, Mail, KeyRound, Loader2, ArrowRight } from "@lucide/vue"
+import { ref } from 'vue'
+import { TrendingUp, Mail, KeyRound, Loader2, ArrowRight } from '@lucide/vue'
 
 const supabase = useSupabaseClient()
 const user = useSupabaseUser()
 
-const email = ref("")
-const password = ref("")
+const email = ref('')
+const password = ref('')
 const loading = ref(false)
 const isSignUp = ref(false)
-const errorMsg = ref("")
-const successMsg = ref("")
+const errorMsg = ref('')
+const successMsg = ref('')
 
 // If user is already logged in, redirect to dashboard
 watchEffect(() => {
   if (user.value) {
-    navigateTo("/")
+    navigateTo('/')
   }
 })
 
 async function handleAuth() {
   if (!email.value || !password.value) {
-    errorMsg.value = "Please enter both email and password"
+    errorMsg.value = 'Please enter both email and password'
     return
   }
 
   try {
     loading.value = true
-    errorMsg.value = ""
-    successMsg.value = ""
+    errorMsg.value = ''
+    successMsg.value = ''
 
     if (isSignUp.value) {
       const { error } = await supabase.auth.signUp({
@@ -36,7 +36,7 @@ async function handleAuth() {
         password: password.value,
       })
       if (error) throw error
-      successMsg.value = "Account created successfully! You can now log in."
+      successMsg.value = 'Account created successfully! You can now log in.'
       isSignUp.value = false
     } else {
       const { error } = await supabase.auth.signInWithPassword({
@@ -47,7 +47,7 @@ async function handleAuth() {
       // Watch effect will automatically redirect to '/' once user.value is set
     }
   } catch (e: any) {
-    errorMsg.value = e.message || "Authentication failed"
+    errorMsg.value = e.message || 'Authentication failed'
   } finally {
     loading.value = false
   }
@@ -90,9 +90,9 @@ async function handleAuth() {
 
         <div class="space-y-6 transition-all duration-300">
           <div>
-            <h2 class="text-xl font-semibold text-white mb-1">{{ isSignUp ? "Create an account" : "Welcome back" }}</h2>
+            <h2 class="text-xl font-semibold text-white mb-1">{{ isSignUp ? 'Create an account' : 'Welcome back' }}</h2>
             <p class="text-zinc-400 text-sm">
-              {{ isSignUp ? "Sign up to start trading" : "Enter your credentials to access your account" }}
+              {{ isSignUp ? 'Sign up to start trading' : 'Enter your credentials to access your account' }}
             </p>
           </div>
 
@@ -132,14 +132,14 @@ async function handleAuth() {
           >
             <Loader2 v-if="loading" class="w-5 h-5 animate-spin" />
             <template v-else>
-              <span>{{ isSignUp ? "Sign Up" : "Sign In" }}</span>
+              <span>{{ isSignUp ? 'Sign Up' : 'Sign In' }}</span>
               <ArrowRight class="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </template>
           </button>
 
           <div class="text-center">
             <button @click="isSignUp = !isSignUp" class="text-sm text-zinc-500 hover:text-white transition-colors">
-              {{ isSignUp ? "Already have an account? Sign in" : "Don't have an account? Sign up" }}
+              {{ isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up" }}
             </button>
           </div>
         </div>

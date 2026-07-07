@@ -1,5 +1,7 @@
-import { db } from "../database.js"
-import crypto from "node:crypto"
+import { db as dbDefault } from '../database.js'
+import crypto from 'node:crypto'
+import { Kysely } from 'kysely'
+import type { Database } from '../database.js'
 
 export interface AnalyzerEvent {
   symbol: string
@@ -9,11 +11,17 @@ export interface AnalyzerEvent {
   metadata?: any
 }
 
-export const eventRepo = {
+export class EventRepository {
+  private db: Kysely<Database>
+
+  constructor(db: Kysely<Database> = dbDefault) {
+    this.db = db
+  }
+
   async saveEvent(event: AnalyzerEvent) {
     const id = crypto.randomUUID()
-    return await db
-      .insertInto("marketEvents")
+    return await this.db
+      .insertInto('marketEvents')
       .values({
         id,
         symbol: event.symbol,
@@ -24,15 +32,15 @@ export const eventRepo = {
         updatedAt: event.timestamp,
       })
       .executeTakeFirst()
-  },
+  }
 
   async getRecentEvents(symbol: string, limit = 10) {
-    return await db
-      .selectFrom("marketEvents")
-      .where("symbol", "=", symbol)
-      .orderBy("createdAt", "desc")
+    return await this.db
+      .selectFrom('marketEvents')
+      .where('symbol', '=', symbol)
+      .orderBy('createdAt', 'desc')
       .limit(limit)
       .selectAll()
       .execute()
-  },
+  }
 }

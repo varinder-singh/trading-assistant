@@ -1,7 +1,7 @@
-import type { AISentimentResponse, AISuccessResponse, TradingAgentType } from "../ai/types.js"
-import type { KiteOptionsAnalysis } from "../analysis/kite-options.js"
-import type { VixData } from "../data/vix.js"
-import type { DailyContext } from "./technical-analysis.js"
+import type { AISentimentResponse, AISuccessResponse, TradingAgentType } from '../ai/types.js'
+import type { KiteOptionsAnalysis } from '../analysis/kite-options.js'
+import type { VixData } from '../data/vix.js'
+import type { DailyContext } from './technical-analysis.js'
 
 export type Analysis = {
   trend: string
@@ -13,7 +13,7 @@ export type Analysis = {
 }
 
 export type TradePlan = {
-  decision: "BUY" | "SELL" | "NO_TRADE" | "NEUTRAL"
+  decision: 'BUY' | 'SELL' | 'NO_TRADE' | 'NEUTRAL'
   reason?: string
   entry?: number
   stopLoss?: number
@@ -31,7 +31,7 @@ export interface Candle {
 }
 
 export interface SwingPoint {
-  type: "HIGH" | "LOW"
+  type: 'HIGH' | 'LOW'
   price: number
   time: number
 }
@@ -43,7 +43,7 @@ export interface WaveContext {
   wave3High?: number
   wave4Low?: number
   wave5Target?: number
-  currentPhase: "WAVE_1" | "WAVE_2" | "WAVE_3" | "WAVE_4" | "WAVE_5" | "ABC_CORRECTION" | "CONSOLIDATION"
+  currentPhase: 'WAVE_1' | 'WAVE_2' | 'WAVE_3' | 'WAVE_4' | 'WAVE_5' | 'ABC_CORRECTION' | 'CONSOLIDATION'
   fibZones?: {
     fib382: number
     fib500: number
@@ -54,7 +54,7 @@ export interface WaveContext {
 export interface OpeningRange {
   high: number
   low: number
-  broken?: "UP" | "DOWN" | "INSIDE"
+  broken?: 'UP' | 'DOWN' | 'INSIDE'
 }
 
 export interface VolumeNode {
@@ -62,7 +62,7 @@ export interface VolumeNode {
   volume: number
 }
 
-export type ProfileType = "D" | "B" | "P" | "I" | "UNKNOWN"
+export type ProfileType = 'D' | 'B' | 'P' | 'I' | 'UNKNOWN'
 
 export interface VolumeProfile {
   poc: number
@@ -85,7 +85,7 @@ export type TechnicalAnalysis = {
   swings?: SwingPoint[] | undefined
   waveContext?: WaveContext | undefined
   openingRange?: OpeningRange | undefined
-  gtiScore?: import("./analysis.js").GTIScore
+  gtiScore?: import('./analysis.js').GTIScore
 }
 
 export type TradeTechnicalAnalysis = {

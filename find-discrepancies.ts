@@ -1,7 +1,7 @@
-import { db } from "./src/db/database.js"
+import { db } from './src/db/database.js'
 
 async function findDiscrepancies() {
-  const trades = await db.selectFrom("trades").selectAll().execute()
+  const trades = await db.selectFrom('trades').selectAll().execute()
   const discrepancies = []
 
   for (const t of trades) {
@@ -23,7 +23,7 @@ async function findDiscrepancies() {
   }
 
   if (discrepancies.length === 0) {
-    console.log("No PnL discrepancies found in the database.")
+    console.log('No PnL discrepancies found in the database.')
   } else {
     console.log(`Found ${discrepancies.length} discrepancies:`)
     console.table(discrepancies)

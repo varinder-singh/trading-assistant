@@ -1,26 +1,26 @@
 export function isMarketOpen(date: Date = new Date()): boolean {
   // Convert current time to IST
-  const options = { timeZone: "Asia/Kolkata", hour12: false }
-  const formatter = new Intl.DateTimeFormat("en-US", {
+  const options = { timeZone: 'Asia/Kolkata', hour12: false }
+  const formatter = new Intl.DateTimeFormat('en-US', {
     ...options,
-    weekday: "long",
-    hour: "numeric",
-    minute: "numeric",
+    weekday: 'long',
+    hour: 'numeric',
+    minute: 'numeric',
   })
   const parts = formatter.formatToParts(date)
 
-  let weekday = ""
+  let weekday = ''
   let hour = 0
   let minute = 0
 
   for (const part of parts) {
-    if (part.type === "weekday") weekday = part.value
-    if (part.type === "hour") hour = parseInt(part.value, 10)
-    if (part.type === "minute") minute = parseInt(part.value, 10)
+    if (part.type === 'weekday') weekday = part.value
+    if (part.type === 'hour') hour = parseInt(part.value, 10)
+    if (part.type === 'minute') minute = parseInt(part.value, 10)
   }
 
   // Check weekends
-  if (weekday === "Saturday" || weekday === "Sunday") {
+  if (weekday === 'Saturday' || weekday === 'Sunday') {
     return false
   }
 
@@ -34,7 +34,7 @@ export function isMarketOpen(date: Date = new Date()): boolean {
 
 export function getMarketStatusMessage(date: Date = new Date()): string {
   if (isMarketOpen(date)) {
-    return "Market is Open"
+    return 'Market is Open'
   }
-  return "Market is Closed"
+  return 'Market is Closed'
 }

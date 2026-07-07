@@ -1,4 +1,4 @@
-import type { Candle, ProfileType, VolumeNode, VolumeProfile } from "../types/analysis.js"
+import type { Candle, ProfileType, VolumeNode, VolumeProfile } from '../types/analysis.js'
 
 export function calculateVolumeProfile(
   candles: Candle[],
@@ -84,7 +84,7 @@ export function calculateVolumeProfile(
 
   // Profile Type Heuristic
   const range = roundedMax - roundedMin
-  let profileType: ProfileType = "UNKNOWN"
+  let profileType: ProfileType = 'UNKNOWN'
 
   if (range > 0) {
     const normalizedPoc = (poc - roundedMin) / range
@@ -94,13 +94,13 @@ export function calculateVolumeProfile(
 
     // I Profile: thin volume, spread evenly
     if (maxVol < avgVolPerBin * 2.5 && valueAreaRange / range > 0.75) {
-      profileType = "I"
+      profileType = 'I'
     } else if (normalizedPoc > 0.65) {
-      profileType = "P"
+      profileType = 'P'
     } else if (normalizedPoc < 0.35) {
-      profileType = "B"
+      profileType = 'B'
     } else {
-      profileType = "D"
+      profileType = 'D'
     }
   }
 

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, watchEffect, nextTick, computed } from "vue"
+import { ref, onMounted, onUnmounted, watch, watchEffect, nextTick, computed } from 'vue'
 
 const user = useSupabaseUser()
 watchEffect(() => {
   if (!user.value) {
-    navigateTo("/login")
+    navigateTo('/login')
   }
 })
 import {
@@ -23,12 +23,12 @@ import {
   BarChart2,
   ChevronRight,
   RefreshCcw,
-} from "@lucide/vue"
-import { createChart, CandlestickSeries, CrosshairMode } from "lightweight-charts"
-import type { IChartApi, ISeriesApi } from "lightweight-charts"
+} from '@lucide/vue'
+import { createChart, CandlestickSeries, CrosshairMode } from 'lightweight-charts'
+import type { IChartApi, ISeriesApi } from 'lightweight-charts'
 
-const symbol = ref("NIFTY")
-const mode = ref<"intraday" | "swing">("intraday")
+const symbol = ref('NIFTY')
+const mode = ref<'intraday' | 'swing'>('intraday')
 const loading = ref(false)
 const analysisResult = ref<any>(null)
 const error = ref<string | null>(null)
@@ -37,7 +37,7 @@ const breakouts = ref<any[]>([])
 const portfolio = ref<any[]>([])
 const tradeHistory = ref<any[]>([])
 const analyzerEvents = ref<any[]>([])
-const currentView = ref<"live" | "history" | "events" | "logs">("live")
+const currentView = ref<'live' | 'history' | 'events' | 'logs'>('live')
 const expandedTradeId = ref<string | null>(null)
 const supabase = useSupabaseClient()
 const isLoggingOut = ref(false)
@@ -46,9 +46,9 @@ const handleLogout = async () => {
   try {
     isLoggingOut.value = true
     await supabase.auth.signOut()
-    navigateTo("/login")
+    navigateTo('/login')
   } catch (error) {
-    console.error("Error logging out:", error)
+    console.error('Error logging out:', error)
   } finally {
     isLoggingOut.value = false
   }
@@ -59,26 +59,26 @@ const serverLogs = ref<string[]>([])
 const logsContainer = ref<HTMLElement | null>(null)
 const lastInstitutionalAlertAt = ref(0)
 const isMarketOpen = ref<boolean>(true)
-const marketStatusMessage = ref<string>("Checking market status...")
+const marketStatusMessage = ref<string>('Checking market status...')
 
 const agents = ref<Record<string, any>>({
-  Orchestrator: { status: "idle", message: "Awaiting market data...", lastUpdate: Date.now() },
-  "Regime Validator": { status: "idle", message: "Awaiting orchestrator...", lastUpdate: Date.now() },
-  SCALPER: { status: "idle", message: "Awaiting signal...", lastUpdate: Date.now() },
-  TREND: { status: "idle", message: "Awaiting trend...", lastUpdate: Date.now() },
-  "Risk Manager": { status: "idle", message: "No active positions.", lastUpdate: Date.now() },
+  Orchestrator: { status: 'idle', message: 'Awaiting market data...', lastUpdate: Date.now() },
+  'Regime Validator': { status: 'idle', message: 'Awaiting orchestrator...', lastUpdate: Date.now() },
+  SCALPER: { status: 'idle', message: 'Awaiting signal...', lastUpdate: Date.now() },
+  TREND: { status: 'idle', message: 'Awaiting trend...', lastUpdate: Date.now() },
+  'Risk Manager': { status: 'idle', message: 'No active positions.', lastUpdate: Date.now() },
 })
 
 const activeSpecialist = computed(() => {
-  if (agents.value["TREND"] && agents.value["TREND"].status !== "idle") return "TREND"
-  if (agents.value["SCALPER"] && agents.value["SCALPER"].status !== "idle") return "SCALPER"
+  if (agents.value['TREND'] && agents.value['TREND'].status !== 'idle') return 'TREND'
+  if (agents.value['SCALPER'] && agents.value['SCALPER'].status !== 'idle') return 'SCALPER'
   if (
-    agents.value["TREND"] &&
-    agents.value["SCALPER"] &&
-    agents.value["TREND"].lastUpdate > agents.value["SCALPER"].lastUpdate
+    agents.value['TREND'] &&
+    agents.value['SCALPER'] &&
+    agents.value['TREND'].lastUpdate > agents.value['SCALPER'].lastUpdate
   )
-    return "TREND"
-  return "SCALPER"
+    return 'TREND'
+  return 'SCALPER'
 })
 
 const selectedAgentForDetail = ref<string | null>(null)
@@ -86,8 +86,8 @@ const selectedAgentForDetail = ref<string | null>(null)
 const dailyPnl = computed(() => {
   const realized = tradeHistory.value
     .filter((t) => {
-      const today = new Date().toISOString().split("T")[0]
-      return t.status === "CLOSED" && t.closedAt?.startsWith(today)
+      const today = new Date().toISOString().split('T')[0]
+      return t.status === 'CLOSED' && t.closedAt?.startsWith(today)
     })
     .reduce((acc, t) => acc + (t.pnl || 0), 0)
 
@@ -109,36 +109,36 @@ function addNotification(notif: any) {
 
 async function fetchHistory() {
   try {
-    const data = await $fetch("/api/history")
+    const data = await $fetch('/api/history')
     tradeHistory.value = data as any[]
   } catch (err: any) {
-    console.error("Failed to fetch history:", err)
+    console.error('Failed to fetch history:', err)
   }
 }
 
 async function fetchEvents() {
   try {
-    const data = await $fetch("/api/events", {
+    const data = await $fetch('/api/events', {
       params: { symbol: symbol.value },
     })
     analyzerEvents.value = data as any[]
   } catch (err: any) {
-    console.error("Failed to fetch analyzer events:", err)
+    console.error('Failed to fetch analyzer events:', err)
   }
 }
 
 const isPanicSelling = ref(false)
 async function panicSell() {
-  if (!confirm("Are you sure you want to SQUARE OFF ALL positions?")) return
-  
+  if (!confirm('Are you sure you want to SQUARE OFF ALL positions?')) return
+
   try {
     isPanicSelling.value = true
-    await $fetch("/api/square-off", { method: "POST" })
+    await $fetch('/api/square-off', { method: 'POST' })
     // The websocket will automatically update the portfolio state
-    alert("Panic sell command sent successfully.")
+    alert('Panic sell command sent successfully.')
   } catch (err: any) {
-    console.error("Failed to panic sell:", err)
-    alert("Failed to panic sell: " + err.message)
+    console.error('Failed to panic sell:', err)
+    alert('Failed to panic sell: ' + err.message)
   } finally {
     isPanicSelling.value = false
   }
@@ -152,13 +152,13 @@ function scrollToBottom() {
   })
 }
 
-function toggleView(view: "live" | "history" | "events") {
+function toggleView(view: 'live' | 'history' | 'events') {
   currentView.value = view
-  if (view === "history") {
+  if (view === 'history') {
     fetchHistory()
-  } else if (view === "events") {
+  } else if (view === 'events') {
     fetchEvents()
-  } else if (view === "live") {
+  } else if (view === 'live') {
     nextTick(() => {
       if (chart && chartContainer.value) {
         chart.applyOptions({ width: chartContainer.value.clientWidth })
@@ -172,27 +172,27 @@ function toggleTradeExpand(id: string) {
 }
 
 function formatDateIST(dateStr: string) {
-  if (!dateStr) return "—"
-  const date = new Date(dateStr + (dateStr.includes("T") && !dateStr.endsWith("Z") ? "Z" : ""))
-  return date.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })
+  if (!dateStr) return '—'
+  const date = new Date(dateStr + (dateStr.includes('T') && !dateStr.endsWith('Z') ? 'Z' : ''))
+  return date.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })
 }
 
 function formatTimeIST(dateStr: string) {
-  if (!dateStr) return "—"
-  const date = new Date(dateStr + (dateStr.includes("T") && !dateStr.endsWith("Z") ? "Z" : ""))
-  return date.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: true })
+  if (!dateStr) return '—'
+  const date = new Date(dateStr + (dateStr.includes('T') && !dateStr.endsWith('Z') ? 'Z' : ''))
+  return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true })
 }
 
 // Chart Refs
 const chartContainer = ref<HTMLElement | null>(null)
 let chart: IChartApi | null = null
-let candleSeries: ISeriesApi<"Candlestick"> | null = null
+let candleSeries: ISeriesApi<'Candlestick'> | null = null
 let resistanceLine: any = null
 let supportLine: any = null
 
 // Current candle state for tick updates
 const currentCandle = ref<any>(null)
-const chartTimeframeStr = ref<string>("15m") // 3m, 15m, 30m, 1h
+const chartTimeframeStr = ref<string>('15m') // 3m, 15m, 30m, 1h
 
 const activeTfStats = computed(() => {
   if (!analysisResult.value) return null
@@ -214,42 +214,42 @@ function connectWebSocket() {
   }
   isIntentionalClose = false
 
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   ws = new WebSocket(`${protocol}//${window.location.host}/websocket`)
 
   ws.onopen = () => {
-    console.log("WS Connected, authenticating...")
+    console.log('WS Connected, authenticating...')
     if (session.value?.access_token) {
-      ws!.send(JSON.stringify({ type: "auth", token: session.value.access_token }))
+      ws!.send(JSON.stringify({ type: 'auth', token: session.value.access_token }))
     } else {
-      console.error("No Supabase session found for WebSocket auth")
+      console.error('No Supabase session found for WebSocket auth')
     }
 
     // Keep connection alive
     clearInterval(pingInterval)
     pingInterval = setInterval(() => {
       if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "ping" }))
+        ws.send(JSON.stringify({ type: 'ping' }))
       }
     }, 30000)
   }
 
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data)
-    if (msg.type === "authenticated") {
-      console.log("WS Authenticated successfully.")
+    if (msg.type === 'authenticated') {
+      console.log('WS Authenticated successfully.')
       startWatching()
-    } else if (msg.type === "tick") {
+    } else if (msg.type === 'tick') {
       const price = msg.data.last_price
       livePrice.value = price
       updateChartFromTick(price, msg.data.gtiScore, msg.data.exchange_timestamp)
-    } else if (msg.type === "log") {
+    } else if (msg.type === 'log') {
       serverLogs.value.push(msg.data)
       if (serverLogs.value.length > 1000) serverLogs.value.shift()
-      if (currentView.value === "logs") {
+      if (currentView.value === 'logs') {
         scrollToBottom()
       }
-    } else if (msg.type === "analysis") {
+    } else if (msg.type === 'analysis') {
       analysisResult.value = msg.data
       if (!chart) {
         initChart()
@@ -259,19 +259,19 @@ function connectWebSocket() {
         const { resistance, support } = analysisResult.value.tf15m
         resistanceLine = candleSeries.createPriceLine({
           price: resistance,
-          color: "#ef4444",
+          color: '#ef4444',
           lineWidth: 1,
           lineStyle: 2,
           axisLabelVisible: true,
-          title: "RESISTANCE",
+          title: 'RESISTANCE',
         })
         supportLine = candleSeries.createPriceLine({
           price: support,
-          color: "#22c55e",
+          color: '#22c55e',
           lineWidth: 1,
           lineStyle: 2,
           axisLabelVisible: true,
-          title: "SUPPORT",
+          title: 'SUPPORT',
         })
       }
 
@@ -287,7 +287,7 @@ function connectWebSocket() {
           supportLine.applyOptions({ price: support })
         }
       }
-    } else if (msg.type === "agent_update") {
+    } else if (msg.type === 'agent_update') {
       const { agent, status, message, data } = msg.data
       agents.value[agent] = {
         status,
@@ -295,15 +295,15 @@ function connectWebSocket() {
         data,
         lastUpdate: Date.now(),
       }
-    } else if (msg.type === "breakout") {
+    } else if (msg.type === 'breakout') {
       breakouts.value.unshift(msg.data)
       if (breakouts.value.length > 5) breakouts.value.pop()
       addNotification({
-        title: "⚠️ Breakout Detected",
+        title: '⚠️ Breakout Detected',
         message: msg.data.reason,
-        type: "warning",
+        type: 'warning',
       })
-    } else if (msg.type === "portfolio") {
+    } else if (msg.type === 'portfolio') {
       portfolio.value = msg.data
       // We removed fetchHistory() here because portfolio updates on every tick (PnL update),
       // which causes an infinite loop of network requests and freezes the UI!
@@ -317,13 +317,13 @@ function connectWebSocket() {
         if (Math.abs(best.intervalOi) > 50000) {
           lastInstitutionalAlertAt.value = analysisTime
           addNotification({
-            title: "🔥 Institutional Action",
+            title: '🔥 Institutional Action',
             message: `Aggressive Short Covering on ${best.strike} ${best.type} detected!`,
-            type: "warning",
+            type: 'warning',
           })
         }
       }
-    } else if (msg.type === "notification") {
+    } else if (msg.type === 'notification') {
       addNotification(msg.data)
 
       // Add marker to chart if it's a trade execution
@@ -332,30 +332,30 @@ function connectWebSocket() {
         const markers = candleSeries.getMarkers() || []
         markers.push({
           time: Math.floor(Date.now() / 1000) as any,
-          position: side === "BUY" ? "belowBar" : "aboveBar",
-          color: side === "BUY" ? "#22c55e" : "#ef4444",
-          shape: side === "BUY" ? "arrowUp" : "arrowDown",
-          text: side === "BUY" ? "BUY" : "SELL",
+          position: side === 'BUY' ? 'belowBar' : 'aboveBar',
+          color: side === 'BUY' ? '#22c55e' : '#ef4444',
+          shape: side === 'BUY' ? 'arrowUp' : 'arrowDown',
+          text: side === 'BUY' ? 'BUY' : 'SELL',
         })
         candleSeries.setMarkers(markers)
 
         // Refresh history safely ONLY when a trade opens or closes
         fetchHistory()
       }
-    } else if (msg.type === "market_closed") {
+    } else if (msg.type === 'market_closed') {
       addNotification({
-        title: "🏁 Market Closed",
+        title: '🏁 Market Closed',
         message: msg.message,
-        type: "info",
+        type: 'info',
       })
     }
   }
 
   ws.onclose = () => {
     clearInterval(pingInterval)
-    console.log("WS Closed.")
+    console.log('WS Closed.')
     if (!isIntentionalClose) {
-      console.log("Attempting to reconnect in 3 seconds...")
+      console.log('Attempting to reconnect in 3 seconds...')
       clearTimeout(reconnectTimer)
       reconnectTimer = setTimeout(() => {
         connectWebSocket()
@@ -368,7 +368,7 @@ function startWatching() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(
       JSON.stringify({
-        type: "watch",
+        type: 'watch',
         data: {
           symbol: symbol.value,
           mode: mode.value,
@@ -387,7 +387,7 @@ function startWatching() {
 
 async function fetchInitialData() {
   try {
-    const data: any = await $fetch("/api/chart-data", { params: { symbol: symbol.value } })
+    const data: any = await $fetch('/api/chart-data', { params: { symbol: symbol.value } })
     isMarketOpen.value = data.isMarketOpen
     marketStatusMessage.value = data.marketStatusMessage
 
@@ -407,7 +407,7 @@ async function fetchInitialData() {
     fetchHistory()
     fetchEvents()
   } catch (err: any) {
-    console.error("Failed to load initial data", err)
+    console.error('Failed to load initial data', err)
   }
 }
 
@@ -419,8 +419,8 @@ async function runAnalysis() {
   breakouts.value = []
 
   try {
-    const data = await $fetch("/api/analyze", {
-      method: "POST",
+    const data = await $fetch('/api/analyze', {
+      method: 'POST',
       body: {
         symbol: symbol.value.toUpperCase(),
         mode: mode.value,
@@ -436,9 +436,9 @@ async function runAnalysis() {
     updateChartDataForTimeframe()
 
     // Refresh history if we are on that view
-    if (currentView.value === "history") fetchHistory()
+    if (currentView.value === 'history') fetchHistory()
   } catch (err: any) {
-    error.value = err.statusMessage || "Failed to run analysis"
+    error.value = err.statusMessage || 'Failed to run analysis'
     console.error(err)
   } finally {
     loading.value = false
@@ -455,31 +455,31 @@ function initChart() {
     localization: {
       timeFormatter: (time: number) => {
         const date = new Date(time * 1000)
-        return date.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })
+        return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })
       },
     },
     layout: {
-      background: { color: "#ffffff" },
-      textColor: "#333",
+      background: { color: '#ffffff' },
+      textColor: '#333',
     },
     grid: {
-      vertLines: { color: "#f0f0f0" },
-      horzLines: { color: "#f0f0f0" },
+      vertLines: { color: '#f0f0f0' },
+      horzLines: { color: '#f0f0f0' },
     },
     crosshair: {
       mode: CrosshairMode.Normal,
     },
     rightPriceScale: {
-      borderColor: "#f0f0f0",
+      borderColor: '#f0f0f0',
       autoScale: true,
     },
     timeScale: {
-      borderColor: "#f0f0f0",
+      borderColor: '#f0f0f0',
       timeVisible: true,
       secondsVisible: true,
       tickMarkFormatter: (time: number) => {
         const date = new Date(time * 1000)
-        return date.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })
+        return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })
       },
     },
     width: chartContainer.value.clientWidth,
@@ -487,13 +487,13 @@ function initChart() {
   })
 
   candleSeries = chart.addSeries(CandlestickSeries, {
-    upColor: "#22c55e",
-    downColor: "#ef4444",
+    upColor: '#22c55e',
+    downColor: '#ef4444',
     borderVisible: false,
-    wickUpColor: "#22c55e",
-    wickDownColor: "#ef4444",
+    wickUpColor: '#22c55e',
+    wickDownColor: '#ef4444',
     priceFormat: {
-      type: "price",
+      type: 'price',
       precision: 2,
       minMove: 0.05,
     },
@@ -505,27 +505,27 @@ function initChart() {
     // Custom price lines for levels
     resistanceLine = candleSeries.createPriceLine({
       price: resistance,
-      color: "#ef4444",
+      color: '#ef4444',
       lineWidth: 1,
       lineStyle: 2, // Dashed
       axisLabelVisible: true,
-      title: "RESISTANCE",
+      title: 'RESISTANCE',
     })
 
     supportLine = candleSeries.createPriceLine({
       price: support,
-      color: "#22c55e",
+      color: '#22c55e',
       lineWidth: 1,
       lineStyle: 2, // Dashed
       axisLabelVisible: true,
-      title: "SUPPORT",
+      title: 'SUPPORT',
     })
   }
 }
 
 function getGtiColors(gtiScore: any | undefined, isUp: boolean) {
   // Default colors
-  let color = isUp ? "#22c55e" : "#ef4444"
+  let color = isUp ? '#22c55e' : '#ef4444'
 
   if (!gtiScore) return { color, wickColor: color }
 
@@ -533,15 +533,15 @@ function getGtiColors(gtiScore: any | undefined, isUp: boolean) {
   const score = gtiScore.composite || 0
 
   if (score > 0.6) {
-    color = "#3b82f6" // Strong Institutional Buy (Blue)
+    color = '#3b82f6' // Strong Institutional Buy (Blue)
   } else if (score > 0.2) {
-    color = "#10b981" // Institutional Buy (Emerald)
+    color = '#10b981' // Institutional Buy (Emerald)
   } else if (score < -0.6) {
-    color = "#9333ea" // Strong Institutional Sell (Purple)
+    color = '#9333ea' // Strong Institutional Sell (Purple)
   } else if (score < -0.2) {
-    color = "#f43f5e" // Institutional Sell (Rose)
+    color = '#f43f5e' // Institutional Sell (Rose)
   } else {
-    color = isUp ? "#22c55e" : "#ef4444" // Standard colors for Neutral
+    color = isUp ? '#22c55e' : '#ef4444' // Standard colors for Neutral
   }
 
   return { color, wickColor: color }
@@ -592,7 +592,7 @@ function updateChartFromTick(price: number, gtiScore?: any, tickTimestamp?: stri
   const tickTimeMs = tickTimestamp ? new Date(tickTimestamp).getTime() : Date.now()
   const now = Math.floor(tickTimeMs / 1000)
 
-  const tfMap: Record<string, number> = { "3m": 180, "15m": 900, "30m": 1800, "1h": 3600 }
+  const tfMap: Record<string, number> = { '3m': 180, '15m': 900, '30m': 1800, '1h': 3600 }
   const bucketSecs = tfMap[chartTimeframeStr.value] || 900
 
   if (!currentCandle.value) {
@@ -647,10 +647,10 @@ function changeTimeframe(tf: string) {
   // Update WS subscription for timeframe
   if (ws && ws.readyState === WebSocket.OPEN) {
     // Re-send watch command with new timeframe
-    const tfMap: Record<string, number> = { "3m": 3, "15m": 15, "30m": 30, "1h": 60 }
+    const tfMap: Record<string, number> = { '3m': 3, '15m': 15, '30m': 30, '1h': 60 }
     ws.send(
       JSON.stringify({
-        type: "watch",
+        type: 'watch',
         data: {
           symbol: symbol.value,
           mode: mode.value,
@@ -663,12 +663,12 @@ function changeTimeframe(tf: string) {
 
 function getDecisionColor(decision: string) {
   switch (decision?.toUpperCase()) {
-    case "BUY":
-      return "text-green-500 bg-green-50"
-    case "SELL":
-      return "text-red-500 bg-red-50"
+    case 'BUY':
+      return 'text-green-500 bg-green-50'
+    case 'SELL':
+      return 'text-red-500 bg-red-50'
     default:
-      return "text-gray-500 bg-gray-50"
+      return 'text-gray-500 bg-gray-50'
   }
 }
 
@@ -679,7 +679,7 @@ onMounted(() => {
   fetchInitialData()
   connectWebSocket()
 
-  window.addEventListener("resize", () => {
+  window.addEventListener('resize', () => {
     if (chart && chartContainer.value) {
       chart.applyOptions({ width: chartContainer.value.clientWidth })
     }
@@ -772,9 +772,9 @@ onUnmounted(() => {
               v-if="loading"
               class="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"
             ></span>
-            {{ loading ? "Analyzing..." : "Analyze" }}
+            {{ loading ? 'Analyzing...' : 'Analyze' }}
           </button>
-          
+
           <div class="h-8 w-px bg-gray-200 mx-1"></div>
 
           <a
@@ -1029,26 +1029,97 @@ onUnmounted(() => {
                       class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
                       :class="pos.unrealizedPnL >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'"
                     >
-                      {{ pos.unrealizedPnL >= 0 ? "+" : "" }}{{ pos.unrealizedPnL.toFixed(2) }}
+                      {{ pos.unrealizedPnL >= 0 ? '+' : '' }}{{ pos.unrealizedPnL.toFixed(2) }}
                     </span>
                   </div>
-                  <div class="grid grid-cols-2 gap-2 text-[10px]">
+                  <div class="grid grid-cols-3 gap-2 text-[10px] mb-3">
                     <div>
                       <div class="text-gray-400 uppercase font-bold">Qty</div>
                       <div class="font-bold">{{ pos.quantity }}</div>
                     </div>
                     <div>
                       <div class="text-gray-400 uppercase font-bold">Avg Entry</div>
-                      <div class="font-bold">
-                        {{ pos.avgEntryPrice.toFixed(2) }}
-                      </div>
+                      <div class="font-bold">{{ pos.avgEntryPrice.toFixed(2) }}</div>
                     </div>
                     <div>
                       <div class="text-gray-400 uppercase font-bold">LTP</div>
-                      <div class="font-bold">
-                        {{ pos.currentPrice.toFixed(2) }}
-                      </div>
+                      <div class="font-bold">{{ pos.currentPrice.toFixed(2) }}</div>
                     </div>
+                  </div>
+
+                  <!-- SL Row -->
+                  <div class="flex items-center justify-between text-[10px] mb-2 px-1">
+                    <span class="text-red-500 font-bold uppercase tracking-wide">⛔ SL</span>
+                    <span class="font-mono font-black text-red-600">
+                      {{ pos.aiStopLoss ? pos.aiStopLoss.toFixed(2) : '—' }}
+                    </span>
+                  </div>
+
+                  <!-- Tiered Target Ladder -->
+                  <div v-if="pos.t1Target" class="space-y-1.5 mt-2 border-t border-gray-100 pt-2">
+                    <div class="text-[9px] text-gray-400 uppercase font-bold tracking-widest mb-1">Profit Ladder</div>
+
+                    <!-- T1 -->
+                    <div
+                      class="flex items-center justify-between text-[10px] px-1"
+                      :class="pos.t1Hit ? 'opacity-50' : ''"
+                    >
+                      <span class="flex items-center gap-1">
+                        <span v-if="pos.t1Hit" class="text-green-500">✓</span>
+                        <span v-else class="text-yellow-500">🥇</span>
+                        <span class="font-bold text-gray-600">T1</span>
+                        <span class="text-gray-400">({{ pos.t1Qty === 0 ? 'breakeven' : pos.t1Qty + ' qty' }})</span>
+                      </span>
+                      <span
+                        class="font-mono font-black"
+                        :class="pos.t1Hit ? 'text-green-500 line-through' : 'text-yellow-600'"
+                      >
+                        {{ pos.t1Target.toFixed(2) }}
+                      </span>
+                    </div>
+
+                    <!-- T2 -->
+                    <div
+                      class="flex items-center justify-between text-[10px] px-1"
+                      :class="pos.t2Hit ? 'opacity-50' : !pos.t1Hit ? 'opacity-40' : ''"
+                    >
+                      <span class="flex items-center gap-1">
+                        <span v-if="pos.t2Hit" class="text-green-500">✓</span>
+                        <span v-else class="text-blue-400">🥈</span>
+                        <span class="font-bold text-gray-600">T2</span>
+                        <span class="text-gray-400">({{ pos.t2Qty === 0 ? 'SL→T1' : pos.t2Qty + ' qty' }})</span>
+                      </span>
+                      <span
+                        class="font-mono font-black"
+                        :class="pos.t2Hit ? 'text-green-500 line-through' : 'text-blue-600'"
+                      >
+                        {{ pos.t2Target ? pos.t2Target.toFixed(2) : '—' }}
+                      </span>
+                    </div>
+
+                    <!-- T3 -->
+                    <div
+                      class="flex items-center justify-between text-[10px] px-1"
+                      :class="!pos.t2Hit ? 'opacity-40' : ''"
+                    >
+                      <span class="flex items-center gap-1">
+                        <span class="text-purple-400">🏆</span>
+                        <span class="font-bold text-gray-600">T3</span>
+                        <span class="text-gray-400">(full exit)</span>
+                      </span>
+                      <span class="font-mono font-black text-purple-600">
+                        {{ pos.t3Target ? pos.t3Target.toFixed(2) : '—' }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <!-- Fallback: show old single target if no tier system -->
+                  <div
+                    v-else-if="pos.aiTarget"
+                    class="flex items-center justify-between text-[10px] mt-2 pt-2 border-t border-gray-100 px-1"
+                  >
+                    <span class="text-green-500 font-bold uppercase tracking-wide">🎯 Target</span>
+                    <span class="font-mono font-black text-green-600">{{ pos.aiTarget.toFixed(2) }}</span>
                   </div>
                 </div>
               </div>
@@ -1118,7 +1189,7 @@ onUnmounted(() => {
                             : 'text-gray-600'
                       "
                     >
-                      {{ (activeTfStats.trend || "").toUpperCase() }}
+                      {{ (activeTfStats.trend || '').toUpperCase() }}
                     </div>
                   </div>
                   <div class="bg-gray-50 p-3 rounded-xl border border-gray-100">
@@ -1149,7 +1220,7 @@ onUnmounted(() => {
                     <span
                       class="font-bold text-xs"
                       :class="activeTfStats.vwapPosition === 'above' ? 'text-green-600' : 'text-red-600'"
-                      >{{ (activeTfStats.vwapPosition || "").toUpperCase() }}</span
+                      >{{ (activeTfStats.vwapPosition || '').toUpperCase() }}</span
                     >
                   </div>
                   <div class="flex items-center justify-between">
@@ -1169,7 +1240,7 @@ onUnmounted(() => {
                   <div class="text-sm font-medium text-gray-700 bg-indigo-50 p-2 rounded-lg border border-indigo-100">
                     Current Wave:
                     <span class="font-bold text-indigo-900">{{
-                      (activeTfStats.waveContext.currentPhase || "").replace("_", " ")
+                      (activeTfStats.waveContext.currentPhase || '').replace('_', ' ')
                     }}</span>
                   </div>
                 </div>
@@ -1202,7 +1273,7 @@ onUnmounted(() => {
                   </div>
                   <div class="bg-gray-50 rounded-xl p-3 border border-gray-100">
                     <span class="text-xs text-gray-500 block mb-1">Setup</span>
-                    <span class="font-black text-indigo-900">{{ analysisResult.aiDecision.setup || "N/A" }}</span>
+                    <span class="font-black text-indigo-900">{{ analysisResult.aiDecision.setup || 'N/A' }}</span>
                   </div>
                 </div>
 
@@ -1218,19 +1289,19 @@ onUnmounted(() => {
                   <div class="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
                     <div class="text-[10px] text-gray-500 font-bold uppercase">Entry</div>
                     <div class="text-sm font-bold text-gray-900">
-                      {{ Math.floor(analysisResult.aiDecision.entry || 0) || "N/A" }}
+                      {{ Math.floor(analysisResult.aiDecision.entry || 0) || 'N/A' }}
                     </div>
                   </div>
                   <div class="flex items-center justify-between p-2 bg-red-50 rounded-lg">
                     <div class="text-[10px] text-red-500 font-bold uppercase">Stop Loss</div>
                     <div class="text-sm font-bold text-red-700">
-                      {{ Math.floor(analysisResult.aiDecision.stopLoss || 0) || "N/A" }}
+                      {{ Math.floor(analysisResult.aiDecision.stopLoss || 0) || 'N/A' }}
                     </div>
                   </div>
                   <div class="flex items-center justify-between p-2 bg-green-50 rounded-lg">
                     <div class="text-[10px] text-green-600 font-bold uppercase">Target(s)</div>
                     <div class="text-sm font-bold text-green-700">
-                      {{ analysisResult.aiDecision.targets?.map((t: number) => Math.floor(t)).join(", ") || "N/A" }}
+                      {{ analysisResult.aiDecision.targets?.map((t: number) => Math.floor(t)).join(', ') || 'N/A' }}
                     </div>
                   </div>
                 </div>
@@ -1271,7 +1342,7 @@ onUnmounted(() => {
                   <div class="text-[10px] font-black uppercase tracking-widest opacity-60">Composite Score</div>
                   <div class="text-2xl font-black">
                     {{
-                      analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite > 0 ? "+" : ""
+                      analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite > 0 ? '+' : ''
                     }}{{
                       analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.composite.toFixed(2)
                     }}
@@ -1280,7 +1351,7 @@ onUnmounted(() => {
                     {{
                       analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.classification.replace(
                         /_/g,
-                        " "
+                        ' '
                       )
                     }}
                   </div>
@@ -1301,8 +1372,8 @@ onUnmounted(() => {
                       {{
                         analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components
                           .volumeAnomaly > 0
-                          ? "+"
-                          : ""
+                          ? '+'
+                          : ''
                       }}{{
                         analysisResult.gtiHistory[
                           analysisResult.gtiHistory.length - 1
@@ -1322,8 +1393,8 @@ onUnmounted(() => {
                     >
                       {{
                         analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.cvd > 0
-                          ? "+"
-                          : ""
+                          ? '+'
+                          : ''
                       }}{{
                         analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.cvd.toFixed(
                           2
@@ -1345,8 +1416,8 @@ onUnmounted(() => {
                       {{
                         analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components
                           .vwapDeviation > 0
-                          ? "+"
-                          : ""
+                          ? '+'
+                          : ''
                       }}{{
                         analysisResult.gtiHistory[
                           analysisResult.gtiHistory.length - 1
@@ -1369,8 +1440,8 @@ onUnmounted(() => {
                     >
                       {{
                         analysisResult.gtiHistory[analysisResult.gtiHistory.length - 1].gtiScore.components.oiSignal > 0
-                          ? "+"
-                          : ""
+                          ? '+'
+                          : ''
                       }}{{
                         analysisResult.gtiHistory[
                           analysisResult.gtiHistory.length - 1
@@ -1466,13 +1537,13 @@ onUnmounted(() => {
                       {{ Number(trade.entryPrice).toFixed(2) }}
                     </td>
                     <td class="px-6 py-4 text-right font-mono text-sm font-bold text-green-600">
-                      {{ trade.aiTarget ? Number(trade.aiTarget).toFixed(2) : "—" }}
+                      {{ trade.aiTarget ? Number(trade.aiTarget).toFixed(2) : '—' }}
                     </td>
                     <td class="px-6 py-4 text-right font-mono text-sm font-bold text-red-600">
-                      {{ trade.aiStopLoss ? Number(trade.aiStopLoss).toFixed(2) : "—" }}
+                      {{ trade.aiStopLoss ? Number(trade.aiStopLoss).toFixed(2) : '—' }}
                     </td>
                     <td class="px-6 py-4 text-right font-mono text-sm font-bold text-gray-600">
-                      {{ trade.exitPrice ? Number(trade.exitPrice).toFixed(2) : "—" }}
+                      {{ trade.exitPrice ? Number(trade.exitPrice).toFixed(2) : '—' }}
                     </td>
                     <td class="px-6 py-4 text-right">
                       <span
@@ -1480,7 +1551,7 @@ onUnmounted(() => {
                         class="font-mono text-sm font-black"
                         :class="Number(trade.pnl) >= 0 ? 'text-green-600' : 'text-red-600'"
                       >
-                        {{ Number(trade.pnl) >= 0 ? "+" : "" }}{{ Number(trade.pnl).toFixed(2) }}
+                        {{ Number(trade.pnl) >= 0 ? '+' : '' }}{{ Number(trade.pnl).toFixed(2) }}
                       </span>
                       <span v-else class="text-gray-300">—</span>
                     </td>
@@ -1515,7 +1586,7 @@ onUnmounted(() => {
                             <p
                               class="text-sm text-gray-700 leading-relaxed italic border-l-2 border-indigo-200 pl-4 bg-white/50 p-3 rounded-r-lg"
                             >
-                              "{{ trade.aiReasoning || "No reasoning recorded." }}"
+                              "{{ trade.aiReasoning || 'No reasoning recorded.' }}"
                             </p>
                           </div>
 
@@ -1529,7 +1600,7 @@ onUnmounted(() => {
                             <p
                               class="text-sm font-bold text-gray-900 bg-white/50 p-3 rounded-lg inline-block border border-red-100/50"
                             >
-                              {{ trade.exitReason || "Manual Exit or unknown" }}
+                              {{ trade.exitReason || 'Manual Exit or unknown' }}
                             </p>
                           </div>
                         </div>
@@ -1546,7 +1617,7 @@ onUnmounted(() => {
                             <div class="bg-white/80 p-3 rounded-lg border border-indigo-100/50">
                               <div class="text-[9px] text-gray-400 font-bold uppercase">Setup Type</div>
                               <span class="text-xs font-black uppercase tracking-tight text-indigo-600">
-                                {{ trade.setup?.replace("_", " ") || "STANDARD MTF" }}
+                                {{ trade.setup?.replace('_', ' ') || 'STANDARD MTF' }}
                               </span>
                             </div>
 
@@ -1561,7 +1632,7 @@ onUnmounted(() => {
                                 class="text-[10px] text-indigo-300 font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed"
                               >
                                 {{
-                                  typeof trade.strategyContext === "string"
+                                  typeof trade.strategyContext === 'string'
                                     ? JSON.parse(trade.strategyContext)
                                     : trade.strategyContext
                                 }}
@@ -1581,25 +1652,25 @@ onUnmounted(() => {
                             <div class="bg-white/80 p-3 rounded-lg border border-indigo-100/50">
                               <div class="text-[9px] text-gray-400 font-bold uppercase">Confidence</div>
                               <div class="text-sm font-black text-indigo-900">
-                                {{ trade.aiConfidence ? (trade.aiConfidence * 100).toFixed(0) : "—" }}%
+                                {{ trade.aiConfidence ? (trade.aiConfidence * 100).toFixed(0) : '—' }}%
                               </div>
                             </div>
                             <div class="bg-white/80 p-3 rounded-lg border border-indigo-100/50">
                               <div class="text-[9px] text-gray-400 font-bold uppercase">India VIX</div>
                               <div class="text-sm font-black text-indigo-900">
-                                {{ trade.vixLevel ? Number(trade.vixLevel).toFixed(2) : "—" }}
+                                {{ trade.vixLevel ? Number(trade.vixLevel).toFixed(2) : '—' }}
                               </div>
                             </div>
                             <div class="bg-white/80 p-3 rounded-lg border border-indigo-100/50">
                               <div class="text-[9px] text-gray-400 font-bold uppercase">RSI (15m)</div>
                               <div class="text-sm font-black text-indigo-900">
-                                {{ trade.rsiLevel ? Number(trade.rsiLevel).toFixed(2) : "—" }}
+                                {{ trade.rsiLevel ? Number(trade.rsiLevel).toFixed(2) : '—' }}
                               </div>
                             </div>
                             <div class="bg-white/80 p-3 rounded-lg border border-indigo-100/50">
                               <div class="text-[9px] text-gray-400 font-bold uppercase">Trend</div>
                               <div class="text-sm font-black text-indigo-900 capitalize">
-                                {{ trade.trend15m || "—" }}
+                                {{ trade.trend15m || '—' }}
                               </div>
                             </div>
                           </div>
@@ -1685,7 +1756,7 @@ onUnmounted(() => {
                           <pre
                             class="text-[10px] text-indigo-300 font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed"
                           >
-                            {{ typeof event.metadata === "string" ? JSON.parse(event.metadata) : event.metadata }}
+                            {{ typeof event.metadata === 'string' ? JSON.parse(event.metadata) : event.metadata }}
                           </pre>
                         </div>
                       </div>
@@ -1875,10 +1946,10 @@ onUnmounted(() => {
 </template>
 
 <style>
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap");
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
 body {
-  font-family: "Inter", sans-serif;
+  font-family: 'Inter', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

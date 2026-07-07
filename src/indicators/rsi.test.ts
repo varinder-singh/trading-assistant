@@ -1,8 +1,8 @@
-import { describe, it, expect } from "vitest"
-import { calculateRSI } from "./rsi.js"
-import type { Candle } from "../types/analysis.js"
+import { describe, it, expect } from 'vitest'
+import { calculateRSI } from './rsi.js'
+import type { Candle } from '../types/analysis.js'
 
-describe("calculateRSI", () => {
+describe('calculateRSI', () => {
   const mockCandle = (close: number): Candle => ({
     open: close,
     high: close,
@@ -12,12 +12,12 @@ describe("calculateRSI", () => {
     time: Date.now(),
   })
 
-  it("should return 50 if not enough candles", () => {
+  it('should return 50 if not enough candles', () => {
     const candles = Array(10).fill(mockCandle(100))
     expect(calculateRSI(candles, 14)).toBe(50)
   })
 
-  it("should return 100 if all candles are gains", () => {
+  it('should return 100 if all candles are gains', () => {
     const candles = [
       mockCandle(100),
       mockCandle(101),
@@ -30,7 +30,7 @@ describe("calculateRSI", () => {
     expect(calculateRSI(candles, 5)).toBe(100)
   })
 
-  it("should calculate RSI correctly for mixed candles", () => {
+  it('should calculate RSI correctly for mixed candles', () => {
     // A simple sequence where price goes up then down
     const candles = [
       mockCandle(100), // 0
@@ -48,7 +48,7 @@ describe("calculateRSI", () => {
     expect(calculateRSI(candles, 5)).toBe(72.73)
   })
 
-  it("should return 0 if all candles are losses", () => {
+  it('should return 0 if all candles are losses', () => {
     const candles = [mockCandle(100), mockCandle(99), mockCandle(98), mockCandle(97), mockCandle(96), mockCandle(95)]
     // gains: 0. avgGain = 0
     // losses: 1, 1, 1, 1, 1 = 5. avgLoss = 5/5 = 1

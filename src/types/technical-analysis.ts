@@ -1,4 +1,4 @@
-import type { OpeningRange, VolumeProfile } from "./analysis.js"
+import type { OpeningRange, VolumeProfile } from './analysis.js'
 
 // technical analysis
 export type DailyContext = {

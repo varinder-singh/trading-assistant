@@ -6,7 +6,7 @@ export type KiteOptionQuote = {
 }
 
 export type KiteOptionInstrumentForAnalysis = {
-  instrument_type: "CE" | "PE"
+  instrument_type: 'CE' | 'PE'
   strike: number
   tradingsymbol: string
   instrument_token?: number
@@ -15,21 +15,23 @@ export type KiteOptionInstrumentForAnalysis = {
 
 export type KiteOptionOiRow = {
   strike: number
-  type: "CE" | "PE"
+  type: 'CE' | 'PE'
   symbol: string
   oi: number
   ltp: number
   volume: number
   yesterdayOi?: number
   intervalOi?: number
-  buildup?: "Long Buildup" | "Short Buildup" | "Short Covering" | "Long Unwinding" | "Neutral"
-  greeks?: {
-    iv: number
-    delta: number
-    gamma: number
-    theta: number
-    vega: number
-  } | undefined
+  buildup?: 'Long Buildup' | 'Short Buildup' | 'Short Covering' | 'Long Unwinding' | 'Neutral'
+  greeks?:
+    | {
+        iv: number
+        delta: number
+        gamma: number
+        theta: number
+        vega: number
+      }
+    | undefined
 }
 
 export type KiteOptionsAnalysis = {
@@ -42,11 +44,11 @@ export type KiteOptionsAnalysis = {
   atmPutOI: number
   maxCallOI: number
   maxPutOI: number
-  sentiment: "bullish" | "bearish" | "neutral"
-  atmSentiment: "bullish" | "bearish" | "neutral"
+  sentiment: 'bullish' | 'bearish' | 'neutral'
+  atmSentiment: 'bullish' | 'bearish' | 'neutral'
   support: number
   resistance: number
-  marketFlow: "SHORT_COVERING" | "LONG_BUILDUP" | "SHORT_BUILDUP" | "LONG_UNWINDING" | "NEUTRAL"
+  marketFlow: 'SHORT_COVERING' | 'LONG_BUILDUP' | 'SHORT_BUILDUP' | 'LONG_UNWINDING' | 'NEUTRAL'
   ivRank?: number
   ivPercentile?: number
   rows: KiteOptionOiRow[]
@@ -98,7 +100,7 @@ class OITracker {
 
 export const oiTracker = new OITracker()
 
-import { getGreeksFromPrice } from "./greeks.js"
+import { getGreeksFromPrice } from './greeks.js'
 
 export function analyzeOptions(
   quotes: Record<string, KiteOptionQuote>,
@@ -134,7 +136,7 @@ export function analyzeOptions(
 
   // Calculate global days to expiry
   let globalDaysToExpiry = 0
-  const firstInstrument = instruments.find(i => i.expiry)
+  const firstInstrument = instruments.find((i) => i.expiry)
   if (firstInstrument && firstInstrument.expiry) {
     const today = new Date()
     const expiryDate = new Date(firstInstrument.expiry)
@@ -156,11 +158,11 @@ export function analyzeOptions(
     const priceChange = snapshot ? ltp - snapshot.ltp : 0
 
     // 2. Determine Buildup State
-    let buildup: KiteOptionOiRow["buildup"] = "Neutral"
+    let buildup: KiteOptionOiRow['buildup'] = 'Neutral'
     if (coi > 0) {
-      buildup = priceChange >= 0 ? "Long Buildup" : "Short Buildup"
+      buildup = priceChange >= 0 ? 'Long Buildup' : 'Short Buildup'
     } else if (coi < 0) {
-      buildup = priceChange >= 0 ? "Short Covering" : "Long Unwinding"
+      buildup = priceChange >= 0 ? 'Short Covering' : 'Long Unwinding'
     }
 
     // 3. Yesterday's Comparison
@@ -168,7 +170,14 @@ export function analyzeOptions(
 
     let greeks = q.greeks || undefined
     if (!greeks && underlyingPrice && inst.expiry) {
-      greeks = getGreeksFromPrice(ltp, underlyingPrice, inst.strike, globalDaysToExpiry || 0.001, 0.07, inst.instrument_type)
+      greeks = getGreeksFromPrice(
+        ltp,
+        underlyingPrice,
+        inst.strike,
+        globalDaysToExpiry || 0.001,
+        0.07,
+        inst.instrument_type
+      )
     }
 
     const row: KiteOptionOiRow = {
@@ -185,7 +194,7 @@ export function analyzeOptions(
     if (yOi !== undefined) row.yesterdayOi = yOi
     rows.push(row)
 
-    if (inst.instrument_type === "CE") {
+    if (inst.instrument_type === 'CE') {
       callOI += currentOi
       if (inst.strike === atmStrike) atmCallOI = currentOi
       if (currentOi > maxCallOI) {
@@ -212,71 +221,99 @@ export function analyzeOptions(
     if (row.intervalOi) {
       totalCoi += row.intervalOi
       weightedPriceChange +=
-        row.intervalOi * (row.buildup === "Short Covering" || row.buildup === "Long Buildup" ? 1 : -1)
+        row.intervalOi * (row.buildup === 'Short Covering' || row.buildup === 'Long Buildup' ? 1 : -1)
     }
   }
 
-  let marketFlow: KiteOptionsAnalysis["marketFlow"] = "NEUTRAL"
+  let marketFlow: KiteOptionsAnalysis['marketFlow'] = 'NEUTRAL'
   if (totalCoi > 0) {
-    marketFlow = weightedPriceChange > 0 ? "LONG_BUILDUP" : "SHORT_BUILDUP"
+    marketFlow = weightedPriceChange > 0 ? 'LONG_BUILDUP' : 'SHORT_BUILDUP'
   } else if (totalCoi < 0) {
-    marketFlow = weightedPriceChange > 0 ? "SHORT_COVERING" : "LONG_UNWINDING"
+    marketFlow = weightedPriceChange > 0 ? 'SHORT_COVERING' : 'LONG_UNWINDING'
   }
 
   // CONTRARIAN PCR LOGIC (Matches AI Rules)
-  const sentiment = pcr > 1.2 ? "bullish" : pcr < 0.8 ? "bearish" : "neutral"
-  const atmSentiment = pcrAtm > 1.2 ? "bullish" : pcrAtm < 0.8 ? "bearish" : "neutral"
+  const sentiment = pcr > 1.2 ? 'bullish' : pcr < 0.8 ? 'bearish' : 'neutral'
+  const atmSentiment = pcrAtm > 1.2 ? 'bullish' : pcrAtm < 0.8 ? 'bearish' : 'neutral'
 
   // Greeks Context and Strike Selection
   let atmGreeks = { delta: 0, gamma: 0, theta: 0, iv: 0, vega: 0 }
-  const ceRows = rows.filter(r => r.type === "CE" && r.ltp > 0 && r.greeks)
-  const peRows = rows.filter(r => r.type === "PE" && r.ltp > 0 && r.greeks)
+  const ceRows = rows.filter((r) => r.type === 'CE' && r.ltp > 0 && r.greeks)
+  const peRows = rows.filter((r) => r.type === 'PE' && r.ltp > 0 && r.greeks)
 
-  const atmCe = ceRows.find(r => r.strike === atmStrike)
+  const atmCe = ceRows.find((r) => r.strike === atmStrike)
   if (atmCe && atmCe.greeks) {
     atmGreeks = { ...atmCe.greeks }
   } else {
-    const atmPe = peRows.find(r => r.strike === atmStrike)
+    const atmPe = peRows.find((r) => r.strike === atmStrike)
     if (atmPe && atmPe.greeks) {
       atmGreeks = { ...atmPe.greeks }
     }
   }
 
-  const getBestGammaStrike = (optionRows: KiteOptionOiRow[]) => {
-    // We want strikes that have a reasonable delta (e.g. 0.25 to 0.65) to avoid deep OTM or deep ITM
-    const validRows = optionRows.filter(r => {
-       if (!r.greeks) return false;
-       const absDelta = Math.abs(r.greeks.delta);
-       return absDelta >= 0.25 && absDelta <= 0.65;
-    });
-    
-    if (validRows.length === 0) return optionRows.length > 0 ? optionRows[0] : null;
+  const getBestGammaStrike = (optionRows: KiteOptionOiRow[], daysToExpiry: number) => {
+    // DTE-aware delta bands:
+    // 0DTE (< 1 day):   0.40 – 0.65 → Allow slightly ITM (up to 0.65) for theta protection during consolidations, targeting ATM gamma.
+    // 1-2 DTE:          0.30 – 0.55 → Slightly wider to allow near-ATM strikes with better leverage
+    // 2+ DTE:           0.20 – 0.50 → Allow slightly OTM for superior percentage returns and gamma leverage
+    let minDelta: number, maxDelta: number
+    if (daysToExpiry < 1) {
+      minDelta = 0.4
+      maxDelta = 0.65
+    } else if (daysToExpiry < 2) {
+      minDelta = 0.3
+      maxDelta = 0.55
+    } else {
+      minDelta = 0.2
+      maxDelta = 0.5
+    }
+
+    const validRows = optionRows.filter((r) => {
+      if (!r.greeks) return false
+      const absDelta = Math.abs(r.greeks.delta)
+      return absDelta >= minDelta && absDelta <= maxDelta
+    })
+
+    if (validRows.length === 0) {
+      const atmOption = optionRows.find((r) => r.strike === atmStrike)
+      if (atmOption) return atmOption
+      if (optionRows.length === 0) return null
+      return optionRows.reduce((closest, current) =>
+        Math.abs(current.strike - atmStrike) < Math.abs(closest.strike - atmStrike) ? current : closest
+      )
+    }
 
     return validRows.reduce((best, current) => {
-       const bestRatio = best.greeks!.gamma / best.ltp;
-       const currentRatio = current.greeks!.gamma / current.ltp;
-       return currentRatio > bestRatio ? current : best;
-    });
+      const bestRatio = best.greeks!.gamma / best.ltp
+      const currentRatio = current.greeks!.gamma / current.ltp
+      return currentRatio > bestRatio ? current : best
+    })
   }
 
-  const bestCe = getBestGammaStrike(ceRows);
-  const bestPe = getBestGammaStrike(peRows);
+  const dteLabel =
+    globalDaysToExpiry < 1 ? '0DTE' : globalDaysToExpiry < 2 ? '1DTE' : `${globalDaysToExpiry.toFixed(1)}DTE`
+  const bestCe = getBestGammaStrike(ceRows, globalDaysToExpiry)
+  const bestPe = getBestGammaStrike(peRows, globalDaysToExpiry)
 
   const greeksContext = {
     daysToExpiry: globalDaysToExpiry,
     atmGreeks,
-    recommendedBuyStrikeCE: bestCe ? {
-      strike: bestCe.strike,
-      rationale: `Selected based on optimal Gamma/Premium ratio (${(bestCe.greeks!.gamma / bestCe.ltp).toFixed(5)}) for explosive moves.`,
-      expectedGamma: bestCe.greeks!.gamma,
-      gammaPremiumRatio: bestCe.greeks!.gamma / bestCe.ltp
-    } : { strike: atmStrike, rationale: "Default ATM", expectedGamma: 0, gammaPremiumRatio: 0 },
-    recommendedBuyStrikePE: bestPe ? {
-      strike: bestPe.strike,
-      rationale: `Selected based on optimal Gamma/Premium ratio (${(bestPe.greeks!.gamma / bestPe.ltp).toFixed(5)}) for explosive moves.`,
-      expectedGamma: bestPe.greeks!.gamma,
-      gammaPremiumRatio: bestPe.greeks!.gamma / bestPe.ltp
-    } : { strike: atmStrike, rationale: "Default ATM", expectedGamma: 0, gammaPremiumRatio: 0 }
+    recommendedBuyStrikeCE: bestCe
+      ? {
+          strike: bestCe.strike,
+          rationale: `[${dteLabel}] Optimal Gamma/Premium ratio (${(bestCe.greeks!.gamma / bestCe.ltp).toFixed(5)}, delta ${Math.abs(bestCe.greeks!.delta).toFixed(2)}) targeting ATM gamma sweet spot.`,
+          expectedGamma: bestCe.greeks!.gamma,
+          gammaPremiumRatio: bestCe.greeks!.gamma / bestCe.ltp,
+        }
+      : { strike: atmStrike, rationale: 'Default ATM', expectedGamma: 0, gammaPremiumRatio: 0 },
+    recommendedBuyStrikePE: bestPe
+      ? {
+          strike: bestPe.strike,
+          rationale: `[${dteLabel}] Optimal Gamma/Premium ratio (${(bestPe.greeks!.gamma / bestPe.ltp).toFixed(5)}, delta ${Math.abs(bestPe.greeks!.delta).toFixed(2)}) targeting ATM gamma sweet spot.`,
+          expectedGamma: bestPe.greeks!.gamma,
+          gammaPremiumRatio: bestPe.greeks!.gamma / bestPe.ltp,
+        }
+      : { strike: atmStrike, rationale: 'Default ATM', expectedGamma: 0, gammaPremiumRatio: 0 },
   }
 
   return {
@@ -298,11 +335,11 @@ export function analyzeOptions(
     rows: rows.sort((a, b) => a.strike - b.strike || a.type.localeCompare(b.type)),
     windowStats: {
       topShortCovering: [...rows]
-        .filter((r) => r.buildup === "Short Covering")
+        .filter((r) => r.buildup === 'Short Covering')
         .sort((a, b) => (a.intervalOi || 0) - (b.intervalOi || 0))
         .slice(0, 3),
       topLongBuildup: [...rows]
-        .filter((r) => r.buildup === "Long Buildup")
+        .filter((r) => r.buildup === 'Long Buildup')
         .sort((a, b) => (b.intervalOi || 0) - (a.intervalOi || 0))
         .slice(0, 3),
       intervalMins,
@@ -323,26 +360,26 @@ export type KiteOptionsLogRow = {
 }
 
 export function formatOptionsAnalysisForLog(analysis: KiteOptionsAnalysis): string[] {
-  const formatNumber = (value: number) => value.toLocaleString("en-IN")
+  const formatNumber = (value: number) => value.toLocaleString('en-IN')
   const formatPrice = (value: number) => value.toFixed(2)
-  const formatLevel = (value: number) => (value > 0 ? formatNumber(value) : "N/A")
+  const formatLevel = (value: number) => (value > 0 ? formatNumber(value) : 'N/A')
 
   const rowsByStrike = new Map<number, KiteOptionsLogRow>()
 
   for (const row of analysis.rows) {
     const strikeRow = rowsByStrike.get(row.strike) ?? {
       strike: row.strike,
-      ceSymbol: "N/A",
+      ceSymbol: 'N/A',
       ceOi: 0,
       ceLtp: 0,
       ceVolume: 0,
-      peSymbol: "N/A",
+      peSymbol: 'N/A',
       peOi: 0,
       peLtp: 0,
       peVolume: 0,
     }
 
-    if (row.type === "CE") {
+    if (row.type === 'CE') {
       strikeRow.ceSymbol = row.symbol
       strikeRow.ceOi = row.oi
       strikeRow.ceLtp = row.ltp
@@ -372,14 +409,14 @@ export function formatOptionsAnalysisForLog(analysis: KiteOptionsAnalysis): stri
   if (analysis.windowStats) {
     log.push(`Window Stats (${analysis.windowStats.intervalMins}m):`)
     log.push(
-      `  Top Short Covering: ${analysis.windowStats.topShortCovering.map((r) => `${r.strike} ${r.type} (${r.intervalOi})`).join(", ")}`
+      `  Top Short Covering: ${analysis.windowStats.topShortCovering.map((r) => `${r.strike} ${r.type} (${r.intervalOi})`).join(', ')}`
     )
     log.push(
-      `  Top Long Buildup: ${analysis.windowStats.topLongBuildup.map((r) => `${r.strike} ${r.type} (+${r.intervalOi})`).join(", ")}`
+      `  Top Long Buildup: ${analysis.windowStats.topLongBuildup.map((r) => `${r.strike} ${r.type} (+${r.intervalOi})`).join(', ')}`
     )
   }
 
-  log.push("Strike OI Snapshot:")
+  log.push('Strike OI Snapshot:')
   log.push(
     ...strikeRows.map((row) =>
       [
@@ -390,7 +427,7 @@ export function formatOptionsAnalysisForLog(analysis: KiteOptionsAnalysis): stri
         `PE ${row.peSymbol}`,
         `PE OI ${formatNumber(row.peOi)}`,
         `PE LTP ${formatPrice(row.peLtp)}`,
-      ].join(" | ")
+      ].join(' | ')
     )
   )
 

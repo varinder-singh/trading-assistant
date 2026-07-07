@@ -15,20 +15,20 @@ sequenceDiagram
     Nuxt_Backend->>DB_Supabase: Query user profile
     DB_Supabase-->>Nuxt_Backend: Profile data
     Nuxt_Backend-->>Nuxt_Frontend: Return profile
-    
+
     Nuxt_Frontend->>Nuxt_Backend: GET /api/history (Trades & PnL)
     Nuxt_Backend->>DB_Supabase: Query trades table
     DB_Supabase-->>Nuxt_Backend: Trades data
     Nuxt_Backend-->>Nuxt_Frontend: Return trades data
-    
+
     Nuxt_Frontend->>Nuxt_Backend: GET /api/chart-data (Historical Candles)
     Nuxt_Backend->>Kite_API: Fetch historical quotes/candles
     Kite_API-->>Nuxt_Backend: Market data
     Nuxt_Backend-->>Nuxt_Frontend: Return chart data
-    
+
     Nuxt_Frontend->>Nuxt_Backend: Connect WebSocket (/_ws)
     Nuxt_Backend-->>Nuxt_Frontend: Connection established
-    
+
     loop Real-time Updates
         Nuxt_Backend->>Nuxt_Frontend: Stream live events/ticks over WS
     end

@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest"
-import { calculateVolumeProfile } from "./volume-profile.js"
-import type { Candle } from "../types/analysis.js"
+import { describe, expect, it } from 'vitest'
+import { calculateVolumeProfile } from './volume-profile.js'
+import type { Candle } from '../types/analysis.js'
 
-describe("Volume Profile Indicator", () => {
-  it("should calculate POC correctly", () => {
+describe('Volume Profile Indicator', () => {
+  it('should calculate POC correctly', () => {
     const candles: Candle[] = [
       { time: 1, open: 100, high: 110, low: 100, close: 110, volume: 100 },
       { time: 2, open: 110, high: 120, low: 110, close: 120, volume: 500 }, // Huge volume here
@@ -19,12 +19,12 @@ describe("Volume Profile Indicator", () => {
     }
   })
 
-  it("should return null for empty candles", () => {
+  it('should return null for empty candles', () => {
     const result = calculateVolumeProfile([])
     expect(result).toBeNull()
   })
 
-  it("should classify D profile correctly", () => {
+  it('should classify D profile correctly', () => {
     // Accumulation in the middle
     const candles: Candle[] = [
       { time: 1, open: 100, high: 120, low: 100, close: 120, volume: 10 },
@@ -33,10 +33,10 @@ describe("Volume Profile Indicator", () => {
     ]
 
     const result = calculateVolumeProfile(candles, 10)
-    expect(result?.profileType).toBe("D")
+    expect(result?.profileType).toBe('D')
   })
 
-  it("should classify P profile correctly", () => {
+  it('should classify P profile correctly', () => {
     // Accumulation at the top
     const candles: Candle[] = [
       { time: 1, open: 100, high: 110, low: 100, close: 110, volume: 10 },
@@ -45,10 +45,10 @@ describe("Volume Profile Indicator", () => {
     ]
 
     const result = calculateVolumeProfile(candles, 10)
-    expect(result?.profileType).toBe("P")
+    expect(result?.profileType).toBe('P')
   })
 
-  it("should classify B profile correctly", () => {
+  it('should classify B profile correctly', () => {
     // Accumulation at the bottom
     const candles: Candle[] = [
       { time: 1, open: 100, high: 110, low: 100, close: 110, volume: 500 },
@@ -57,6 +57,6 @@ describe("Volume Profile Indicator", () => {
     ]
 
     const result = calculateVolumeProfile(candles, 10)
-    expect(result?.profileType).toBe("B")
+    expect(result?.profileType).toBe('B')
   })
 })

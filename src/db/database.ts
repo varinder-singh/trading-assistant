@@ -1,13 +1,13 @@
-import { Kysely, PostgresDialect, CamelCasePlugin } from "kysely"
-import pg from "pg"
-import "dotenv/config"
+import { Kysely, PostgresDialect, CamelCasePlugin } from 'kysely'
+import pg from 'pg'
+import 'dotenv/config'
 
 const { Pool } = pg
 
 export interface ProfilesTable {
   id: string
   fullName: string | null
-  tradeMode: "PAPER" | "REAL"
+  tradeMode: 'PAPER' | 'REAL'
   createdAt: string
   updatedAt: string
 }
@@ -34,9 +34,9 @@ export interface TradesTable {
   symbol: string
   instrumentToken: number | null
   strikePrice: string | null // numeric mapped to string in pg by default
-  side: "BUY" | "SELL"
+  side: 'BUY' | 'SELL'
   quantity: number
-  status: "OPEN" | "CLOSED" | "REJECTED"
+  status: 'OPEN' | 'CLOSED' | 'REJECTED'
   entryPrice: string // numeric
   exitPrice: string | null // numeric
   pnl: string | null // numeric
@@ -49,10 +49,10 @@ export interface TradesTable {
 export interface TradeAnalyticsTable {
   id: string
   tradeId: string | null
-  eventType: "ENTRY" | "EXIT" | "UPDATE_SL" | "HOLD"
+  eventType: 'ENTRY' | 'EXIT' | 'UPDATE_SL' | 'HOLD'
   agentType: string | null
   symbol: string
-  side: "BUY" | "SELL"
+  side: 'BUY' | 'SELL'
   metadata: any // JSONB
   createdAt: string
   updatedAt: string

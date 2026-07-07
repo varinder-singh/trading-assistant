@@ -25,12 +25,12 @@
       </div>
     </div>
     <div class="text-[10px] font-bold text-gray-900 line-clamp-2 leading-snug h-7">
-      {{ agent?.message || "Awaiting..." }}
+      {{ agent?.message || 'Awaiting...' }}
     </div>
     <div class="mt-1.5 text-[8px] text-gray-400 flex items-center justify-between font-medium">
-      <span>{{ agent?.status?.toUpperCase() || "IDLE" }}</span>
+      <span>{{ agent?.status?.toUpperCase() || 'IDLE' }}</span>
       <span>{{
-        agent?.lastUpdate ? new Date(agent.lastUpdate).toLocaleTimeString([], { hour12: false }) : "--:--:--"
+        agent?.lastUpdate ? new Date(agent.lastUpdate).toLocaleTimeString([], { hour12: false }) : '--:--:--'
       }}</span>
     </div>
   </div>

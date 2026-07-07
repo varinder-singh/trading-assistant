@@ -1,4 +1,4 @@
-import type { Candle } from "../types/analysis.js"
+import type { Candle } from '../types/analysis.js'
 
 /**
  * Calculates the Average True Range (ATR) for a given period.

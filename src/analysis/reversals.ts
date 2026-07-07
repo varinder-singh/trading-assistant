@@ -1,4 +1,4 @@
-import type { TradeTechnicalAnalysis } from "../types/analysis.js"
+import type { TradeTechnicalAnalysis } from '../types/analysis.js'
 
 export interface ReversalScoreResult {
   score: number
@@ -14,7 +14,7 @@ export interface ReversalScoreResult {
 
 export function calculateReversalScore(
   analysis: TradeTechnicalAnalysis,
-  direction: "BULLISH" | "BEARISH"
+  direction: 'BULLISH' | 'BEARISH'
 ): ReversalScoreResult {
   let score = 0
   const breakdown = {
@@ -30,12 +30,12 @@ export function calculateReversalScore(
   const tolerance = currentPrice * 0.001 // 0.1% tolerance for levels
 
   // 1. Options OI Defense (+1)
-  if (direction === "BULLISH") {
+  if (direction === 'BULLISH') {
     // Bullish reversal: Put writers should be defending
     if (
       optionsAnalysis.atmPutOI > optionsAnalysis.atmCallOI * 1.5 ||
-      optionsAnalysis.marketFlow === "LONG_BUILDUP" ||
-      optionsAnalysis.marketFlow === "SHORT_COVERING"
+      optionsAnalysis.marketFlow === 'LONG_BUILDUP' ||
+      optionsAnalysis.marketFlow === 'SHORT_COVERING'
     ) {
       breakdown.optionsDefense = true
       score++
@@ -44,8 +44,8 @@ export function calculateReversalScore(
     // Bearish reversal: Call writers should be defending
     if (
       optionsAnalysis.atmCallOI > optionsAnalysis.atmPutOI * 1.5 ||
-      optionsAnalysis.marketFlow === "SHORT_BUILDUP" ||
-      optionsAnalysis.marketFlow === "LONG_UNWINDING"
+      optionsAnalysis.marketFlow === 'SHORT_BUILDUP' ||
+      optionsAnalysis.marketFlow === 'LONG_UNWINDING'
     ) {
       breakdown.optionsDefense = true
       score++
@@ -74,8 +74,8 @@ export function calculateReversalScore(
   let nearStructure = false
 
   // Check classic support/resistance
-  if (direction === "BULLISH" && Math.abs(currentPrice - tf15m.support) < tolerance) nearStructure = true
-  if (direction === "BEARISH" && Math.abs(currentPrice - tf15m.resistance) < tolerance) nearStructure = true
+  if (direction === 'BULLISH' && Math.abs(currentPrice - tf15m.support) < tolerance) nearStructure = true
+  if (direction === 'BEARISH' && Math.abs(currentPrice - tf15m.resistance) < tolerance) nearStructure = true
 
   // Check Volume Profile levels (POC, VAH, VAL)
   if (dailyContext?.previousDayVolumeProfile) {
@@ -92,10 +92,10 @@ export function calculateReversalScore(
   // 5. GTI / Institutional Flow (+1)
   const gti = tf3m.gtiScore || tf15m.gtiScore
   if (gti) {
-    if (direction === "BULLISH" && gti.composite > 0.3) {
+    if (direction === 'BULLISH' && gti.composite > 0.3) {
       breakdown.institutionalFlow = true
       score++
-    } else if (direction === "BEARISH" && gti.composite < -0.3) {
+    } else if (direction === 'BEARISH' && gti.composite < -0.3) {
       breakdown.institutionalFlow = true
       score++
     }

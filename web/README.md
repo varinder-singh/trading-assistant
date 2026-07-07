@@ -75,4 +75,5 @@ bun run preview
 Check out the [deployment documentation](https://nuxt.com/docs/getting-started/deployment) for more information.
 
 ## Concepts
+
 Black-Scholes for delta calculation to calculate the stop-losses and targets

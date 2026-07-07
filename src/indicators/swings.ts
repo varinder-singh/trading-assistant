@@ -1,4 +1,4 @@
-import type { Candle, SwingPoint } from "../types/analysis.js"
+import type { Candle, SwingPoint } from '../types/analysis.js'
 
 /**
  * Identifies local swing highs and lows using a basic fractal approach.
@@ -33,9 +33,9 @@ export function calculateSwings(candles: Candle[], lookback: number = 2): SwingP
     }
 
     if (isHigh) {
-      swings.push({ type: "HIGH", price: current.high, time: current.time })
+      swings.push({ type: 'HIGH', price: current.high, time: current.time })
     } else if (isLow) {
-      swings.push({ type: "LOW", price: current.low, time: current.time })
+      swings.push({ type: 'LOW', price: current.low, time: current.time })
     }
   }
 

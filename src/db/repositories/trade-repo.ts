@@ -1,11 +1,13 @@
-import { db } from "../database.js"
-import crypto from "node:crypto"
+import { db as dbDefault } from '../database.js'
+import crypto from 'node:crypto'
+import { Kysely } from 'kysely'
+import type { Database } from '../database.js'
 
 export interface NewPaperTradeInput {
   userId: string
   symbol: string
   token: number
-  side: "BUY" | "SELL"
+  side: 'BUY' | 'SELL'
   quantity: number
   entry_price: number
   strike_price?: number | null
@@ -22,13 +24,19 @@ export interface NewPaperTradeInput {
 }
 
 export class TradeRepository {
+  private db: Kysely<Database>
+
+  constructor(db: Kysely<Database> = dbDefault) {
+    this.db = db
+  }
+
   async insertTrade(trade: NewPaperTradeInput) {
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
 
     // 1. Insert Core Trade
-    await db
-      .insertInto("trades")
+    await this.db
+      .insertInto('trades')
       .values({
         id,
         userId: trade.userId,
@@ -39,7 +47,7 @@ export class TradeRepository {
         strikePrice: trade.strike_price ? String(trade.strike_price) : null,
         side: trade.side,
         quantity: trade.quantity,
-        status: "OPEN",
+        status: 'OPEN',
         entryPrice: String(trade.entry_price),
         exitPrice: null,
         pnl: null,
@@ -52,12 +60,12 @@ export class TradeRepository {
 
     // 2. Insert Analytics Log (ENTRY)
     const analyticsId = crypto.randomUUID()
-    await db
-      .insertInto("tradeAnalytics")
+    await this.db
+      .insertInto('tradeAnalytics')
       .values({
         id: analyticsId,
         tradeId: id,
-        eventType: "ENTRY",
+        eventType: 'ENTRY',
         agentType: trade.agentType || null,
         symbol: trade.symbol,
         side: trade.side,
@@ -84,7 +92,7 @@ export class TradeRepository {
     const now = new Date().toISOString()
 
     // Fetch the trade to calculate PnL
-    const trade = await db.selectFrom("trades").selectAll().where("id", "=", id).executeTakeFirst()
+    const trade = await this.db.selectFrom('trades').selectAll().where('id', '=', id).executeTakeFirst()
 
     if (!trade) {
       throw new Error(`Trade with ID ${id} not found`)
@@ -92,29 +100,29 @@ export class TradeRepository {
 
     const pnl = (exitPrice - Number(trade.entryPrice)) * trade.quantity
 
-    await db
-      .updateTable("trades")
+    await this.db
+      .updateTable('trades')
       .set({
         exitPrice: String(exitPrice),
         pnl: String(pnl),
-        status: "CLOSED",
+        status: 'CLOSED',
         closedAt: now,
         updatedAt: now,
       })
-      .where("id", "=", id)
+      .where('id', '=', id)
       .execute()
 
     // Insert Analytics Log (EXIT)
     const analyticsId = crypto.randomUUID()
-    await db
-      .insertInto("tradeAnalytics")
+    await this.db
+      .insertInto('tradeAnalytics')
       .values({
         id: analyticsId,
         tradeId: id,
-        eventType: "EXIT",
+        eventType: 'EXIT',
         agentType: agentType || null,
         symbol: trade.symbol,
-        side: trade.side === "BUY" ? "SELL" : "BUY", // The closing action
+        side: trade.side === 'BUY' ? 'SELL' : 'BUY', // The closing action
         metadata: JSON.stringify({
           exitReason: exitReason || null,
         }),
@@ -125,39 +133,44 @@ export class TradeRepository {
   }
 
   async getOpenTrades(userId: string) {
-    return await db.selectFrom("trades").selectAll().where("userId", "=", userId).where("status", "=", "OPEN").execute()
+    return await this.db
+      .selectFrom('trades')
+      .selectAll()
+      .where('userId', '=', userId)
+      .where('status', '=', 'OPEN')
+      .execute()
   }
 
   async getTodaysTrades(userId: string) {
-    const today = new Date().toISOString().split("T")[0] // YYYY-MM-DD
-    return await db
-      .selectFrom("trades")
+    const today = new Date().toISOString().split('T')[0] // YYYY-MM-DD
+    return await this.db
+      .selectFrom('trades')
       .selectAll()
-      .where("userId", "=", userId)
-      .where("openedAt", ">=", `${today}T00:00:00Z`)
-      .orderBy("openedAt", "asc")
+      .where('userId', '=', userId)
+      .where('openedAt', '>=', `${today}T00:00:00Z`)
+      .orderBy('openedAt', 'asc')
       .execute()
   }
 
   async getAllTrades(userId: string) {
-    const trades = await db
-      .selectFrom("trades")
+    const trades = await this.db
+      .selectFrom('trades')
       .selectAll()
-      .where("userId", "=", userId)
-      .orderBy("openedAt", "desc")
+      .where('userId', '=', userId)
+      .orderBy('openedAt', 'desc')
       .execute()
 
     if (trades.length === 0) return []
 
     const tradeIds = trades.map((t) => t.id)
 
-    const analytics = await db.selectFrom("tradeAnalytics").selectAll().where("tradeId", "in", tradeIds).execute()
+    const analytics = await this.db.selectFrom('tradeAnalytics').selectAll().where('tradeId', 'in', tradeIds).execute()
 
     // Map analytics back to trades
     return trades.map((trade) => {
       const tradeEvents = analytics.filter((a) => a.tradeId === trade.id)
-      const entryEvent = tradeEvents.find((a) => a.eventType === "ENTRY")
-      const exitEvent = tradeEvents.find((a) => a.eventType === "EXIT")
+      const entryEvent = tradeEvents.find((a) => a.eventType === 'ENTRY')
+      const exitEvent = tradeEvents.find((a) => a.eventType === 'EXIT')
 
       let aiReasoning,
         aiConfidence,
@@ -171,7 +184,7 @@ export class TradeRepository {
         exitReason
 
       if (entryEvent?.metadata) {
-        const meta = typeof entryEvent.metadata === "string" ? JSON.parse(entryEvent.metadata) : entryEvent.metadata
+        const meta = typeof entryEvent.metadata === 'string' ? JSON.parse(entryEvent.metadata) : entryEvent.metadata
         aiReasoning = meta.aiReasoning
         aiConfidence = meta.aiConfidence
         vixLevel = meta.vixLevel
@@ -184,7 +197,7 @@ export class TradeRepository {
       }
 
       if (exitEvent?.metadata) {
-        const meta = typeof exitEvent.metadata === "string" ? JSON.parse(exitEvent.metadata) : exitEvent.metadata
+        const meta = typeof exitEvent.metadata === 'string' ? JSON.parse(exitEvent.metadata) : exitEvent.metadata
         exitReason = meta.exitReason
       }
 
@@ -204,7 +217,3 @@ export class TradeRepository {
     })
   }
 }
-
-// We still export a singleton repository instance because it doesn't hold state,
-// just queries the database. We pass `userId` to its methods.
-export const tradeRepo = new TradeRepository()

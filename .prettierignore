@@ -5,3 +5,4 @@ data/
 .kite/
 package-lock.json
 web/.nuxt/
+web/.output/

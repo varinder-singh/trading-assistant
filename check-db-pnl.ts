@@ -1,9 +1,9 @@
-import { db } from "./src/db/database.js"
+import { db } from './src/db/database.js'
 
 async function checkTrades() {
-  const trades = await db.selectFrom("trades").selectAll().execute()
-  console.log("ID | Symbol | Qty | Entry | Exit | PnL (DB) | Calculated PnL")
-  console.log("---|---|---|---|---|---|---")
+  const trades = await db.selectFrom('trades').selectAll().execute()
+  console.log('ID | Symbol | Qty | Entry | Exit | PnL (DB) | Calculated PnL')
+  console.log('---|---|---|---|---|---|---')
   for (const t of trades) {
     const calculatedPnL = t.exitPrice ? (Number(t.exitPrice) - Number(t.entryPrice)) * t.quantity : null
     console.log(

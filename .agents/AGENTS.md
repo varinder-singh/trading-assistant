@@ -12,6 +12,7 @@ When preparing large JSON payloads (such as market data, ticks, options chains, 
 ## Always Apply Deep Fixes
 
 When addressing issues, performance problems, or bugs:
+
 - **Do not** provide shallow fixes (e.g., merely hiding errors, silencing logs, or abruptly omitting required data just to bypass a limit).
 - **Go deep** to understand the architectural cause of the problem.
 - Provide a proper, comprehensive fix that elegantly solves the root problem without compromising the integrity, contextual awareness, or functionality of the system.

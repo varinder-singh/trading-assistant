@@ -5,7 +5,7 @@ export const gtiTracker = {
   getCurrentScore(token: number) {
     return {
       composite: 0,
-      classification: "NEUTRAL",
+      classification: 'NEUTRAL',
       confidence: 0,
       components: {
         volumeAnomaly: 0,

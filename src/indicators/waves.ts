@@ -1,11 +1,11 @@
-import type { SwingPoint, WaveContext } from "../types/analysis.js"
+import type { SwingPoint, WaveContext } from '../types/analysis.js'
 
 /**
  * Deterministically detects the current Elliott Wave phase based on swing points.
  * This is a simplified model focusing on an impulse sequence (1-2-3-4-5).
  */
 export function detectWaveStructure(swings: SwingPoint[], currentPrice: number): WaveContext {
-  const context: WaveContext = { currentPhase: "CONSOLIDATION" }
+  const context: WaveContext = { currentPhase: 'CONSOLIDATION' }
   if (swings.length < 2) return context
 
   // Filter last 10 swings to find the sequence
@@ -22,8 +22,8 @@ export function detectWaveStructure(swings: SwingPoint[], currentPrice: number):
   // This can be expanded into a more robust state machine
 
   // Let's find the last major Low-High sequence
-  let lastLow = recentSwings.filter((s) => s.type === "LOW").pop()
-  let lastHigh = recentSwings.filter((s) => s.type === "HIGH").pop()
+  let lastLow = recentSwings.filter((s) => s.type === 'LOW').pop()
+  let lastHigh = recentSwings.filter((s) => s.type === 'HIGH').pop()
 
   if (!lastLow || !lastHigh) return context
 
@@ -40,9 +40,9 @@ export function detectWaveStructure(swings: SwingPoint[], currentPrice: number):
   }
 
   if (currentPrice > lastHigh.price) {
-    context.currentPhase = "WAVE_3"
+    context.currentPhase = 'WAVE_3'
   } else if (currentPrice < lastHigh.price && currentPrice > context.fibZones.fib618) {
-    context.currentPhase = "WAVE_2"
+    context.currentPhase = 'WAVE_2'
   }
 
   // Calculate Wave 5 Target if we assume we are in or near Wave 3/4

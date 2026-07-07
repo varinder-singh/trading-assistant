@@ -1,15 +1,15 @@
-import { db } from "../database.js"
-import { randomUUID } from "node:crypto"
+import { db } from '../database.js'
+import { randomUUID } from 'node:crypto'
 
 export class IvHistoryRepo {
   /**
    * Save or update the daily ATM IV for a symbol
    */
   async saveDailyIV(symbol: string, iv: number, dateStr?: string): Promise<void> {
-    const date = dateStr || (new Date().toISOString().split("T")[0] as string)
+    const date = dateStr || (new Date().toISOString().split('T')[0] as string)
 
     await db
-      .insertInto("ivHistory")
+      .insertInto('ivHistory')
       .values({
         id: randomUUID(),
         symbol,
@@ -18,8 +18,8 @@ export class IvHistoryRepo {
         createdAt: new Date().toISOString(),
       })
       .onConflict((oc) =>
-        oc.columns(["symbol", "date"]).doUpdateSet({
-          iv: (eb) => eb.ref("excluded.iv"),
+        oc.columns(['symbol', 'date']).doUpdateSet({
+          iv: (eb) => eb.ref('excluded.iv'),
         })
       )
       .execute()
@@ -31,10 +31,10 @@ export class IvHistoryRepo {
    */
   async getIvStats(symbol: string, currentIv: number, days: number = 30) {
     const records = await db
-      .selectFrom("ivHistory")
-      .select(["iv"])
-      .where("symbol", "=", symbol)
-      .orderBy("date", "desc")
+      .selectFrom('ivHistory')
+      .select(['iv'])
+      .where('symbol', '=', symbol)
+      .orderBy('date', 'desc')
       .limit(days)
       .execute()
 

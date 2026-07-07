@@ -28,14 +28,14 @@ export function calculateBSPrice(
   T: number, // Time to Expiry (in years)
   r: number, // Risk-Free Rate
   v: number, // Implied Volatility (decimal)
-  type: "CE" | "PE"
+  type: 'CE' | 'PE'
 ): number {
-  if (T <= 0) return Math.max(0, type === "CE" ? S - K : K - S)
+  if (T <= 0) return Math.max(0, type === 'CE' ? S - K : K - S)
 
   const d1 = (Math.log(S / K) + (r + (v * v) / 2) * T) / (v * Math.sqrt(T))
   const d2 = d1 - v * Math.sqrt(T)
 
-  if (type === "CE") {
+  if (type === 'CE') {
     return S * cdf(d1) - K * Math.exp(-r * T) * cdf(d2)
   } else {
     return K * Math.exp(-r * T) * cdf(-d2) - S * cdf(-d1)
@@ -51,12 +51,12 @@ export function calculateIV(
   K: number,
   T: number,
   r: number,
-  type: "CE" | "PE"
+  type: 'CE' | 'PE'
 ): number {
   if (T <= 0) return 0 // Cannot compute IV at expiry
 
   // Intrinsic value check
-  const intrinsic = Math.max(0, type === "CE" ? S - K : K - S)
+  const intrinsic = Math.max(0, type === 'CE' ? S - K : K - S)
   if (targetPrice <= intrinsic) return 0.01 // Option trading at or below intrinsic, IV is near zero
 
   let v = 0.3 // Initial guess 30%
@@ -95,12 +95,12 @@ export function calculateGreeks(
   T: number, // years
   r: number,
   v: number, // implied volatility
-  type: "CE" | "PE"
+  type: 'CE' | 'PE'
 ): OptionGreeks {
   if (T <= 0 || v <= 0) {
     return {
       iv: v,
-      delta: type === "CE" ? (S >= K ? 1 : 0) : S <= K ? -1 : 0,
+      delta: type === 'CE' ? (S >= K ? 1 : 0) : S <= K ? -1 : 0,
       gamma: 0,
       theta: 0,
       vega: 0,
@@ -111,7 +111,7 @@ export function calculateGreeks(
   const d2 = d1 - v * Math.sqrt(T)
 
   // Delta
-  const delta = type === "CE" ? cdf(d1) : cdf(d1) - 1
+  const delta = type === 'CE' ? cdf(d1) : cdf(d1) - 1
 
   // Gamma (Same for Call/Put)
   const gamma = pdf(d1) / (S * v * Math.sqrt(T))
@@ -122,7 +122,7 @@ export function calculateGreeks(
   // Theta - Usually divided by 365 to show daily decay
   let theta = 0
   const term1 = (-S * pdf(d1) * v) / (2 * Math.sqrt(T))
-  if (type === "CE") {
+  if (type === 'CE') {
     const term2 = r * K * Math.exp(-r * T) * cdf(d2)
     theta = (term1 - term2) / 365
   } else {
@@ -142,7 +142,7 @@ export function getGreeksFromPrice(
   K: number,
   daysToExpiry: number,
   r: number = 0.07, // 7% risk-free rate for India
-  type: "CE" | "PE"
+  type: 'CE' | 'PE'
 ): OptionGreeks {
   const T = Math.max(0.001, daysToExpiry / 365) // Avoid div by 0 for same-day expiry
   const iv = calculateIV(targetPrice, S, K, T, r, type)

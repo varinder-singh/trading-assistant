@@ -1,11 +1,11 @@
-import type { KiteOptionsAnalysis } from "../analysis/kite-options.js"
-import type { VixData } from "../data/vix.js"
-import type { TechnicalAnalysis } from "../types/analysis.js"
-import type { MarketMode } from "../types/mode.js"
-import type { DailyContext } from "../types/technical-analysis.js"
+import type { KiteOptionsAnalysis } from '../analysis/kite-options.js'
+import type { VixData } from '../data/vix.js'
+import type { TechnicalAnalysis } from '../types/analysis.js'
+import type { MarketMode } from '../types/mode.js'
+import type { DailyContext } from '../types/technical-analysis.js'
 
 export interface LLMMessage {
-  role: "system" | "user" | "assistant"
+  role: 'system' | 'user' | 'assistant'
   content: string
 }
 
@@ -19,9 +19,9 @@ export interface LLMProvider {
   chat(messages: LLMMessage[], options?: LLMOptions): Promise<string>
 }
 
-export type TradingAgentType = "SCALPER" | "TREND"
+export type TradingAgentType = 'SCALPER' | 'TREND'
 
-export type AgentStatus = "thinking" | "decided" | "idle" | "error"
+export type AgentStatus = 'thinking' | 'decided' | 'idle' | 'error'
 
 export interface AgentUpdate {
   agent: string
@@ -46,13 +46,13 @@ export type MarketContext = {
   vix: VixData
   mode: MarketMode
   time: string
-  gtiScore?: import("../types/analysis.js").GTIScore
+  gtiScore?: import('../types/analysis.js').GTIScore
 }
-export type AIDecision = "BUY" | "SELL" | "NO_TRADE" | "HOLD"
-export type AIMarketActivitySetup = "TRUE_BREAKOUT" | "INSTITUTIONAL_TRAP" | "TREND_CONTINUATION" | "NONE"
-export type AIMacroTrend = "COMPRESSION_BULLISH" | "EXPANDING_BEARISH" | "SIDEWAYS"
-export type AIInstrument = "OPTIONS"
-export type AIOptionAction = "BUY_CE" | "BUY_PE" | "NONE"
+export type AIDecision = 'BUY' | 'SELL' | 'NO_TRADE' | 'HOLD'
+export type AIMarketActivitySetup = 'TRUE_BREAKOUT' | 'INSTITUTIONAL_TRAP' | 'TREND_CONTINUATION' | 'NONE'
+export type AIMacroTrend = 'COMPRESSION_BULLISH' | 'EXPANDING_BEARISH' | 'SIDEWAYS'
+export type AIInstrument = 'OPTIONS'
+export type AIOptionAction = 'BUY_CE' | 'BUY_PE' | 'NONE'
 
 export interface AISuccessResponse {
   decision: AIDecision
@@ -67,10 +67,11 @@ export interface AISuccessResponse {
   stopLoss: number // - ACTUAL INDEX LEVEL FOR INVALIDATION>,
   targets: number[]
   riskRewardRatio: number //<e.g. 1.5 or 2.0>
+  reducedPosition?: boolean // Set by confidence tier system: 60-75% confidence = reduced sizing (1 lot)
 }
 
 export interface TechnicalAgentResponse {
-  bias: "BULLISH" | "BEARISH" | "NEUTRAL"
+  bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
   setup: AIMarketActivitySetup
   waveContext: {
     currentWave: string
@@ -85,7 +86,7 @@ export interface TechnicalAgentResponse {
 }
 
 export interface OptionsAgentResponse {
-  bias: "BULLISH" | "BEARISH" | "NEUTRAL"
+  bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
   confidence: number
   signals: string[]
   pcr: number
@@ -103,7 +104,7 @@ export interface AIFailureResponse {
 }
 
 // AI Sentiment
-export type AISentimentSetup = "positive" | "negative" | "neutral"
+export type AISentimentSetup = 'positive' | 'negative' | 'neutral'
 export type AISentimentResponse = {
   sentiment: AISentimentSetup
   confidence: number //<0.0 to 1.0>,

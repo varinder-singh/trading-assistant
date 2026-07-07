@@ -1,42 +1,28 @@
-import { UserSession } from "@core/execution/session-manager.js"
-import { LiveAnalyzer } from "@core/analysis/live.js"
-import { eventHub } from "@core/utils/event-hub.js"
-import { candleBuilder } from "@core/data/candle-builder.js"
-import { gtiTracker } from "@core/indicators/gti-tracker.js"
-import { gtiRepo } from "@core/db/repositories/gti-repo.js"
-
-export interface WsClientState {
-  peer: any
-  userId: string
-  session: UserSession
-  analyzer: LiveAnalyzer
-  symbol: string
-  token: number
-  mode: "intraday" | "swing"
-  lastDecision: any
-  chartTimeframe: number
-  isAnalyzing?: boolean
-}
+import { eventHub } from '@core/utils/event-hub.js'
+import { candleBuilder } from '@core/data/candle-builder.js'
+import { gtiTracker } from '@core/indicators/gti-tracker.js'
+import { gtiRepo } from '@core/db/repositories/container.js'
+import type { ClientConnection } from './client-connection.js'
 
 class WsConnectionManager {
-  private clients = new Map<string, WsClientState>()
+  private clients = new Map<string, ClientConnection>()
   private listenersInitialized = false
 
   setupGlobalListeners() {
     if (this.listenersInitialized) return
     this.listenersInitialized = true
 
-    eventHub.on("agent_update", (update) => {
+    eventHub.on('agent_update', (update) => {
       // If the update has a userId, broadcast only to that user for privacy
       if (update.userId) {
-        this.broadcastToUser(update.userId, { type: "agent_update", data: update })
+        this.broadcastToUser(update.userId, { type: 'agent_update', data: update })
       } else {
-        this.broadcastAll({ type: "agent_update", data: update })
+        this.broadcastAll({ type: 'agent_update', data: update })
       }
     })
 
     // Global CandleBuilder close listener for GTI
-    candleBuilder.on("candle_close", async ({ token, timeframe, candle }) => {
+    candleBuilder.on('candle_close', async ({ token, timeframe, candle }) => {
       const gtiScore = gtiTracker.onCandleClose(token, candle)
 
       const clients = this.getAllClients()
@@ -64,36 +50,38 @@ class WsConnectionManager {
     })
   }
 
-  addClient(peerId: string, state: WsClientState) {
-    this.clients.set(peerId, state)
+  addClient(peerId: string, client: ClientConnection) {
+    this.clients.set(peerId, client)
   }
 
-  getClient(peerId: string): WsClientState | undefined {
+  getClient(peerId: string): ClientConnection | undefined {
     return this.clients.get(peerId)
   }
 
   removeClient(peerId: string) {
-    this.clients.delete(peerId)
+    const client = this.clients.get(peerId)
+    if (client) {
+      client.destroy()
+      this.clients.delete(peerId)
+    }
   }
 
-  getAllClients(): WsClientState[] {
+  getAllClients(): ClientConnection[] {
     return Array.from(this.clients.values())
   }
 
   broadcastToUser(userId: string, msg: any) {
-    const data = JSON.stringify(msg)
     for (const client of this.clients.values()) {
       if (client.userId === userId) {
-        client.peer.send(data)
+        client.send(msg)
       }
     }
   }
 
   // NOTE: This broadcasts to ALL connected users. Use cautiously.
   broadcastAll(msg: any) {
-    const data = JSON.stringify(msg)
     for (const client of this.clients.values()) {
-      client.peer.send(data)
+      client.send(msg)
     }
   }
 }

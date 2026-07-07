@@ -1,33 +1,26 @@
-import { wsConnectionManager } from "../utils/websocket-connection-manager.js"
-import { handleAuthCommand } from "../utils/websocket-auth-handler.js"
-import { handleWatchCommand } from "../utils/websocket-watch-handler.js"
+import { wsConnectionManager } from '../utils/websocket-connection-manager.js'
+import { ClientConnection } from '../utils/client-connection.js'
 
 // Initialize global event listeners on first import
 wsConnectionManager.setupGlobalListeners()
 
 export default defineWebSocketHandler({
+  // peer is internal to Nuxt and represents a WebSocket connection
   open(peer) {
     console.log(`[ws] open ${peer.id}`)
+    const connection = new ClientConnection(peer)
+    wsConnectionManager.addClient(peer.id, connection)
   },
 
   async message(peer, message) {
     const text = message.text()
     if (!text) return
 
-    try {
-      const msg = JSON.parse(text)
-
-      if (msg.type === "auth") {
-        await handleAuthCommand(peer, msg)
-        return
-      }
-
-      if (msg.type === "watch") {
-        await handleWatchCommand(peer, msg)
-        return
-      }
-    } catch (err) {
-      console.error("[ws] error handling message", err)
+    const connection = wsConnectionManager.getClient(peer.id)
+    if (connection) {
+      await connection.handleMessage(text)
+    } else {
+      console.warn(`[ws] Received message on peer ${peer.id} but no ClientConnection was found.`)
     }
   },
 
@@ -38,5 +31,6 @@ export default defineWebSocketHandler({
 
   error(peer, error) {
     console.log(`[ws] error ${peer.id}`, error)
+    wsConnectionManager.removeClient(peer.id)
   },
 })

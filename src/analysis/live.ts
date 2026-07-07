@@ -1,6 +1,6 @@
-import { EventEmitter } from "node:events"
-import type { GTIScore } from "../types/analysis.js"
-import { isMarketOpen } from "../utils/market.js"
+import { EventEmitter } from 'node:events'
+import type { GTIScore } from '../types/analysis.js'
+import { isMarketOpen } from '../utils/market.js'
 
 export interface LiveTick {
   last_price: number
@@ -36,7 +36,7 @@ export class LiveAnalyzer extends EventEmitter {
 
   addTick(tick: LiveTick) {
     tick.received_at = Date.now()
-    
+
     const lastTick = this.ticks.length > 0 ? this.ticks[this.ticks.length - 1] : null
     if (lastTick && lastTick.last_price === tick.last_price) {
       lastTick.received_at = tick.received_at
@@ -65,7 +65,7 @@ export class LiveAnalyzer extends EventEmitter {
     const wasBelowThreshold = Math.abs(prevScore.composite) < this.gtiSurgeThreshold
     const isAboveThreshold = Math.abs(gtiScore.composite) >= this.gtiSurgeThreshold
     if (wasBelowThreshold && isAboveThreshold) {
-      const direction = gtiScore.composite > 0 ? "ACCUMULATION" : "DISTRIBUTION"
+      const direction = gtiScore.composite > 0 ? 'ACCUMULATION' : 'DISTRIBUTION'
       this.trigger(
         `GTI Institutional Surge: ${direction} (${gtiScore.composite.toFixed(2)}, ${gtiScore.classification})`,
         { last_price: this.priceAtLastGTICheck, instrument_token: 0, received_at: now } as LiveTick
@@ -121,9 +121,9 @@ export class LiveAnalyzer extends EventEmitter {
 
     // 1. Level Breakout
     if (last_price > resistance) {
-      this.trigger("Price broke Resistance", tick)
+      this.trigger('Price broke Resistance', tick)
     } else if (last_price < support) {
-      this.trigger("Price broke Support", tick)
+      this.trigger('Price broke Support', tick)
     }
 
     // 2. Volatility Spike (0.1% move in 1 minute)
@@ -140,7 +140,7 @@ export class LiveAnalyzer extends EventEmitter {
 
   private trigger(reason: string, tick: LiveTick) {
     this.lastTriggerTime = Date.now()
-    this.emit("breakout", {
+    this.emit('breakout', {
       reason,
       tick,
       recentTicks: [...this.ticks],

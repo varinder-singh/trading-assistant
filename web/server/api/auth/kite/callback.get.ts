@@ -1,20 +1,20 @@
-import { createKiteClient } from "@core/data/kite.js"
-import { serverSupabaseUser } from "#supabase/server"
-import { db } from "@core/db/database.js"
-import crypto from "node:crypto"
-import { decryptSecret, encryptSecret } from "@core/utils/crypto.js"
+import { createKiteClient } from '@core/data/kite.js'
+import { serverSupabaseUser } from '#supabase/server'
+import { db } from '@core/db/database.js'
+import crypto from 'node:crypto'
+import { decryptSecret, encryptSecret } from '@core/utils/crypto.js'
 
 export default defineEventHandler(async (event) => {
   const user = await serverSupabaseUser(event)
   if (!user) {
-    return sendRedirect(event, "/login")
+    return sendRedirect(event, '/login')
   }
 
   const query = getQuery(event)
   const requestToken = query.request_token as string
 
   if (!requestToken) {
-    throw createError({ statusCode: 400, statusMessage: "Missing request_token" })
+    throw createError({ statusCode: 400, statusMessage: 'Missing request_token' })
   }
 
   const userId = user.id || user.sub
@@ -26,10 +26,10 @@ export default defineEventHandler(async (event) => {
   try {
     // Check if the user already has a broker account
     const existing = await db
-      .selectFrom("brokerAccounts")
-      .select(["id", "apiKey", "apiSecretEncrypted"])
-      .where("userId", "=", userId)
-      .where("brokerName", "=", "zerodha")
+      .selectFrom('brokerAccounts')
+      .select(['id', 'apiKey', 'apiSecretEncrypted'])
+      .where('userId', '=', userId)
+      .where('brokerName', '=', 'zerodha')
       .executeTakeFirst()
 
     const userApiKey = existing?.apiKey || undefined
@@ -45,14 +45,14 @@ export default defineEventHandler(async (event) => {
     const brokerUserId = response.user_id
 
     // Ensure the user profile exists to satisfy the foreign key constraint
-    const profile = await db.selectFrom("profiles").select("id").where("id", "=", userId).executeTakeFirst()
+    const profile = await db.selectFrom('profiles').select('id').where('id', '=', userId).executeTakeFirst()
 
     if (!profile) {
       await db
-        .insertInto("profiles")
+        .insertInto('profiles')
         .values({
           id: userId,
-          fullName: user.email ? user.email.split("@")[0] : "Trader",
+          fullName: user.email ? user.email.split('@')[0] : 'Trader',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         })
@@ -63,7 +63,7 @@ export default defineEventHandler(async (event) => {
 
     if (existing) {
       await db
-        .updateTable("brokerAccounts")
+        .updateTable('brokerAccounts')
         .set({
           accessToken: encryptSecret(accessToken),
           publicToken,
@@ -71,17 +71,17 @@ export default defineEventHandler(async (event) => {
           isActive: true,
           updatedAt: new Date().toISOString(),
         })
-        .where("id", "=", existing.id)
+        .where('id', '=', existing.id)
         .execute()
     } else {
-      console.log("[KITE CALLBACK] user object:", user)
-      console.log("[KITE CALLBACK] user.id:", user.id)
+      console.log('[KITE CALLBACK] user object:', user)
+      console.log('[KITE CALLBACK] user.id:', user.id)
       await db
-        .insertInto("brokerAccounts")
+        .insertInto('brokerAccounts')
         .values({
           id: crypto.randomUUID(),
           userId: userId,
-          brokerName: "zerodha",
+          brokerName: 'zerodha',
           brokerUserId,
           accessToken: encryptSecret(accessToken),
           publicToken,
@@ -93,9 +93,9 @@ export default defineEventHandler(async (event) => {
     }
 
     // Redirect to dashboard on success
-    return sendRedirect(event, "/")
+    return sendRedirect(event, '/')
   } catch (error: any) {
-    console.error("Zerodha OAuth Error:", error)
+    console.error('Zerodha OAuth Error:', error)
     throw createError({
       statusCode: 500,
       statusMessage: `Failed to authenticate with Zerodha: ${error.message || error}`,

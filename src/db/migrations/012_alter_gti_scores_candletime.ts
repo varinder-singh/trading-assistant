@@ -1,4 +1,4 @@
-import { Kysely, sql } from "kysely"
+import { Kysely, sql } from 'kysely'
 
 export async function up(db: Kysely<any>): Promise<void> {
   // Alter candle_time to be a bigint to support millisecond timestamps

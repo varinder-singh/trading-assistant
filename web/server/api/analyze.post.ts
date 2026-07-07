@@ -1,35 +1,39 @@
-import { runAnalysis } from "@core/analysis/trade.js"
-import { getOptionToken } from "@core/data/kite.js"
-import { serverSupabaseUser } from "#supabase/server"
-import { db } from "@core/db/database.js"
-import { sessionManager } from "@core/execution/session-manager.js"
-import { isMarketOpen } from "@core/utils/market-hours.js"
-import { decryptSecret } from "@core/utils/crypto.js"
+import { runAnalysis } from '@core/analysis/trade.js'
+import { getOptionToken } from '@core/data/kite.js'
+import { serverSupabaseUser } from '#supabase/server'
+import { userRepo } from '@core/db/repositories/container.js'
+import { sessionManager } from '@core/execution/session-manager.js'
+import { isMarketOpen } from '@core/utils/market-hours.js'
+import { decryptSecret } from '@core/utils/crypto.js'
 
 export default defineEventHandler(async (event) => {
   const user = await serverSupabaseUser(event)
   if (!user) {
-    throw createError({ statusCode: 401, statusMessage: "Unauthorized" })
+    throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
   }
 
   const userId = user.id || user.sub
   if (!userId) {
-    throw createError({ statusCode: 401, statusMessage: "Unauthorized (No User ID)" })
+    throw createError({ statusCode: 401, statusMessage: 'Unauthorized (No User ID)' })
   }
 
-  const brokerAccount = await db
-    .selectFrom("brokerAccounts")
-    .select(["accessToken", "apiKey"])
-    .where("userId", "=", userId)
-    .where("isActive", "=", true)
-    .executeTakeFirst()
+  const brokerAccount = await userRepo.getUserBrokerAccountByUserId(userId)
 
-  if (!brokerAccount?.accessToken) {
-    throw createError({ statusCode: 400, statusMessage: "Zerodha account not linked." })
+  if (!brokerAccount?.apiKey || !brokerAccount?.accessToken) {
+    throw createError({ statusCode: 400, statusMessage: 'Zerodha account is not linked with user account.' })
   }
+
+  const profile = await userRepo.getUserProfileByUserId(userId)
+
+  const tradeMode = profile?.tradeMode || 'PAPER'
 
   // Retrieve or create the user's session (which holds kc, ticker, and paperTrader)
-  const userSession = await sessionManager.getSession(userId, decryptSecret(brokerAccount.accessToken), brokerAccount.apiKey || undefined)
+  const userSession = await sessionManager.getSession(
+    userId,
+    decryptSecret(brokerAccount.accessToken),
+    brokerAccount.apiKey,
+    tradeMode
+  )
   const kc = userSession.kc
   const paperTrader = userSession.paperTrader
 
@@ -39,23 +43,23 @@ export default defineEventHandler(async (event) => {
   if (!symbol) {
     throw createError({
       statusCode: 400,
-      statusMessage: "Symbol is required",
+      statusMessage: 'Symbol is required',
     })
   }
 
   if (!isMarketOpen()) {
     throw createError({
       statusCode: 400,
-      statusMessage: "Market is closed. Analysis is unavailable.",
+      statusMessage: 'Market is closed. Analysis is unavailable.',
     })
   }
 
   try {
-    const result = await runAnalysis(kc, symbol, mode || "intraday", undefined, undefined, undefined, userId)
+    const result = await runAnalysis(kc, symbol, mode || 'intraday', undefined, undefined, undefined, userId)
     const { tf15m: tf, aiDecision: decision, vix, agentType } = result
 
-    if (decision && decision.optionAction !== "NONE" && decision.decision !== "HOLD") {
-      const type = decision.optionAction === "BUY_CE" ? "CE" : "PE"
+    if (decision && decision.optionAction !== 'NONE' && decision.decision !== 'HOLD') {
+      const type = decision.optionAction === 'BUY_CE' ? 'CE' : 'PE'
       const option = await getOptionToken(kc, symbol, decision.strike || 0, type)
       if (option) {
         console.log(`[API ${user.id}] Executing Paper Trade for ${option.symbol} (${agentType} Agent)...`)
@@ -67,7 +71,7 @@ export default defineEventHandler(async (event) => {
           const optionRiskPoints = indexRiskPoints * estimatedDelta
           let calculatedSl = entryPrice - optionRiskPoints
           const calculatedTarget = entryPrice + optionRiskPoints * (decision.riskRewardRatio || 1.5)
-          const floorPercentage = agentType === "TREND" ? 0 : 0.2
+          const floorPercentage = agentType === 'TREND' ? 0 : 0.2
           const minAllowedSl = Math.max(entryPrice * floorPercentage, 0.05)
           if (calculatedSl < minAllowedSl) calculatedSl = minAllowedSl
 
@@ -75,7 +79,7 @@ export default defineEventHandler(async (event) => {
             symbol: option.symbol,
             token: option.token,
             strike: decision.strike || undefined,
-            side: "BUY",
+            side: 'BUY',
             quantity: 1,
             price: entryPrice,
             context: {
@@ -102,10 +106,10 @@ export default defineEventHandler(async (event) => {
 
     return result
   } catch (error: any) {
-    console.error("Analysis API Error:", error)
+    console.error('Analysis API Error:', error)
     throw createError({
       statusCode: 500,
-      statusMessage: error.message || "Analysis failed",
+      statusMessage: error.message || 'Analysis failed',
     })
   }
 })

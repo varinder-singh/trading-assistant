@@ -2,7 +2,7 @@ export function isMarketOpen(): boolean {
   const now = new Date()
 
   // Convert current time to IST string
-  const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
+  const istString = now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })
   const istDate = new Date(istString)
 
   const day = istDate.getDay()
