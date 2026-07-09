@@ -1,15 +1,16 @@
 import type { Candle, TechnicalAnalysis } from '../types/analysis.js'
 import { detectTrend } from '../indicators/trend.js'
-import { calculateVWAP } from '../indicators/vwap.js'
+import { calculateVWAP, calculateVWAPZScore } from '../indicators/vwap.js'
 import { calculateRSI } from '../indicators/rsi.js'
 
 import { calculateATR } from '../indicators/atr.js'
-import { calculateEMA } from '../indicators/ema.js'
+import { calculateEMA, calculateEMASlope } from '../indicators/ema.js'
 import { calculateORB } from '../indicators/orb.js'
 import { calculateSwings } from '../indicators/swings.js'
 import { detectWaveStructure } from '../indicators/waves.js'
 import type { DailyContext } from '../types/technical-analysis.js'
 import { calculateVolumeProfile } from '../indicators/volume-profile.js'
+import { calculateADX } from '../indicators/adx.js'
 
 export function analyzeDailyContext(candles1d: Candle[], intradayCandles?: Candle[]): DailyContext | null {
   if (candles1d.length < 15) return null
@@ -78,9 +79,14 @@ export function analyzeTechnical(
   const vwapPosition = last > vwap ? 'above' : 'below'
 
   const ema: Record<string, number> = {}
+  const emaSlope: Record<string, number> = {}
   for (const period of emaPeriods) {
     ema[period] = calculateEMA(candles, period)
+    emaSlope[period] = calculateEMASlope(candles, period)
   }
+
+  const vwapZScore = calculateVWAPZScore(candles, vwap)
+  const adx = timeframe === '15m' ? calculateADX(candles, 14) : undefined
 
   const swings = timeframe === '15m' ? calculateSwings(candles, 2) : undefined
   const waveContext = timeframe === '15m' && swings ? detectWaveStructure(swings, last) : undefined
@@ -99,6 +105,9 @@ export function analyzeTechnical(
     swings,
     waveContext,
     openingRange,
+    vwapZScore,
+    emaSlope,
+    adx,
   }
 }
 

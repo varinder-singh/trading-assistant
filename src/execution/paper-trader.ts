@@ -12,6 +12,7 @@ import { KiteOrderService } from './kite-orders.js'
 import { getGreeksFromPrice } from '../analysis/greeks.js'
 import { resolveYahooTicker } from '../utils/symbol.js'
 import { computeTieredTargets } from './tier-calculator.js'
+import { isMarketOpen } from '../utils/market-hours.js'
 
 export type StrategyContext = {
   macroTrend: AIMacroTrend
@@ -194,6 +195,10 @@ export class PaperTrader extends EventEmitter {
     if (this.positionManagerTimer) clearInterval(this.positionManagerTimer)
     this.positionManagerTimer = setInterval(
       async () => {
+        if (!isMarketOpen()) {
+          console.log('[Risk Manager] Market is closed. Suspending position re-evaluation.')
+          return
+        }
         const positions = this.getAllPositions()
         if (positions.length === 0) {
           eventHub.emit('agent_update', {
@@ -662,8 +667,9 @@ export class PaperTrader extends EventEmitter {
       if (pos && pos.side === 'BUY') {
         // 1. Detect and translate index-level SL
         if (pos.aiStopLoss !== undefined && pos.aiStopLoss > 1000) {
-          const fallbackOffset = pos.side === 'BUY' ? 50 : -50
-          const indexPrice = params.context?.strategyContext?.indexSl || pos.aiStopLoss + fallbackOffset
+          const isPeOption = pos.symbol.endsWith('PE')
+          const fallbackOffset = isPeOption ? -50 : 50
+          const indexPrice = params.context?.currentIndexPrice || (pos.aiStopLoss + fallbackOffset)
           const indexRisk = Math.abs(indexPrice - pos.aiStopLoss)
           const agentType = params.context?.strategyContext?.agentType || 'SCALPER'
 
@@ -686,8 +692,9 @@ export class PaperTrader extends EventEmitter {
 
         // 2. Detect and translate index-level Target
         if (pos.aiTarget !== undefined && pos.aiTarget > 1000) {
-          const fallbackOffset = pos.side === 'BUY' ? -100 : 100
-          const indexPrice = params.context?.strategyContext?.indexSl || pos.aiTarget + fallbackOffset
+          const isPeOption = pos.symbol.endsWith('PE')
+          const fallbackOffset = isPeOption ? 100 : -100
+          const indexPrice = params.context?.currentIndexPrice || (pos.aiTarget + fallbackOffset)
           const indexGain = Math.abs(pos.aiTarget - indexPrice)
           const agentType = params.context?.strategyContext?.agentType || 'SCALPER'
 

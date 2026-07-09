@@ -75,7 +75,8 @@ describe('runAnalysis', () => {
         tf15m: expect.any(Object),
         tf3m: expect.any(Object),
       }),
-      'SCALPER'
+      'SCALPER',
+      expect.any(String)
     )
   })
 })

@@ -66,9 +66,12 @@ export default defineEventHandler(async (event) => {
         const quote = await kc.getQuote([`NFO:${option.symbol}`])
         const entryPrice = quote[`NFO:${option.symbol}`]?.last_price || 0
         if (entryPrice > 0) {
+          const optionRow = result.optionsAnalysis?.rows?.find(
+            (r: any) => r.strike === decision.strike && r.type === type
+          )
+          const actualDelta = optionRow?.greeks?.delta ? Math.abs(optionRow.greeks.delta) : 0.5
           const indexRiskPoints = Math.abs(tf.price - decision.stopLoss)
-          const estimatedDelta = 0.5
-          const optionRiskPoints = indexRiskPoints * estimatedDelta
+          const optionRiskPoints = indexRiskPoints * actualDelta
           let calculatedSl = entryPrice - optionRiskPoints
           const calculatedTarget = entryPrice + optionRiskPoints * (decision.riskRewardRatio || 1.5)
           const floorPercentage = agentType === 'TREND' ? 0 : 0.2
@@ -98,6 +101,8 @@ export default defineEventHandler(async (event) => {
               aiStopLoss: calculatedSl,
               aiTarget: calculatedTarget,
               lotSize: result.lotSize,
+              currentIndexPrice: tf.price,
+              optionDelta: actualDelta,
             },
           })
         }

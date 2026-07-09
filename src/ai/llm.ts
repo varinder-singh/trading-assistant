@@ -298,24 +298,29 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
           if (result.confidence < 0 || result.confidence > 100) {
             result.confidence = Math.min(Math.max(result.confidence, 0), 100)
           }
-          if (result.stopLoss && result.entry && result.stopLoss >= result.entry) {
+          const isBearish = result.optionAction === 'BUY_PE'
+          const hasInvalidSl = isBearish
+            ? result.stopLoss && result.entry && result.stopLoss <= result.entry
+            : result.stopLoss && result.entry && result.stopLoss >= result.entry
+
+          if (hasInvalidSl) {
             console.warn(
-              `[AI Validation] Invalid Stop Loss (${result.stopLoss}) >= Entry (${result.entry}). AI Hallucination detected, overriding.`
+              `[AI Validation] Invalid Stop Loss (${result.stopLoss}) for direction. AI Hallucination detected, overriding.`
             )
-            // Default 0.5% index move for Nifty/BankNifty fallback
-            result.stopLoss = result.entry * 0.995
+            result.stopLoss = isBearish ? result.entry * 1.005 : result.entry * 0.995
           }
-          if (
-            result.targets &&
-            result.targets.length > 0 &&
-            result.targets[0] !== undefined &&
-            result.entry &&
-            result.targets[0] <= result.entry
-          ) {
+
+          const hasInvalidTarget = isBearish
+            ? result.targets && result.targets[0] !== undefined && result.entry && result.targets[0] >= result.entry
+            : result.targets && result.targets[0] !== undefined && result.entry && result.targets[0] <= result.entry
+
+          if (hasInvalidTarget) {
             console.warn(
-              `[AI Validation] Invalid Target (${result.targets[0]}) <= Entry (${result.entry}). AI Hallucination detected, overriding.`
+              `[AI Validation] Invalid Target (${result.targets && result.targets[0]}) for direction. AI Hallucination detected, overriding.`
             )
-            result.targets[0] = result.entry * 1.01
+            if (result.targets) {
+              result.targets[0] = isBearish ? result.entry * 0.995 : result.entry * 1.005
+            }
           }
         }
 

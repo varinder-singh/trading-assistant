@@ -7,6 +7,7 @@ vi.mock('../indicators/trend.js', () => ({
 
 vi.mock('../indicators/vwap.js', () => ({
   calculateVWAP: vi.fn(() => 100),
+  calculateVWAPZScore: vi.fn(() => 0.5),
 }))
 
 vi.mock('../indicators/rsi.js', () => ({

@@ -67,7 +67,7 @@ export async function runAnalysis(
 
     candles1d = candlesData.candles1d
     candles1h = candlesData.candles1h
-    candles30m = candlesData.candles30m || candlesData.candles15m
+    candles30m = (candlesData.candles30m && candlesData.candles30m.length > 0) ? candlesData.candles30m : candlesData.candles15m
     candles15m = candlesData.candles15m
     candles3m = candlesData.candles3m
     headlines = h
