@@ -18,6 +18,23 @@ import type {
 import { eventHub } from '../utils/event-hub.js'
 import { memoryService } from './memory.js'
 
+export function cleanJson(text: string): string {
+  let cleaned = text
+    .replace(/^```(?:json)?\n?/, '')
+    .replace(/\n?```$/, '')
+    .trim()
+
+  // Replace raw newlines, carriage returns, and tabs inside double-quoted string values
+  cleaned = cleaned.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
+    return match
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r')
+      .replace(/\t/g, '\\t')
+  })
+
+  return cleaned
+}
+
 export class LLMService {
   private emitUpdate(update: AgentUpdate) {
     eventHub.emit('agent_update', update)
@@ -109,11 +126,7 @@ ${JSON.stringify(cleanedInput, null, 2)}
         { temperature: 0.2 }
       )
 
-      const cleanedText = text
-        .replace(/^```(?:json)?\n?/, '')
-        .replace(/\n?```$/, '')
-        .trim()
-      const result: OrchestratorResponse = JSON.parse(cleanedText)
+      const result: OrchestratorResponse = JSON.parse(cleanJson(text))
 
       this.emitUpdate({
         agent: 'Orchestrator',
@@ -162,11 +175,7 @@ ${JSON.stringify(cleanedInput, null, 2)}
       { role: 'system', content: systemMessage },
       { role: 'user', content: userPrompt },
     ])
-    const cleanedText = text
-      .replace(/^```(?:json)?\n?/, '')
-      .replace(/\n?```$/, '')
-      .trim()
-    const result: AISentimentResponse = JSON.parse(cleanedText)
+    const result: AISentimentResponse = JSON.parse(cleanJson(text))
     return result
   }
 
@@ -285,13 +294,8 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
         { role: 'user', content: userPrompt },
       ])
 
-      const cleanedText = text
-        .replace(/^```(?:json)?\n?/, '')
-        .replace(/\n?```$/, '')
-        .trim()
-
       try {
-        const result: AISuccessResponse = JSON.parse(cleanedText)
+        const result: AISuccessResponse = JSON.parse(cleanJson(text))
 
         // Validation & Guardrails
         if (result.decision === 'BUY') {
@@ -389,11 +393,7 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
         ]),
       ])
 
-      const cleanJson = (text: string) =>
-        text
-          .replace(/^```(?:json)?\n?/, '')
-          .replace(/\n?```$/, '')
-          .trim()
+
 
       const technical = JSON.parse(cleanJson(techRes))
       const options = JSON.parse(cleanJson(optRes))
@@ -502,11 +502,7 @@ ${JSON.stringify(cleanedMarketData, null, 2)}
         { role: 'user', content: userPrompt },
       ])
 
-      const cleanedText = text
-        .replace(/^```(?:json)?\n?/, '')
-        .replace(/\n?```$/, '')
-        .trim()
-      const result = JSON.parse(cleanedText)
+      const result = JSON.parse(cleanJson(text))
 
       this.emitUpdate({
         agent: 'Risk Manager',
