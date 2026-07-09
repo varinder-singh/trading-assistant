@@ -14,8 +14,21 @@ export async function getKiteCandles(
   const from = new Date(now)
   from.setDate(from.getDate() - days)
 
-  const fromStr = from.toISOString().replace("T", " ").split(".")[0]
-  const toStr = now.toISOString().replace("T", " ").split(".")[0]
+  const formatToIST = (date: Date) => {
+    return new Intl.DateTimeFormat('en-ZA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(date).replace(/\//g, '-').replace(',', '')
+  }
+
+  const fromStr = formatToIST(from)
+  const toStr = formatToIST(now)
 
   let kiteInterval = interval
   if (interval === "1h") kiteInterval = "60minute"
