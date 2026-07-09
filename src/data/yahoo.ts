@@ -1,5 +1,56 @@
 import axios from "axios"
+import type { Connect as KiteConnectInstance } from "kiteconnect"
 import type { Candle } from "../types/analysis.js"
+import { getInstrumentToken } from "./kite.js"
+import { resolveYahooTicker } from "../utils/symbol.js"
+
+export async function getKiteCandles(
+  kc: KiteConnectInstance,
+  token: number,
+  interval: string,
+  days: number
+): Promise<Candle[]> {
+  const now = new Date()
+  const from = new Date(now)
+  from.setDate(from.getDate() - days)
+
+  const fromStr = from.toISOString().replace("T", " ").split(".")[0]
+  const toStr = now.toISOString().replace("T", " ").split(".")[0]
+
+  let kiteInterval = interval
+  if (interval === "1h") kiteInterval = "60minute"
+  if (interval === "1d") kiteInterval = "day"
+  if (interval === "3m") kiteInterval = "3minute"
+  if (interval === "15m") kiteInterval = "15minute"
+  if (interval === "30m") kiteInterval = "30minute"
+
+  const data = await kc.getHistoricalData(token.toString(), kiteInterval as any, fromStr as string, toStr as string)
+  return data.map((d: any) => ({
+    time: new Date(d.date).getTime() / 1000,
+    open: d.open,
+    high: d.high,
+    low: d.low,
+    close: d.close,
+    volume: d.volume,
+  }))
+}
+
+export async function getKiteMultiTimeframeCandles(kc: KiteConnectInstance, symbol: string) {
+  const token = await getInstrumentToken(kc, symbol)
+  if (!token) {
+    throw new Error(`Kite token not found for symbol: ${symbol}`)
+  }
+
+  const [candles1d, candles1h, candles30m, candles15m, candles3m] = await Promise.all([
+    getKiteCandles(kc, token, "1d", 60),
+    getKiteCandles(kc, token, "1h", 30),
+    getKiteCandles(kc, token, "30m", 5),
+    getKiteCandles(kc, token, "15m", 5),
+    getKiteCandles(kc, token, "3m", 2),
+  ])
+
+  return { candles1d, candles1h, candles30m, candles15m, candles3m }
+}
 
 export async function getCandles(symbol: string, interval: string = "15m", range: string = "5d"): Promise<Candle[]> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=${interval}&range=${range}`
@@ -22,14 +73,26 @@ export async function getCandles(symbol: string, interval: string = "15m", range
     .filter((c: any) => c.open !== null && c.high !== null && c.low !== null && c.close !== null) as Candle[]
 }
 
-export async function getMultiTimeframeCandles(symbol: string) {
-  // Fetch 1h (1 month) for macro, 30-min (5 days) and 15-min (5 days) for trend, 1-min (2 days) for 3m execution, and 1d (2 months) for ATR14
+export async function getMultiTimeframeCandles(symbol: string, kc?: KiteConnectInstance) {
+  if (kc) {
+    try {
+      console.log(`[Candles] Fetching primary candles from Zerodha/Kite for ${symbol}...`)
+      return await getKiteMultiTimeframeCandles(kc, symbol)
+    } catch (err) {
+      console.warn(`[Candles] Zerodha/Kite candles fetch failed, falling back to Yahoo for ${symbol}:`, err)
+    }
+  }
+
+  // Fallback to Yahoo Finance
+  const yahooTicker = resolveYahooTicker(symbol)
+  console.log(`[Candles] Fetching fallback candles from Yahoo Finance for ${yahooTicker}...`)
+
   const [candles1d, candles1h, candles30m, candles15m, candles1m] = await Promise.all([
-    getCandles(symbol, "1d", "60d"),
-    getCandles(symbol, "1h", "1mo"),
-    getCandles(symbol, "30m", "5d"),
-    getCandles(symbol, "15m", "5d"),
-    getCandles(symbol, "1m", "2d"),
+    getCandles(yahooTicker, "1d", "60d"),
+    getCandles(yahooTicker, "1h", "1mo"),
+    getCandles(yahooTicker, "30m", "5d"),
+    getCandles(yahooTicker, "15m", "5d"),
+    getCandles(yahooTicker, "1m", "2d"),
   ])
 
   // Aggregate 1m into 3m candles

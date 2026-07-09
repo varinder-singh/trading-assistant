@@ -227,9 +227,8 @@ export class PaperTrader extends EventEmitter {
                 ? 'BANKNIFTY'
                 : pos.symbol
 
-            const macroSymbol = resolveYahooTicker(symbol)
             const [macro, underlyingToken] = await Promise.all([
-              getMultiTimeframeCandles(macroSymbol),
+              getMultiTimeframeCandles(symbol, this.kc),
               getInstrumentToken(this.kc, symbol),
             ])
 

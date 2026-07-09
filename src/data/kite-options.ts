@@ -10,7 +10,19 @@ type KiteOptionInstrument = Instrument & {
 }
 
 export async function getOptionChain(kc: KiteConnect, symbol: string = "NIFTY") {
-  const instruments = await kc.getInstruments("NFO")
+  const underlyingTicker = resolveKiteUnderlying(symbol)
+
+  // Fetch instruments and underlying spot price in parallel
+  const [instruments, underlyingQuote] = await Promise.all([
+    kc.getInstruments("NFO"),
+    kc.getQuote([underlyingTicker]).catch(err => {
+      console.warn(`[getOptionChain] Failed to fetch spot quote for ${underlyingTicker}:`, err)
+      return {} as Record<string, any>
+    })
+  ])
+
+  const spotPrice = underlyingQuote[underlyingTicker]?.last_price || 0
+  console.log(`[getOptionChain] Resolved spot price for ${symbol} (${underlyingTicker}): ${spotPrice}`)
 
   const symbolOptions = instruments.filter(
     (i): i is KiteOptionInstrument =>
@@ -28,12 +40,23 @@ export async function getOptionChain(kc: KiteConnect, symbol: string = "NIFTY") 
   )
 
   // ⚠️ Limit strikes around ATM (important)
-  const strikes = filtered
-    .map((i) => i.strike)
+  const strikes = [...new Set(filtered.map((i) => i.strike))]
     .sort((a: number, b: number) => a - b)
 
-  const mid = Math.floor(strikes.length / 2)
-  const selectedStrikes = strikes.slice(mid - 10, mid + 10)
+  let atmIndex = -1
+  if (spotPrice > 0) {
+    let minDiff = Infinity
+    for (let i = 0; i < strikes.length; i++) {
+      const diff = Math.abs(strikes[i]! - spotPrice)
+      if (diff < minDiff) {
+        minDiff = diff
+        atmIndex = i
+      }
+    }
+  }
+
+  const mid = atmIndex >= 0 ? atmIndex : Math.floor(strikes.length / 2)
+  const selectedStrikes = strikes.slice(Math.max(0, mid - 10), Math.min(strikes.length, mid + 10))
 
   const finalOptions = filtered
     .filter((i) => selectedStrikes.includes(i.strike))
@@ -53,7 +76,7 @@ export async function getOptionChain(kc: KiteConnect, symbol: string = "NIFTY") 
 
   const lotSize = filtered.length > 0 ? (filtered[0]?.lot_size || 0) : 0
 
-  return { quotes, finalOptions, nearestExpiry, selectedStrikes: [...new Set(selectedStrikes)], lotSize }
+  return { quotes, finalOptions, nearestExpiry, selectedStrikes, lotSize }
 }
 
 function isDirectRun() {

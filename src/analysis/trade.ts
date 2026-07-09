@@ -59,7 +59,7 @@ export async function runAnalysis(
     ;[headlines, vix, kiteData] = await Promise.all([getNews(symbol), getIndiaVix(), getOptionChain(kc, symbol)])
   } else {
     const [candlesData, h, v, k] = await Promise.all([
-      getMultiTimeframeCandles(ticker),
+      getMultiTimeframeCandles(symbol, kc),
       getNews(symbol),
       getIndiaVix(),
       getOptionChain(kc, symbol),
@@ -433,7 +433,7 @@ export async function evaluatePosition(
     // FALLBACK: If real-time candles (from CandleBuilder) are not yet seeded, use Yahoo baseline
     if (candles15m.length === 0) {
       console.log(`[Risk Manager] Real-time candles empty for ${symbol}. Falling back to Yahoo baseline.`)
-      const macro = await getMultiTimeframeCandles(ticker)
+      const macro = await getMultiTimeframeCandles(symbol, kc)
       candles30m = macro.candles30m
       candles15m = macro.candles15m
       candles3m = macro.candles3m
@@ -442,7 +442,7 @@ export async function evaluatePosition(
     ;[vix, kiteData] = await Promise.all([getIndiaVix(), getOptionChain(kc, symbol)])
   } else {
     const [candlesData, v, k] = await Promise.all([
-      getMultiTimeframeCandles(ticker),
+      getMultiTimeframeCandles(symbol, kc),
       getIndiaVix(),
       getOptionChain(kc, symbol),
     ])
