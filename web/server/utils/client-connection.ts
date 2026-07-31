@@ -2,35 +2,29 @@ import { createClient } from '@supabase/supabase-js'
 import { sessionManager, UserSession } from '@core/execution/session-manager.js'
 import { userRepo } from '@core/db/repositories/container.js'
 import { decryptSecret } from '@core/utils/crypto.js'
-import { LiveAnalyzer } from '@core/analysis/live.js'
 import { gtiTracker } from '@core/indicators/gti-tracker.js'
-import { candleBuilder, seedCandleBuilder } from '@core/data/candle-builder.js'
 import { wsConnectionManager } from './websocket-connection-manager.js'
-import { getInstrumentToken, getOptionToken } from '@core/data/kite.js'
-import { isMarketOpen } from '@core/utils/market-hours.js'
-import { runAnalysis } from '@core/analysis/trade.js'
-import { eventRepo } from '@core/db/repositories/container.js'
-import type { AIMacroTrend } from '@core/ai/types.js'
 
 // Initialize Supabase client for JWT verification
 const supabaseUrl = process.env.SUPABASE_URL || ''
 const supabaseKey = process.env.SUPABASE_KEY || ''
 const supabase = createClient(supabaseUrl, supabaseKey)
 
+/**
+ * ClientConnection is a thin UI relay.
+ *
+ * All analysis logic (LiveAnalyzer, breakout detection, trade execution)
+ * lives in UserSession and runs server-side, independent of browser state.
+ * This class only relays session events to/from the browser WebSocket.
+ */
 export class ClientConnection {
   public id: string
   public peer: any
   public userId?: string
   public session?: UserSession
-  public analyzer: LiveAnalyzer
-  public symbol: string = ''
-  public token: number = 0
-  public mode: 'intraday' | 'swing' = 'intraday'
-  public lastDecision: any = null
   public chartTimeframe: number = 15
-  public isAnalyzing: boolean = false
 
-  // Bind methods/references so they can be removed cleanly
+  // ── UI Relay Handlers ────────────────────────────────────────────────
   private onPortfolioUpdate = (positions: any) => {
     this.send({ type: 'portfolio', data: positions })
   }
@@ -44,140 +38,49 @@ export class ClientConnection {
   }
 
   private onTicks = (ticks: any[]) => {
-    const tick = ticks.find((t) => t.instrument_token === this.token)
+    if (!this.session || !this.session.watchedToken) return
+
+    const tick = ticks.find((t) => t.instrument_token === this.session!.watchedToken)
     if (tick) {
-      this.analyzer.addTick(tick)
-      const currentGTI = gtiTracker.getCurrentScore(this.token)
+      const currentGTI = gtiTracker.getCurrentScore(this.session!.watchedToken)
       this.send({
         type: 'tick',
         data: { ...tick, gtiScore: currentGTI },
       })
     }
-
-    // Also update candle builder globally
-    ticks.forEach((tick) => {
-      candleBuilder.addTick(tick)
-      gtiTracker.addTick(tick)
-    })
   }
 
-  private onTickerConnect = () => {
-    console.log(`[ClientConnection] Ticker connected for user ${this.userId}. Subscribing watched token: ${this.token}`)
-    if (this.token && this.session) {
-      this.session.ticker.subscribe([this.token])
-      this.session.ticker.setMode(this.session.ticker.modeFull, [this.token])
-    }
+  private onTokenExpired = (data: any) => {
+    this.send({ type: 'error', message: data.message })
   }
 
-  private onTickerRecreated = () => {
-    console.log(`[ClientConnection] Ticker recreated for user ${this.userId}. Re-subscribing watched token.`)
-    if (this.session && this.token) {
-      this.session.ticker.subscribe([this.token])
-      this.session.ticker.setMode(this.session.ticker.modeFull, [this.token])
-    }
+  private onBreakout = (context: any) => {
+    this.send({ type: 'breakout', data: context })
   }
 
-  private onBreakout = async (context: any) => {
-    // Concurrency Lock: Prevent multiple overlapping AI analyses for the same client
-    if (this.isAnalyzing) {
-      console.log(`[ws] AI is already analyzing for ${this.symbol}. Dropping concurrent breakout event.`)
-      return
-    }
-    this.isAnalyzing = true
+  private onAnalysis = (result: any) => {
+    this.send({ type: 'analysis', data: result })
+  }
 
-    try {
-      console.log(`[ws] Breakout detected for ${this.symbol}`)
-      this.send({ type: 'breakout', data: context })
+  private onWatching = ({ symbol, token }: { symbol: string; token: number }) => {
+    this.send({ type: 'watching', symbol, token })
+  }
 
-      await eventRepo.saveEvent({
-        symbol: this.symbol,
-        reason: context.reason,
-        price: context.tick.last_price,
-        timestamp: new Date().toISOString(),
-        metadata: { tick: context.tick },
-      })
+  private onPortfolioSync = (positions: any) => {
+    this.send({ type: 'portfolio', data: positions })
+  }
 
-      if (!this.session || !this.userId) return
+  private onMarketClosed = (data: any) => {
+    this.send({ type: 'market_closed', message: data.message })
+  }
 
-      const analysisResult = await runAnalysis(
-        this.session.kc,
-        this.symbol,
-        this.mode,
-        context,
-        this.lastDecision,
-        undefined,
-        this.userId
-      )
-      const { tf15m: tf, aiDecision: decision, vix, agentType } = analysisResult
-      this.lastDecision = decision
-
-      this.send({ type: 'analysis', data: analysisResult })
-
-      if (decision && decision.optionAction !== 'NONE') {
-        const type = decision.optionAction === 'BUY_CE' ? 'CE' : 'PE'
-        const option = await getOptionToken(this.session.kc, this.symbol, decision.strike || 0, type)
-
-        if (option) {
-          console.log(`[ws] Executing Paper Trade for ${option.symbol} (${agentType} Agent)...`)
-          this.session.ticker.subscribe([option.token])
-          this.session.ticker.setMode(this.session.ticker.modeFull, [option.token])
-
-          const quote = await this.session.kc.getQuote([`NFO:${option.symbol}`])
-          const entryPrice = quote[`NFO:${option.symbol}`]?.last_price || 0
-
-          if (entryPrice > 0) {
-            const indexRiskPoints = Math.abs(tf.price - decision.stopLoss)
-            const estimatedDelta = 0.5
-            const optionRiskPoints = indexRiskPoints * estimatedDelta
-
-            let calculatedSl = entryPrice - optionRiskPoints
-            const calculatedTarget = entryPrice + optionRiskPoints * (decision.riskRewardRatio || 1.5)
-
-            const floorPercentage = agentType === 'TREND' ? 0 : 0.2
-            const minAllowedSl = Math.max(entryPrice * floorPercentage, 0.05)
-            if (calculatedSl < minAllowedSl) calculatedSl = minAllowedSl
-
-            await this.session.paperTrader.placeOrder({
-              symbol: option.symbol,
-              token: option.token,
-              strike: decision.strike || undefined,
-              side: 'BUY',
-              quantity: 1,
-              price: entryPrice,
-              context: {
-                optionExpiry: option.expiry.toISOString(),
-                aiReasoning: decision.reason,
-                aiConfidence: decision.confidence,
-                aiStrike: decision.strike || undefined,
-                aiSetup: decision.setup,
-                strategyContext: {
-                  macroTrend: decision.macroTrend as AIMacroTrend,
-                  indexSl: decision.stopLoss,
-                  agentType,
-                },
-                vixLevel: vix.current,
-                rsiLevel: tf.rsi,
-                trend15m: tf.trend,
-                aiStopLoss: calculatedSl,
-                aiIndexTargets: decision.targets?.length ? decision.targets : undefined,
-                currentIndexPrice: tf.price,
-                lotSize: analysisResult.lotSize,
-              },
-            })
-          }
-        }
-      }
-    } catch (err) {
-      console.error(`[ws] Error during breakout analysis:`, err)
-    } finally {
-      this.isAnalyzing = false
-    }
+  private onWatchError = (data: any) => {
+    this.send({ type: 'error', message: data.message })
   }
 
   constructor(peer: any) {
     this.peer = peer
     this.id = peer.id
-    this.analyzer = new LiveAnalyzer()
   }
 
   public send(msg: any) {
@@ -238,19 +141,30 @@ export class ClientConnection {
     // Cleanup any existing session listeners if re-authenticating
     this.cleanupSessionListeners()
 
-    // Register listeners
+    // Register UI relay listeners on session
     session.paperTrader.on('portfolio_update', this.onPortfolioUpdate)
     session.paperTrader.on('pnl_update', this.onPnlUpdate)
     session.paperTrader.on('notification', this.onNotification)
     session.on('ticks', this.onTicks)
-    session.on('connect', this.onTickerConnect)
-    session.on('ticker_recreated', this.onTickerRecreated)
+    session.on('breakout', this.onBreakout)
+    session.on('analysis', this.onAnalysis)
+    session.on('watching', this.onWatching)
+    session.on('portfolio_sync', this.onPortfolioSync)
+    session.on('market_closed', this.onMarketClosed)
+    session.on('watch_error', this.onWatchError)
+    session.on('token_expired', this.onTokenExpired)
 
     // Update connection status in wsConnectionManager
     wsConnectionManager.addClient(this.id, this)
 
     this.send({ type: 'authenticated' })
     console.log(`[ws] User ${userId} authenticated on peer ${this.id}`)
+
+    // If the session already has an active watch, sync the client immediately
+    if (session.watchedSymbol && session.watchedToken) {
+      this.send({ type: 'watching', symbol: session.watchedSymbol, token: session.watchedToken })
+      this.send({ type: 'portfolio', data: session.paperTrader.getAllPositions() })
+    }
   }
 
   private async handleWatch(data: any) {
@@ -260,46 +174,10 @@ export class ClientConnection {
     }
 
     const { symbol, levels, mode, chartTimeframe } = data
-    const token = await getInstrumentToken(this.session.kc, symbol)
+    this.chartTimeframe = chartTimeframe || 15
 
-    if (!token) {
-      this.send({ type: 'error', message: `Token not found for ${symbol}` })
-      return
-    }
-
-    await seedCandleBuilder(this.session.kc, token)
-
-    // Cleanup previous breakout listener if switching symbols
-    if (this.analyzer) {
-      this.analyzer.off('breakout', this.onBreakout)
-    }
-
-    this.analyzer = new LiveAnalyzer()
-    this.symbol = symbol
-    this.token = token
-    this.mode = mode || 'intraday'
-    this.chartTimeframe = chartTimeframe || 1
-
-    if (!isMarketOpen()) {
-      this.send({ type: 'market_closed', message: 'Market is closed. Operating in read-only mode.' })
-    } else {
-      if (levels) {
-        this.analyzer.setLevels(levels)
-      }
-      this.analyzer.on('breakout', this.onBreakout)
-    }
-
-    const positionTokens = this.session.paperTrader
-      .getAllPositions()
-      .map((p) => p.token)
-      .filter((t) => !!t)
-    const tokensToSubscribe = Array.from(new Set([token, ...positionTokens]))
-
-    this.session.ticker.subscribe(tokensToSubscribe)
-    this.session.ticker.setMode(this.session.ticker.modeFull, tokensToSubscribe)
-
-    this.send({ type: 'watching', symbol, token })
-    this.send({ type: 'portfolio', data: this.session.paperTrader.getAllPositions() })
+    // Delegate entirely to UserSession — session-level, browser-independent
+    await this.session.watch(symbol, levels, mode)
   }
 
   private cleanupSessionListeners() {
@@ -308,16 +186,18 @@ export class ClientConnection {
       this.session.paperTrader.off('pnl_update', this.onPnlUpdate)
       this.session.paperTrader.off('notification', this.onNotification)
       this.session.off('ticks', this.onTicks)
-      this.session.off('connect', this.onTickerConnect)
-      this.session.off('ticker_recreated', this.onTickerRecreated)
+      this.session.off('breakout', this.onBreakout)
+      this.session.off('analysis', this.onAnalysis)
+      this.session.off('watching', this.onWatching)
+      this.session.off('portfolio_sync', this.onPortfolioSync)
+      this.session.off('market_closed', this.onMarketClosed)
+      this.session.off('watch_error', this.onWatchError)
+      this.session.off('token_expired', this.onTokenExpired)
     }
   }
 
   public destroy() {
     this.cleanupSessionListeners()
-    if (this.analyzer) {
-      this.analyzer.off('breakout', this.onBreakout)
-    }
     console.log(`[ws] ClientConnection destroyed for peer ${this.id}`)
   }
 }

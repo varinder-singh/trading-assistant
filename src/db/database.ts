@@ -8,6 +8,8 @@ export interface ProfilesTable {
   id: string
   fullName: string | null
   tradeMode: 'PAPER' | 'REAL'
+  watchedSymbol: string | null
+  watchedMode: string | null
   createdAt: string
   updatedAt: string
 }

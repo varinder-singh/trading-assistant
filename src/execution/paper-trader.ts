@@ -24,25 +24,25 @@ export type StrategyContext = {
 }
 
 export interface TradeContext {
-  aiReasoning?: string
-  aiConfidence?: number
-  vixLevel?: number
-  rsiLevel?: number
-  trend15m?: string
-  aiStopLoss?: number
-  aiTarget?: number
-  aiStrike?: number
-  aiSetup?: string
-  strategyContext?: StrategyContext
-  optionDelta?: number
-  optionTheta?: number
-  optionVega?: number
-  optionExpiry?: Date | string
-  lotSize?: number
+  aiReasoning?: string | undefined
+  aiConfidence?: number | undefined
+  vixLevel?: number | undefined
+  rsiLevel?: number | undefined
+  trend15m?: string | undefined
+  aiStopLoss?: number | undefined
+  aiTarget?: number | undefined
+  aiStrike?: number | undefined
+  aiSetup?: string | undefined
+  strategyContext?: StrategyContext | undefined
+  optionDelta?: number | undefined
+  optionTheta?: number | undefined
+  optionVega?: number | undefined
+  optionExpiry?: Date | string | undefined
+  lotSize?: number | undefined
   /** AI wave/Fibonacci index-level targets from decision.targets[] — used for tier calculation. */
-  aiIndexTargets?: number[]
+  aiIndexTargets?: number[] | undefined
   /** Live index price at time of entry — used to translate index targets to premium */
-  currentIndexPrice?: number
+  currentIndexPrice?: number | undefined
 }
 export class PaperTrader extends EventEmitter {
   private positions: Map<string, PaperPosition> = new Map()
@@ -456,11 +456,11 @@ export class PaperTrader extends EventEmitter {
   async placeOrder(params: {
     symbol: string
     token: number
-    strike?: number
+    strike?: number | undefined
     side: OrderSide
     quantity: number
     price: number
-    context?: TradeContext
+    context?: TradeContext | undefined
   }): Promise<TradeResponse> {
     await this.initialize()
 

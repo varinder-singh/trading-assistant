@@ -240,3 +240,22 @@ To achieve **consistent, profitable daily trading** and prevent whipsaws, I advi
 * **The Fix:** Programmatically compute the 14-period ADX to measure trend strength:
   `If ADX < 20 -> The market is in consolidation. FORCE SCALPER agent (mean reversion) or NO_TRADE.`
   `If ADX > 25 -> A strong trend is active. FORCE TREND agent (breakout/momentum).`
+
+---
+
+## 8. Log Audits & Live JSON Parsing Fixes
+
+### The Control Character JSON Parsing Bug (July 9, 2026 - 11:54 AM IST)
+* **The Error:** The Risk Manager (`managePositionWithAI`) failed with a JSON parsing error:
+  `[AI] Error in managePositionWithAI: SyntaxError: Bad control character in string literal in JSON at position 253`
+* **The Root Cause:** The LLM output returned a raw newline or control character inside double-quoted string values (such as the `reason` key). Standard `JSON.parse` strictly forbids raw control characters (ASCII 0-31) in string literals and throws a syntax error, causing the position manager to default to `HOLD` status.
+* **The Fix:** Implemented a robust global `cleanJson` helper inside [llm.ts](file:///Users/varinder/Documents/projects/ai/personal/trading-assistant/src/ai/llm.ts#L21-L36) that uses a regular expression to match double-quoted string literals and escapes all raw newlines (`\n`), carriage returns (`\r`), and tabs (`\t`) inside them before running `JSON.parse`.
+* **Verification:** Added comprehensive unit tests in [src/ai/llm.test.ts](file:///Users/varinder/Documents/projects/ai/personal/trading-assistant/src/ai/llm.test.ts) confirming raw newlines inside string values are parsed correctly without crashing.
+
+### Live Cloud Run Log Checking Job
+* **Task Configured:** Set up a recurring background cron job trigger (`*/5 * * * *`) that queries the live log streams for the `trading-assistant` Cloud Run service on Google Cloud (Project ID: `gen-lang-client-0828235812`) to parse and alert on any new JSON formatting or parsing exceptions.
+
+### Intraday Historical Candle Timezone Gap (July 9, 2026 - 12:02 PM IST)
+* **The Issue:** Charts on the frontend only displayed the single, active live tick candle for today, leaving a massive gap of missing candles between yesterday's close and right now.
+* **The Root Cause:** `getKiteCandles` in [yahoo.ts](file:///Users/varinder/Documents/projects/ai/personal/trading-assistant/src/data/yahoo.ts#L7-L20) was querying Zerodha's API using UTC date strings (`from.toISOString()`). Since India Standard Time (IST) is 5 hours and 30 minutes ahead of UTC, a query at 12:02 PM IST (06:32 AM UTC) requested candles up to `06:32`. Since Zerodha interprets these dates in IST, it thought we were querying up to 6:32 AM IST today (before the market opened at 9:15 AM). Thus, Zerodha returned 0 candles for today.
+* **The Fix:** Replaced the `.toISOString()` calls with a robust timezone-aware formatting function `formatToIST` using `Intl.DateTimeFormat` with the `en-ZA` locale and `Asia/Kolkata` time zone, generating date strings formatted in local market time (IST). This ensures the Zerodha query retrieves all today's candles up to the current second, loading the full intraday chart session on the dashboard.
