@@ -148,7 +148,7 @@ export class UserSession extends EventEmitter {
         undefined,
         this.userId
       )
-      const { tf15m: tf, aiDecision: decision, vix, agentType } = analysisResult
+      const { tf15m: tf, aiDecision: decision, vix, agentType, optionsAnalysis } = analysisResult
       this.lastDecision = decision
 
       this.emit('analysis', analysisResult)
@@ -170,12 +170,42 @@ export class UserSession extends EventEmitter {
             const estimatedDelta = 0.5
             const optionRiskPoints = indexRiskPoints * estimatedDelta
 
-            let calculatedSl = entryPrice - optionRiskPoints
-            const calculatedTarget = entryPrice + optionRiskPoints * (decision.riskRewardRatio || 1.5)
+            // Retrieve signal-time option price (pre-LLM options chain analysis)
+            const signalRow = optionsAnalysis?.rows?.find(
+              (r: any) => r.strike === decision.strike && r.type === type
+            )
+            const signalPrice = signalRow?.ltp || entryPrice
+
+            // Anchor Target and SL to the Signal Price
+            let calculatedSl = signalPrice - optionRiskPoints
+            const calculatedTarget = signalPrice + optionRiskPoints * (decision.riskRewardRatio || 1.5)
 
             const floorPercentage = agentType === 'TREND' ? 0 : 0.2
-            const minAllowedSl = Math.max(entryPrice * floorPercentage, 0.05)
+            const minAllowedSl = Math.max(signalPrice * floorPercentage, 0.05)
             if (calculatedSl < minAllowedSl) calculatedSl = minAllowedSl
+
+            // Slippage Filter
+            const maxSlippagePct = Number(process.env.MAX_ENTRY_SLIPPAGE_PCT || 5)
+            const slippagePct = ((entryPrice - signalPrice) / signalPrice) * 100
+
+            if (entryPrice > signalPrice * (1 + maxSlippagePct / 100)) {
+              console.warn(
+                `⚠️ [UserSession] Entry BLOCKED: High slippage. Signal Price: ₹${signalPrice.toFixed(2)}, CMP: ₹${entryPrice.toFixed(2)} (${slippagePct.toFixed(1)}% slippage, limit is ${maxSlippagePct}%).`
+              )
+              this.emit('notification', {
+                title: `⚠️ Trade Blocked (Slippage)`,
+                message: `${option.symbol} CMP ₹${entryPrice.toFixed(2)} too high relative to signal ₹${signalPrice.toFixed(2)} (${slippagePct.toFixed(1)}% slippage).`,
+                type: 'warning',
+              })
+              return
+            }
+
+            if (entryPrice >= calculatedTarget) {
+              console.warn(
+                `⚠️ [UserSession] Entry BLOCKED: CMP ₹${entryPrice.toFixed(2)} has already reached or exceeded the target ₹${calculatedTarget.toFixed(2)}.`
+              )
+              return
+            }
 
             await this.paperTrader.placeOrder({
               symbol: option.symbol,

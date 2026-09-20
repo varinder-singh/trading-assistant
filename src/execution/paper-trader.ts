@@ -132,7 +132,9 @@ export class PaperTrader extends EventEmitter {
               quantity: trade.quantity,
               avgEntryPrice: Number(trade.entryPrice),
               currentPrice: Number(trade.entryPrice),
+              peakPrice: Number(trade.entryPrice),
               unrealizedPnL: 0,
+              maxUnrealizedPnL: 0,
               realizedPnL: 0,
               timestamp: new Date(trade.openedAt),
             }
@@ -389,7 +391,9 @@ export class PaperTrader extends EventEmitter {
             Symbol: p.symbol,
             Qty: p.quantity,
             LTP: p.currentPrice.toFixed(2),
+            Peak: p.peakPrice ? p.peakPrice.toFixed(2) : p.currentPrice.toFixed(2),
             PnL: p.unrealizedPnL >= 0 ? `+${p.unrealizedPnL.toFixed(2)}` : p.unrealizedPnL.toFixed(2),
+            'Max PnL': p.maxUnrealizedPnL !== undefined ? `+${p.maxUnrealizedPnL.toFixed(2)}` : 'N/A',
             Delta: p.optionDelta ? (p.optionDelta * p.quantity).toFixed(2) : 'N/A',
             Theta: p.optionTheta ? (p.optionTheta * p.quantity).toFixed(2) : 'N/A',
             Vega: p.optionVega ? (p.optionVega * p.quantity).toFixed(2) : 'N/A',
@@ -793,7 +797,9 @@ export class PaperTrader extends EventEmitter {
           quantity: order.quantity,
           avgEntryPrice: order.price!,
           currentPrice: order.price!,
+          peakPrice: order.price!,
           unrealizedPnL: 0,
+          maxUnrealizedPnL: 0,
           realizedPnL: 0,
           timestamp: new Date(),
         }
@@ -853,7 +859,10 @@ export class PaperTrader extends EventEmitter {
           .sort((a, b) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime())[0]
         if (targetTrade) {
           await tradeRepo
-            .closeTrade(targetTrade.id, order.price!, context?.aiReasoning, context?.strategyContext?.agentType)
+            .closeTrade(targetTrade.id, order.price!, context?.aiReasoning, context?.strategyContext?.agentType, {
+              peakPrice: existing.peakPrice,
+              maxUnrealizedPnL: existing.maxUnrealizedPnL,
+            })
             .catch((err) => console.error('❌ Failed to close trade in DB:', err))
         } else {
           console.warn(`⚠️ [DB SYNC ISSUE] Could not find OPEN trade in database for ${order.symbol} to close it.`)
@@ -876,10 +885,89 @@ export class PaperTrader extends EventEmitter {
       if (pos.token === token) {
         pos.currentPrice = price
         pos.unrealizedPnL = (price - pos.avgEntryPrice) * pos.quantity
+
+        // ── High-Watermark Peak Tracking ──────────────────────────────
+        if (!pos.peakPrice || price > pos.peakPrice) {
+          pos.peakPrice = price
+        }
+        const currentPeakPnL = (pos.peakPrice - pos.avgEntryPrice) * pos.quantity
+        if (pos.maxUnrealizedPnL === undefined || currentPeakPnL > pos.maxUnrealizedPnL) {
+          pos.maxUnrealizedPnL = currentPeakPnL
+        }
         changed = true
 
         // Tick-Level Hard Exit Monitoring (runs on every price tick — fastest possible protection)
         if (pos.side === 'BUY' && !this.exitingPositions.has(symbol)) {
+          const entryPrice = pos.avgEntryPrice
+          const peakPrice = pos.peakPrice
+          const peakGainPoints = peakPrice - entryPrice
+          const peakGainPct = entryPrice > 0 ? peakGainPoints / entryPrice : 0
+
+          // ── Dynamic Peak Profit Ratchet ───────────────────────────────
+          if (peakGainPct >= 0.15 && entryPrice > 0) {
+            let targetSl = pos.aiStopLoss
+
+            if (peakGainPct >= 0.50) {
+              // Tier 3 (+50% peak gain): Lock at least 70% of peak gain
+              targetSl = entryPrice + 0.70 * peakGainPoints
+            } else if (peakGainPct >= 0.30) {
+              // Tier 2 (+30% peak gain): Lock at least 50% of peak gain
+              targetSl = entryPrice + 0.50 * peakGainPoints
+            } else {
+              // Tier 1 (+15% peak gain): Move SL to breakeven + 2% buffer
+              targetSl = entryPrice * 1.02
+            }
+
+            // One-Way Ratchet: Stop-loss can ONLY move up
+            if (pos.aiStopLoss === undefined || targetSl > pos.aiStopLoss) {
+              const oldSl = pos.aiStopLoss?.toFixed(2) ?? '—'
+              pos.aiStopLoss = targetSl
+              pos.trailingSlLocked = targetSl
+
+              console.log(
+                `[PaperTrader] 📈 Peak Profit Ratchet: ${symbol} peak price ₹${peakPrice.toFixed(2)} (+${(peakGainPct * 100).toFixed(1)}%). SL ratcheted from ₹${oldSl} to ₹${targetSl.toFixed(2)}`
+              )
+
+              this.emit('notification', {
+                title: `📈 Peak Profit Locked`,
+                message: `${symbol}: Peak +${(peakGainPct * 100).toFixed(1)}% gain (₹${peakPrice.toFixed(2)}). SL ratcheted to ₹${targetSl.toFixed(2)}`,
+                type: 'info',
+              })
+            }
+          }
+
+          // ── Peak Retract Guard (Give-back Protection Exit) ───────────
+          let triggeredPeakRetractExit = false
+          if (peakGainPct >= 0.20 && price < peakPrice) {
+            const dropFromPeakPct = (peakPrice - price) / peakPrice
+            const lostGainRatio = peakGainPoints > 0 ? (peakPrice - price) / peakGainPoints : 0
+
+            // If price drops >= 12% from peak OR loses >= 35% of peak unrealized gain
+            if (dropFromPeakPct >= 0.12 || lostGainRatio >= 0.35) {
+              triggeredPeakRetractExit = true
+              console.log(
+                `[EXIT] 🛡️ Peak Retract Guard triggered for ${symbol} @ ₹${price.toFixed(2)} (Peak: ₹${peakPrice.toFixed(2)}, Drop: -${(dropFromPeakPct * 100).toFixed(1)}%, Lost Gain: -${(lostGainRatio * 100).toFixed(1)}%)`
+              )
+              this.emit('notification', {
+                title: `🛡️ Peak Retract Exit (Profit Protected)`,
+                message: `${symbol}: Exited @ ₹${price.toFixed(2)} to protect peak profit (Peak: ₹${peakPrice.toFixed(2)})`,
+                type: 'info',
+              })
+              await this.placeOrder({
+                symbol: pos.symbol,
+                token: pos.token,
+                side: 'SELL',
+                quantity: pos.quantity,
+                price: price,
+                context: { aiReasoning: `Peak Profit Retract Guard (MFE Protection from peak ₹${peakPrice.toFixed(2)})` },
+              })
+            }
+          }
+
+          if (triggeredPeakRetractExit) {
+            continue
+          }
+
           // ── Hard Stop-Loss (always runs first, highest priority) ───────────
           if (pos.aiStopLoss && price <= pos.aiStopLoss) {
             console.log(`[EXIT] ⛔ Stop-Loss hit for ${symbol} @ ${price} (SL: ${pos.aiStopLoss})`)
@@ -902,7 +990,7 @@ export class PaperTrader extends EventEmitter {
             // T1 Hit
             pos.t1Hit = true
             const prevSl = pos.aiStopLoss?.toFixed(2) ?? '—'
-            pos.aiStopLoss = pos.avgEntryPrice // move SL to breakeven
+            pos.aiStopLoss = Math.max(pos.aiStopLoss || 0, pos.avgEntryPrice) // move SL to breakeven (preserve if higher)
 
             if (pos.t1Qty && pos.t1Qty > 0) {
               // Partial exit — sell T1 qty
@@ -934,7 +1022,7 @@ export class PaperTrader extends EventEmitter {
             // T2 Hit
             pos.t2Hit = true
             const prevSl = pos.aiStopLoss?.toFixed(2) ?? '—'
-            if (pos.t1Target) pos.aiStopLoss = pos.t1Target // lock T1 gain
+            if (pos.t1Target) pos.aiStopLoss = Math.max(pos.aiStopLoss || 0, pos.t1Target) // lock T1 gain
 
             if (pos.t2Qty && pos.t2Qty > 0) {
               // Partial exit

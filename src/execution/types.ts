@@ -25,6 +25,9 @@ export interface PaperPosition {
   currentPrice: number
   unrealizedPnL: number
   realizedPnL: number
+  peakPrice?: number // Highest price reached since entry (High-Watermark)
+  maxUnrealizedPnL?: number // Highest unrealized PnL achieved during trade lifespan (MFE)
+  trailingSlLocked?: number // Profit level locked by dynamic peak ratchet
   aiStopLoss?: number
   aiTarget?: number
   // Tiered Profit Ladder

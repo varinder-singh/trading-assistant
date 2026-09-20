@@ -88,7 +88,13 @@ export class TradeRepository {
     return id
   }
 
-  async closeTrade(id: string, exitPrice: number, exitReason?: string, agentType?: string) {
+  async closeTrade(
+    id: string,
+    exitPrice: number,
+    exitReason?: string,
+    agentType?: string,
+    metrics?: { peakPrice?: number; maxUnrealizedPnL?: number }
+  ) {
     const now = new Date().toISOString()
 
     // Fetch the trade to calculate PnL
@@ -125,6 +131,8 @@ export class TradeRepository {
         side: trade.side === 'BUY' ? 'SELL' : 'BUY', // The closing action
         metadata: JSON.stringify({
           exitReason: exitReason || null,
+          peakPrice: metrics?.peakPrice ?? null,
+          maxUnrealizedPnL: metrics?.maxUnrealizedPnL ?? null,
         }),
         createdAt: now,
         updatedAt: now,
