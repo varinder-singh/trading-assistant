@@ -86,11 +86,11 @@ export function analyzeTechnical(
   }
 
   const vwapZScore = calculateVWAPZScore(candles, vwap)
-  const adx = timeframe === '15m' ? calculateADX(candles, 14) : undefined
+  const adx = calculateADX(candles, 14)
 
-  const swings = timeframe === '15m' ? calculateSwings(candles, 2) : undefined
-  const waveContext = timeframe === '15m' && swings ? detectWaveStructure(swings, last) : undefined
-  const openingRange = timeframe === '15m' ? (calculateORB(candles) ?? undefined) : undefined
+  const swings = calculateSwings(candles, 2)
+  const waveContext = detectWaveStructure(swings, last)
+  const openingRange = calculateORB(candles) ?? undefined
 
   return {
     trend,

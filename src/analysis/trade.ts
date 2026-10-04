@@ -15,6 +15,7 @@ import type { Candle, TradeTechnicalAnalysis } from '../types/analysis.js'
 import { getInstrumentToken } from '../data/kite.js'
 import { gtiTracker } from '../indicators/gti-tracker.js'
 import { resolveYahooTicker } from '../utils/symbol.js'
+import { calculateReversalScore } from './reversals.js'
 
 const llmService = new LLMService()
 
@@ -67,7 +68,8 @@ export async function runAnalysis(
 
     candles1d = candlesData.candles1d
     candles1h = candlesData.candles1h
-    candles30m = (candlesData.candles30m && candlesData.candles30m.length > 0) ? candlesData.candles30m : candlesData.candles15m
+    candles30m =
+      candlesData.candles30m && candlesData.candles30m.length > 0 ? candlesData.candles30m : candlesData.candles15m
     candles15m = candlesData.candles15m
     candles3m = candlesData.candles3m
     headlines = h
@@ -187,10 +189,9 @@ export async function runAnalysis(
     console.log(`[Orchestrator] Active Agent: ${validation.activeAgent} (${orchestrator.confidence}%)`)
     console.log(`[Orchestrator] Rationale: ${orchestrator.rationale}`)
   }
-  const activeAgent = validation.activeAgent
+  const activeAgent = validation.activeAgent as TradingAgentType
 
   // Compute reversal score early to pass it to the AI
-  const { calculateReversalScore } = await import('./reversals.js')
   // We mock a temporary TradeTechnicalAnalysis object just to calculate the score
   const tempAnalysisForScore = {
     tf1h,
@@ -204,7 +205,7 @@ export async function runAnalysis(
     candles1h,
     candles15m,
     candles3m,
-    agentType: activeAgent as import('../ai/types.js').TradingAgentType,
+    agentType: activeAgent,
   } as TradeTechnicalAnalysis
 
   const reversalScore = {
@@ -229,7 +230,7 @@ export async function runAnalysis(
       reversalScore, // Pass the reversal score to the AI
       symbol,
     },
-    activeAgent as import('../ai/types.js').TradingAgentType,
+    activeAgent,
     userId
   )
 
@@ -261,7 +262,7 @@ export async function runAnalysis(
       candles30m: candles30m ? candles30m.slice(-100) : [],
       candles15m: candles15m.slice(-100),
       candles3m: candles3m.slice(-100),
-      agentType: (activeAgent || 'SCALPER') as import('../ai/types.js').TradingAgentType,
+      agentType: activeAgent || 'SCALPER',
       gtiHistory: gtiTracker.getHistory(0),
     }
   }

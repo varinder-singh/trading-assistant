@@ -673,7 +673,7 @@ export class PaperTrader extends EventEmitter {
         if (pos.aiStopLoss !== undefined && pos.aiStopLoss > 1000) {
           const isPeOption = pos.symbol.endsWith('PE')
           const fallbackOffset = isPeOption ? -50 : 50
-          const indexPrice = params.context?.currentIndexPrice || (pos.aiStopLoss + fallbackOffset)
+          const indexPrice = params.context?.currentIndexPrice || pos.aiStopLoss + fallbackOffset
           const indexRisk = Math.abs(indexPrice - pos.aiStopLoss)
           const agentType = params.context?.strategyContext?.agentType || 'SCALPER'
 
@@ -698,7 +698,7 @@ export class PaperTrader extends EventEmitter {
         if (pos.aiTarget !== undefined && pos.aiTarget > 1000) {
           const isPeOption = pos.symbol.endsWith('PE')
           const fallbackOffset = isPeOption ? 100 : -100
-          const indexPrice = params.context?.currentIndexPrice || (pos.aiTarget + fallbackOffset)
+          const indexPrice = params.context?.currentIndexPrice || pos.aiTarget + fallbackOffset
           const indexGain = Math.abs(pos.aiTarget - indexPrice)
           const agentType = params.context?.strategyContext?.agentType || 'SCALPER'
 
@@ -858,11 +858,20 @@ export class PaperTrader extends EventEmitter {
           .filter((t) => t.symbol === order.symbol)
           .sort((a, b) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime())[0]
         if (targetTrade) {
+          // if peak price was undefined then change it to 0
+          const peakPriceMetric = {
+            peakPrice: existing.peakPrice ?? 0,
+            maxUnrealizedPnL: existing.maxUnrealizedPnL ?? 0,
+          }
+          console.log('Peak price metric at close of trader ', peakPriceMetric)
           await tradeRepo
-            .closeTrade(targetTrade.id, order.price!, context?.aiReasoning, context?.strategyContext?.agentType, {
-              peakPrice: existing.peakPrice,
-              maxUnrealizedPnL: existing.maxUnrealizedPnL,
-            })
+            .closeTrade(
+              targetTrade.id,
+              order.price!,
+              context?.aiReasoning,
+              context?.strategyContext?.agentType,
+              peakPriceMetric
+            )
             .catch((err) => console.error('❌ Failed to close trade in DB:', err))
         } else {
           console.warn(`⚠️ [DB SYNC ISSUE] Could not find OPEN trade in database for ${order.symbol} to close it.`)
@@ -907,12 +916,12 @@ export class PaperTrader extends EventEmitter {
           if (peakGainPct >= 0.15 && entryPrice > 0) {
             let targetSl = pos.aiStopLoss
 
-            if (peakGainPct >= 0.50) {
+            if (peakGainPct >= 0.5) {
               // Tier 3 (+50% peak gain): Lock at least 70% of peak gain
-              targetSl = entryPrice + 0.70 * peakGainPoints
-            } else if (peakGainPct >= 0.30) {
+              targetSl = entryPrice + 0.7 * peakGainPoints
+            } else if (peakGainPct >= 0.3) {
               // Tier 2 (+30% peak gain): Lock at least 50% of peak gain
-              targetSl = entryPrice + 0.50 * peakGainPoints
+              targetSl = entryPrice + 0.5 * peakGainPoints
             } else {
               // Tier 1 (+15% peak gain): Move SL to breakeven + 2% buffer
               targetSl = entryPrice * 1.02
@@ -938,7 +947,7 @@ export class PaperTrader extends EventEmitter {
 
           // ── Peak Retract Guard (Give-back Protection Exit) ───────────
           let triggeredPeakRetractExit = false
-          if (peakGainPct >= 0.20 && price < peakPrice) {
+          if (peakGainPct >= 0.2 && price < peakPrice) {
             const dropFromPeakPct = (peakPrice - price) / peakPrice
             const lostGainRatio = peakGainPoints > 0 ? (peakPrice - price) / peakGainPoints : 0
 
@@ -959,7 +968,9 @@ export class PaperTrader extends EventEmitter {
                 side: 'SELL',
                 quantity: pos.quantity,
                 price: price,
-                context: { aiReasoning: `Peak Profit Retract Guard (MFE Protection from peak ₹${peakPrice.toFixed(2)})` },
+                context: {
+                  aiReasoning: `Peak Profit Retract Guard (MFE Protection from peak ₹${peakPrice.toFixed(2)})`,
+                },
               })
             }
           }

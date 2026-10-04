@@ -336,7 +336,7 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
         })
         return result
       } catch (_parseError) {
-        console.error('[AI] Failed to parse JSON response:', cleanedText)
+        console.error('[AI] Failed to parse JSON response:', text)
         this.emitUpdate({
           agent: agentType,
           status: 'error',

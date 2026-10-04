@@ -32,20 +32,20 @@ describe('PaperTrader High-Watermark Peak Profit Engine', () => {
     })
 
     const pos = trader.getAllPositions()[0]
-    expect(pos.peakPrice).toBe(100)
-    expect(pos.maxUnrealizedPnL).toBe(0)
+    expect(pos?.peakPrice).toBe(100)
+    expect(pos?.maxUnrealizedPnL).toBe(0)
 
     // Tick 1: Price goes up to 110 (+10%)
     await trader.updatePrice(1001, 110)
-    expect(pos.currentPrice).toBe(110)
-    expect(pos.peakPrice).toBe(110)
-    expect(pos.maxUnrealizedPnL).toBe(650) // (110 - 100) * 65
+    expect(pos?.currentPrice).toBe(110)
+    expect(pos?.peakPrice).toBe(110)
+    expect(pos?.maxUnrealizedPnL).toBe(650) // (110 - 100) * 65
 
     // Tick 2: Price dips to 105
     await trader.updatePrice(1001, 105)
-    expect(pos.currentPrice).toBe(105)
-    expect(pos.peakPrice).toBe(110) // Peak remains 110
-    expect(pos.maxUnrealizedPnL).toBe(650) // Max PnL remains 650
+    expect(pos?.currentPrice).toBe(105)
+    expect(pos?.peakPrice).toBe(110) // Peak remains 110
+    expect(pos?.maxUnrealizedPnL).toBe(650) // Max PnL remains 650
   })
 
   it('should ratchet SL to breakeven + 2% when peak gain reaches +15%', async () => {
@@ -59,13 +59,13 @@ describe('PaperTrader High-Watermark Peak Profit Engine', () => {
     })
 
     const pos = trader.getAllPositions()[0]
-    expect(pos.aiStopLoss).toBe(85)
+    expect(pos?.aiStopLoss).toBe(85)
 
     // Price reaches +16% gain (116)
     await trader.updatePrice(1002, 116)
-    expect(pos.peakPrice).toBe(116)
+    expect(pos?.peakPrice).toBe(116)
     // Ratchet Tier 1: 100 * 1.02 = 102
-    expect(pos.aiStopLoss).toBe(102)
+    expect(pos?.aiStopLoss).toBe(102)
   })
 
   it('should ratchet SL to 50% of peak gain when peak gain reaches +30%', async () => {
@@ -82,9 +82,9 @@ describe('PaperTrader High-Watermark Peak Profit Engine', () => {
 
     // Price reaches +40% gain (140)
     await trader.updatePrice(1003, 140)
-    expect(pos.peakPrice).toBe(140)
+    expect(pos?.peakPrice).toBe(140)
     // Tier 2 Ratchet (+30%+ peak gain): 100 + 0.50 * 40 = 120
-    expect(pos.aiStopLoss).toBe(120)
+    expect(pos?.aiStopLoss).toBe(120)
 
     // Price drops to 120 -> hits ratcheted SL
     await trader.updatePrice(1003, 119)
