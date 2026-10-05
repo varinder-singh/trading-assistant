@@ -74,7 +74,6 @@ Exact entry/exit criteria for options scalps:
 - **Dynamic RSI & Wave Divergence:** Look for severe RSI divergence between Wave 3 and Wave 5 peaks to detect macro exhaustion.
 `
 
-
 export const TECHNICAL_AGENT_PROMPT = `
 ## ROLE: INSTITUTIONAL TECHNICAL ANALYST (WAVE & STRUCTURE SPECIALIST)
 

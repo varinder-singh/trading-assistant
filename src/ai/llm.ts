@@ -26,10 +26,7 @@ export function cleanJson(text: string): string {
 
   // Replace raw newlines, carriage returns, and tabs inside double-quoted string values
   cleaned = cleaned.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
-    return match
-      .replace(/\n/g, '\\n')
-      .replace(/\r/g, '\\r')
-      .replace(/\t/g, '\\t')
+    return match.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t')
   })
 
   return cleaned
@@ -392,8 +389,6 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
           { role: 'user', content: `${memoryPrompt}\n\nAnalyze this options flow:\n${marketDataStr}` },
         ]),
       ])
-
-
 
       const technical = JSON.parse(cleanJson(techRes))
       const options = JSON.parse(cleanJson(optRes))
