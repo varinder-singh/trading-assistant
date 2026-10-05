@@ -122,7 +122,9 @@ export class UserSession extends EventEmitter {
 
     // Concurrency Lock: Prevent multiple overlapping AI analyses
     if (this.isAnalyzing) {
-      console.log(`[UserSession] AI is already analyzing for ${this.watchedSymbol}. Dropping concurrent breakout event.`)
+      console.log(
+        `[UserSession] AI is already analyzing for ${this.watchedSymbol}. Dropping concurrent breakout event.`
+      )
       return
     }
     this.isAnalyzing = true
@@ -166,15 +168,24 @@ export class UserSession extends EventEmitter {
           const entryPrice = quote[`NFO:${option.symbol}`]?.last_price || 0
 
           if (entryPrice > 0) {
+            const optionRow = optionsAnalysis?.rows?.find((r: any) => r.strike === decision.strike && r.type === type)
             const indexRiskPoints = Math.abs(tf.price - decision.stopLoss)
-            const estimatedDelta = 0.5
+            // Edited 04/10/2026 earlier options delta was hard coded as 0.5
+            const estimatedDelta = optionRow?.greeks?.delta
+              ? Math.abs(optionRow.greeks.delta)
+              : decision.strike && tf.price
+                ? type === 'CE'
+                  ? tf.price > (decision.strike ?? 0)
+                    ? 0.75
+                    : 0.4 // ITM CE vs OTM CE
+                  : tf.price > (decision.strike ?? 0)
+                    ? 0.75
+                    : 0.4 // ITM CE vs OTM CE
+                : 0.5
             const optionRiskPoints = indexRiskPoints * estimatedDelta
 
             // Retrieve signal-time option price (pre-LLM options chain analysis)
-            const signalRow = optionsAnalysis?.rows?.find(
-              (r: any) => r.strike === decision.strike && r.type === type
-            )
-            const signalPrice = signalRow?.ltp || entryPrice
+            const signalPrice = optionRow?.ltp || entryPrice
 
             // Anchor Target and SL to the Signal Price
             let calculatedSl = signalPrice - optionRiskPoints
@@ -216,6 +227,7 @@ export class UserSession extends EventEmitter {
               price: entryPrice,
               context: {
                 optionExpiry: option.expiry.toISOString(),
+                optionDelta: estimatedDelta, // Edited 04/10/2026
                 aiReasoning: decision.reason,
                 aiConfidence: decision.confidence,
                 aiStrike: decision.strike || undefined,
