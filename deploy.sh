@@ -20,6 +20,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --source . \
   --region "$REGION" \
   --project "$PROJECT_ID" \
+  --set-env-vars "ENABLE_DELTA_LOT_SIZING=false" \
   --quiet
 
 echo "✅ Deployment completed successfully!"

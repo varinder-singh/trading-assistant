@@ -326,7 +326,8 @@ export class PaperTrader extends EventEmitter {
 
                 optionRiskPoints = indexRiskPoints * effectiveDelta
 
-                newPremiumSl = pos.currentPrice - optionRiskPoints
+                newPremiumSl = Math.max(pos.aiStopLoss ?? 0, pos.currentPrice - optionRiskPoints)
+                console.log('New Premium SL calculated ', newPremiumSl)
               }
 
               // Base target calculation
@@ -535,7 +536,7 @@ export class PaperTrader extends EventEmitter {
         const baseLotSize = params.context?.lotSize || 1
 
         let numLots = 1
-        if (params.context?.optionDelta) {
+        if (process.env.ENABLE_DELTA_LOT_SIZING === 'true' && params.context?.optionDelta) {
           const delta = Math.abs(params.context.optionDelta)
           const targetDeltaExposure = 0.5 // We target the exposure of 1 ATM lot
           if (delta > 0) {

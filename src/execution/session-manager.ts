@@ -179,8 +179,8 @@ export class UserSession extends EventEmitter {
                     ? 0.75
                     : 0.4 // ITM CE vs OTM CE
                   : tf.price > (decision.strike ?? 0)
-                    ? 0.75
-                    : 0.4 // ITM CE vs OTM CE
+                    ? 0.4
+                    : 0.75 // ITM CE vs OTM CE
                 : 0.5
             const optionRiskPoints = indexRiskPoints * estimatedDelta
 
