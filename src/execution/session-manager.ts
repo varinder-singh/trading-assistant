@@ -241,6 +241,7 @@ export class UserSession extends EventEmitter {
                 rsiLevel: tf.rsi,
                 trend15m: tf.trend,
                 aiStopLoss: calculatedSl,
+                aiTarget: calculatedTarget,
                 aiIndexTargets: decision.targets?.length ? decision.targets : undefined,
                 currentIndexPrice: tf.price,
                 lotSize: analysisResult.lotSize,
