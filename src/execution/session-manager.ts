@@ -169,7 +169,10 @@ export class UserSession extends EventEmitter {
 
           if (entryPrice > 0) {
             const optionRow = optionsAnalysis?.rows?.find((r: any) => r.strike === decision.strike && r.type === type)
-            const indexRiskPoints = Math.abs(tf.price - decision.stopLoss)
+            const structuralRiskPoints = Math.abs(tf.price - decision.stopLoss)
+            const atr14 = analysisResult.dailyContext?.atr14 || 20
+            const minAtrRisk = 1.5 * atr14
+            const indexRiskPoints = Math.max(structuralRiskPoints, minAtrRisk)
             // Edited 04/10/2026 earlier options delta was hard coded as 0.5
             const estimatedDelta = optionRow?.greeks?.delta
               ? Math.abs(optionRow.greeks.delta)

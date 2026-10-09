@@ -286,6 +286,24 @@ export async function runAnalysis(
         aiDecision.reducedPosition = true
       }
 
+      // VWAP Z-Score Overbought / Oversold Filter (Deep Fix 4.4)
+      const zScore15m = tf15m.vwapZScore || 0
+      if (aiDecision.optionAction === 'BUY_CE' && zScore15m > 2.0) {
+        console.warn(
+          `[VWAP Z-Score Filter] 🛑 BLOCKED: BUY_CE rejected — 15m VWAP Z-Score (${zScore15m.toFixed(2)}) > +2.0 (overbought top).`
+        )
+        aiDecision.decision = 'HOLD'
+        aiDecision.optionAction = 'NONE'
+        aiDecision.reason = `[VWAP Z-SCORE BLOCKED] ${aiDecision.reason} | Price is overbought (VWAP Z-Score ${zScore15m.toFixed(2)} > +2.0).`
+      } else if (aiDecision.optionAction === 'BUY_PE' && zScore15m < -2.0) {
+        console.warn(
+          `[VWAP Z-Score Filter] 🛑 BLOCKED: BUY_PE rejected — 15m VWAP Z-Score (${zScore15m.toFixed(2)}) < -2.0 (oversold bottom).`
+        )
+        aiDecision.decision = 'HOLD'
+        aiDecision.optionAction = 'NONE'
+        aiDecision.reason = `[VWAP Z-SCORE BLOCKED] ${aiDecision.reason} | Price is oversold (VWAP Z-Score ${zScore15m.toFixed(2)} < -2.0).`
+      }
+
       // GTI Gatekeeper: Modulate confidence based on institutional flow alignment (applies to all passing signals)
       const gtiMildThreshold = -0.3
       const gtiSevereThreshold = -0.6
