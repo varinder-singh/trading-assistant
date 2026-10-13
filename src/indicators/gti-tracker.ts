@@ -1,8 +1,9 @@
-export const gtiTracker = {
-  setMarketContext(token: number, vwap: number, atr: number, flow: any) {
+export class GTITracker {
+  setMarketContext(_token: number, _vwap: number, _atr: number, _flow: any) {
     // Dummy implementation
-  },
-  getCurrentScore(token: number) {
+  }
+
+  getCurrentScore(_token: number) {
     return {
       composite: 0,
       classification: 'NEUTRAL',
@@ -15,14 +16,19 @@ export const gtiTracker = {
         smartMoneyFlow: 0,
       },
     }
-  },
-  getHistory(token: number) {
+  }
+
+  getHistory(_token: number) {
     return []
-  },
-  onCandleClose(token: number, candle: any) {
+  }
+
+  onCandleClose(token: number, _candle: any) {
     return this.getCurrentScore(token)
-  },
-  addTick(tick: any) {
+  }
+
+  addTick(_tick: any) {
     // Dummy
-  },
+  }
 }
+
+export const gtiTracker = new GTITracker()

@@ -32,7 +32,15 @@ export function cleanJson(text: string): string {
   return cleaned
 }
 
+import type { LLMProvider } from './types.js'
+import { MemoryService } from './memory.js'
+
 export class LLMService {
+  constructor(
+    private readonly providerFactory: () => LLMProvider = getLLMProvider,
+    private readonly memory: MemoryService = memoryService
+  ) {}
+
   private emitUpdate(update: AgentUpdate) {
     eventHub.emit('agent_update', update)
   }
@@ -114,7 +122,7 @@ export class LLMService {
 ${JSON.stringify(cleanedInput, null, 2)}
 `
     try {
-      const provider = getLLMProvider()
+      const provider = this.providerFactory()
       const text = await provider.chat(
         [
           { role: 'system', content: systemMessage },
@@ -167,7 +175,7 @@ ${JSON.stringify(cleanedInput, null, 2)}
       systemMessage = input.systemPrompt
     }
 
-    const provider = getLLMProvider()
+    const provider = this.providerFactory()
     const text = await provider.chat([
       { role: 'system', content: systemMessage },
       { role: 'user', content: userPrompt },
@@ -285,7 +293,7 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
         systemMessage = input.systemPrompt
       }
 
-      const provider = getLLMProvider()
+      const provider = this.providerFactory()
       const text = await provider.chat([
         { role: 'system', content: systemMessage },
         { role: 'user', content: userPrompt },
@@ -360,14 +368,14 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
     console.log(`[AI] Starting Ensemble Analysis (${agentType} regime)...`)
 
     try {
-      const provider = getLLMProvider()
+      const provider = this.providerFactory()
 
       // Fetch Memory
       const symbol = input.symbol || 'NIFTY'
       const trend = input.tf15m?.trend || 'SIDEWAYS'
       const vix = input.vix?.current || 15
-      const pastTrades = await memoryService.getRegimeStats(userId, symbol, trend, vix)
-      const memoryPrompt = memoryService.formatForPrompt(pastTrades)
+      const pastTrades = await this.memory.getRegimeStats(userId, symbol, trend, vix)
+      const memoryPrompt = this.memory.formatForPrompt(pastTrades)
 
       const cleanedInput = this.sanitizeForLLM(input)
       const marketDataStr = JSON.stringify(cleanedInput, null, 2)
@@ -467,8 +475,8 @@ The position was originally opened by a ${agentType} agent. You must decide whet
     const symbol = input.openPosition?.symbol || 'NIFTY'
     const trend = input.marketData?.tf15m?.trend || 'SIDEWAYS'
     const vix = input.marketData?.vix?.current || 15
-    const pastTrades = await memoryService.getRegimeStats(userId, symbol, trend, vix)
-    const memoryPrompt = memoryService.formatForPrompt(pastTrades)
+    const pastTrades = await this.memory.getRegimeStats(userId, symbol, trend, vix)
+    const memoryPrompt = this.memory.formatForPrompt(pastTrades)
 
     const cleanedMarketData = this.sanitizeForLLM({ marketData: input.marketData }).marketData
     const userPrompt = `Evaluate the following open position against current market data:
@@ -491,7 +499,7 @@ ${JSON.stringify(cleanedMarketData, null, 2)}
 }
 `
     try {
-      const provider = getLLMProvider()
+      const provider = this.providerFactory()
       const text = await provider.chat([
         { role: 'system', content: systemMessage },
         { role: 'user', content: userPrompt },

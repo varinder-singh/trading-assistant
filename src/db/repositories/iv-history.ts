@@ -1,14 +1,22 @@
-import { db } from '../database.js'
+import { db as dbDefault } from '../database.js'
 import { randomUUID } from 'node:crypto'
+import { Kysely } from 'kysely'
+import type { Database } from '../database.js'
 
 export class IvHistoryRepo {
+  private db: Kysely<Database>
+
+  constructor(db: Kysely<Database> = dbDefault) {
+    this.db = db
+  }
+
   /**
    * Save or update the daily ATM IV for a symbol
    */
   async saveDailyIV(symbol: string, iv: number, dateStr?: string): Promise<void> {
     const date = dateStr || (new Date().toISOString().split('T')[0] as string)
 
-    await db
+    await this.db
       .insertInto('ivHistory')
       .values({
         id: randomUUID(),
@@ -30,7 +38,7 @@ export class IvHistoryRepo {
    * @param days Lookback window in days (default 30)
    */
   async getIvStats(symbol: string, currentIv: number, days: number = 30) {
-    const records = await db
+    const records = await this.db
       .selectFrom('ivHistory')
       .select(['iv'])
       .where('symbol', '=', symbol)

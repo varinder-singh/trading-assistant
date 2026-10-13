@@ -1,26 +1,32 @@
+const YAHOO_MAP: Record<string, string> = {
+  NIFTY: '^NSEI',
+  BANKNIFTY: '^NSEBANK',
+  FINNIFTY: '^CNXFIN',
+}
+
+const KITE_UNDERLYING_MAP: Record<string, string> = {
+  NIFTY: 'NSE:NIFTY 50',
+  BANKNIFTY: 'NSE:NIFTY BANK',
+  FINNIFTY: 'NSE:NIFTY FIN SERVICE',
+}
+
+const KITE_INSTRUMENT_MAP: Record<string, string> = {
+  NIFTY: 'NIFTY 50',
+  BANKNIFTY: 'NIFTY BANK',
+  FINNIFTY: 'NIFTY FIN SERVICE',
+}
+
 export function resolveYahooTicker(symbol: string): string {
   const s = symbol.toUpperCase()
-  if (s === 'NIFTY') return '^NSEI'
-  if (s === 'BANKNIFTY') return '^NSEBANK'
-  if (s === 'FINNIFTY') return '^CNXFIN'
-  // NSE Equities fallback
-  return `${s}.NS`
+  return YAHOO_MAP[s] ?? `${s}.NS`
 }
 
 export function resolveKiteUnderlying(symbol: string): string {
   const s = symbol.toUpperCase()
-  if (s === 'NIFTY') return 'NSE:NIFTY 50'
-  if (s === 'BANKNIFTY') return 'NSE:NIFTY BANK'
-  if (s === 'FINNIFTY') return 'NSE:NIFTY FIN SERVICE'
-  // NSE Equities fallback
-  return `NSE:${s}`
+  return KITE_UNDERLYING_MAP[s] ?? `NSE:${s}`
 }
 
 export function resolveKiteInstrumentName(symbol: string): string {
   const s = symbol.toUpperCase()
-  if (s === 'NIFTY') return 'NIFTY 50'
-  if (s === 'BANKNIFTY') return 'NIFTY BANK'
-  if (s === 'FINNIFTY') return 'NIFTY FIN SERVICE'
-  // NSE Equities fallback
-  return s
+  return KITE_INSTRUMENT_MAP[s] ?? s
 }

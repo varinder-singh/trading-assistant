@@ -3,14 +3,10 @@ import { Kysely } from 'kysely'
 import type { Database } from '../database.js'
 
 export class UserRepository {
-  private db: Kysely<Database>
-
-  constructor(db: Kysely<Database> = dbDefault) {
-    this.db = db
-  }
+  constructor(private readonly db: Kysely<Database> = dbDefault) {}
 
   public async getUserProfileByUserId(userId: string) {
-    return await this.db
+    return this.db
       .selectFrom('profiles')
       .select(['tradeMode', 'watchedSymbol', 'watchedMode'])
       .where('id', '=', userId)
@@ -18,7 +14,7 @@ export class UserRepository {
   }
 
   public async getUserBrokerAccountByUserId(userId: string) {
-    return await this.db
+    return this.db
       .selectFrom('brokerAccounts')
       .select(['accessToken', 'apiKey'])
       .where('userId', '=', userId)
@@ -27,7 +23,7 @@ export class UserRepository {
   }
 
   public async getWatchConfig(userId: string) {
-    return await this.db
+    return this.db
       .selectFrom('profiles')
       .select(['watchedSymbol', 'watchedMode'])
       .where('id', '=', userId)
@@ -43,7 +39,7 @@ export class UserRepository {
   }
 
   public async getActiveWatchingUsers() {
-    return await this.db
+    return this.db
       .selectFrom('profiles')
       .innerJoin('brokerAccounts', 'brokerAccounts.userId', 'profiles.id')
       .select([

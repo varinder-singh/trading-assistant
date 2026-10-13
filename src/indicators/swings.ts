@@ -6,38 +6,28 @@ import type { Candle, SwingPoint } from '../types/analysis.js'
  * A low is a trough if it is lower than its neighbors.
  */
 export function calculateSwings(candles: Candle[], lookback: number = 2): SwingPoint[] {
-  const swings: SwingPoint[] = []
+  if (candles.length < lookback * 2 + 1) return []
 
-  for (let i = lookback; i < candles.length - lookback; i++) {
+  const indices = Array.from({ length: candles.length - lookback * 2 }, (_, idx) => idx + lookback)
+
+  return indices.flatMap((i) => {
     const current = candles[i]
-    if (!current) continue
+    if (!current) return []
 
-    let isHigh = true
-    let isLow = true
+    const lookbackRange = Array.from({ length: lookback }, (_, j) => j + 1)
+    const neighbors = lookbackRange.map((j) => ({
+      prev: candles[i - j],
+      next: candles[i + j],
+    }))
 
-    for (let j = 1; j <= lookback; j++) {
-      const prev = candles[i - j]
-      const next = candles[i + j]
-      if (!prev || !next) {
-        isHigh = false
-        isLow = false
-        break
-      }
+    const valid = neighbors.every((n) => n.prev && n.next)
+    if (!valid) return []
 
-      if (prev.high >= current.high || next.high > current.high) {
-        isHigh = false
-      }
-      if (prev.low <= current.low || next.low < current.low) {
-        isLow = false
-      }
-    }
+    const isHigh = neighbors.every((n) => n.prev!.high < current.high && n.next!.high <= current.high)
+    const isLow = neighbors.every((n) => n.prev!.low > current.low && n.next!.low >= current.low)
 
-    if (isHigh) {
-      swings.push({ type: 'HIGH', price: current.high, time: current.time })
-    } else if (isLow) {
-      swings.push({ type: 'LOW', price: current.low, time: current.time })
-    }
-  }
-
-  return swings
+    if (isHigh) return [{ type: 'HIGH', price: current.high, time: current.time }]
+    if (isLow) return [{ type: 'LOW', price: current.low, time: current.time }]
+    return []
+  })
 }

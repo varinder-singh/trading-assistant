@@ -12,15 +12,11 @@ export interface AnalyzerEvent {
 }
 
 export class EventRepository {
-  private db: Kysely<Database>
+  constructor(private readonly db: Kysely<Database> = dbDefault) {}
 
-  constructor(db: Kysely<Database> = dbDefault) {
-    this.db = db
-  }
-
-  async saveEvent(event: AnalyzerEvent) {
+  public async saveEvent(event: AnalyzerEvent) {
     const id = crypto.randomUUID()
-    return await this.db
+    return this.db
       .insertInto('marketEvents')
       .values({
         id,
@@ -34,8 +30,8 @@ export class EventRepository {
       .executeTakeFirst()
   }
 
-  async getRecentEvents(symbol: string, limit = 10) {
-    return await this.db
+  public async getRecentEvents(symbol: string, limit = 10) {
+    return this.db
       .selectFrom('marketEvents')
       .where('symbol', '=', symbol)
       .orderBy('createdAt', 'desc')

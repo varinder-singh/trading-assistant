@@ -24,23 +24,18 @@ export interface NewPaperTradeInput {
 }
 
 export class TradeRepository {
-  private db: Kysely<Database>
+  constructor(private readonly db: Kysely<Database> = dbDefault) {}
 
-  constructor(db: Kysely<Database> = dbDefault) {
-    this.db = db
-  }
-
-  async insertTrade(trade: NewPaperTradeInput) {
+  public async insertTrade(trade: NewPaperTradeInput) {
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
 
-    // 1. Insert Core Trade
     await this.db
       .insertInto('trades')
       .values({
         id,
         userId: trade.userId,
-        brokerAccountId: null, // Paper trade
+        brokerAccountId: null,
         isPaperTrade: true,
         symbol: trade.symbol,
         instrumentToken: trade.token,
@@ -58,7 +53,6 @@ export class TradeRepository {
       })
       .execute()
 
-    // 2. Insert Analytics Log (ENTRY)
     const analyticsId = crypto.randomUUID()
     await this.db
       .insertInto('tradeAnalytics')
@@ -88,7 +82,7 @@ export class TradeRepository {
     return id
   }
 
-  async closeTrade(
+  public async closeTrade(
     id: string,
     exitPrice: number,
     exitReason?: string,
@@ -96,8 +90,6 @@ export class TradeRepository {
     metrics?: { peakPrice?: number; maxUnrealizedPnL?: number }
   ) {
     const now = new Date().toISOString()
-
-    // Fetch the trade to calculate PnL
     const trade = await this.db.selectFrom('trades').selectAll().where('id', '=', id).executeTakeFirst()
 
     if (!trade) {
@@ -118,7 +110,6 @@ export class TradeRepository {
       .where('id', '=', id)
       .execute()
 
-    // Insert Analytics Log (EXIT)
     const analyticsId = crypto.randomUUID()
     await this.db
       .insertInto('tradeAnalytics')
@@ -128,7 +119,7 @@ export class TradeRepository {
         eventType: 'EXIT',
         agentType: agentType || null,
         symbol: trade.symbol,
-        side: trade.side === 'BUY' ? 'SELL' : 'BUY', // The closing action
+        side: trade.side === 'BUY' ? 'SELL' : 'BUY',
         metadata: JSON.stringify({
           exitReason: exitReason || null,
           peakPrice: metrics?.peakPrice ?? null,
@@ -140,18 +131,13 @@ export class TradeRepository {
       .execute()
   }
 
-  async getOpenTrades(userId: string) {
-    return await this.db
-      .selectFrom('trades')
-      .selectAll()
-      .where('userId', '=', userId)
-      .where('status', '=', 'OPEN')
-      .execute()
+  public async getOpenTrades(userId: string) {
+    return this.db.selectFrom('trades').selectAll().where('userId', '=', userId).where('status', '=', 'OPEN').execute()
   }
 
-  async getTodaysTrades(userId: string) {
-    const today = new Date().toISOString().split('T')[0] // YYYY-MM-DD
-    return await this.db
+  public async getTodaysTrades(userId: string) {
+    const today = new Date().toISOString().split('T')[0]
+    return this.db
       .selectFrom('trades')
       .selectAll()
       .where('userId', '=', userId)
@@ -160,7 +146,7 @@ export class TradeRepository {
       .execute()
   }
 
-  async getAllTrades(userId: string) {
+  public async getAllTrades(userId: string) {
     const trades = await this.db
       .selectFrom('trades')
       .selectAll()
@@ -171,57 +157,45 @@ export class TradeRepository {
     if (trades.length === 0) return []
 
     const tradeIds = trades.map((t) => t.id)
-
     const analytics = await this.db.selectFrom('tradeAnalytics').selectAll().where('tradeId', 'in', tradeIds).execute()
 
-    // Map analytics back to trades
     return trades.map((trade) => {
       const tradeEvents = analytics.filter((a) => a.tradeId === trade.id)
       const entryEvent = tradeEvents.find((a) => a.eventType === 'ENTRY')
       const exitEvent = tradeEvents.find((a) => a.eventType === 'EXIT')
-
-      let aiReasoning,
-        aiConfidence,
-        vixLevel,
-        rsiLevel,
-        trend15m,
-        aiStopLoss,
-        aiTarget,
-        setup,
-        strategyContext,
-        exitReason
-
-      if (entryEvent?.metadata) {
-        const meta = typeof entryEvent.metadata === 'string' ? JSON.parse(entryEvent.metadata) : entryEvent.metadata
-        aiReasoning = meta.aiReasoning
-        aiConfidence = meta.aiConfidence
-        vixLevel = meta.vixLevel
-        rsiLevel = meta.rsiLevel
-        trend15m = meta.trend15m
-        aiStopLoss = meta.aiStopLoss
-        aiTarget = meta.aiTarget
-        setup = meta.setup
-        strategyContext = meta.strategyContext
-      }
-
-      if (exitEvent?.metadata) {
-        const meta = typeof exitEvent.metadata === 'string' ? JSON.parse(exitEvent.metadata) : exitEvent.metadata
-        exitReason = meta.exitReason
-      }
+      const meta = this.extractAnalyticsMetadata(entryEvent, exitEvent)
 
       return {
         ...trade,
-        aiReasoning,
-        aiConfidence,
-        vixLevel,
-        rsiLevel,
-        trend15m,
-        aiStopLoss,
-        aiTarget,
-        setup,
-        strategyContext,
-        exitReason,
+        ...meta,
       }
     })
+  }
+
+  private extractAnalyticsMetadata(entryEvent?: any, exitEvent?: any) {
+    const entryMeta = entryEvent?.metadata
+      ? typeof entryEvent.metadata === 'string'
+        ? JSON.parse(entryEvent.metadata)
+        : entryEvent.metadata
+      : {}
+
+    const exitMeta = exitEvent?.metadata
+      ? typeof exitEvent.metadata === 'string'
+        ? JSON.parse(exitEvent.metadata)
+        : exitEvent.metadata
+      : {}
+
+    return {
+      aiReasoning: entryMeta.aiReasoning,
+      aiConfidence: entryMeta.aiConfidence,
+      vixLevel: entryMeta.vixLevel,
+      rsiLevel: entryMeta.rsiLevel,
+      trend15m: entryMeta.trend15m,
+      aiStopLoss: entryMeta.aiStopLoss,
+      aiTarget: entryMeta.aiTarget,
+      setup: entryMeta.setup,
+      strategyContext: entryMeta.strategyContext,
+      exitReason: exitMeta.exitReason,
+    }
   }
 }

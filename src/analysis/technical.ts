@@ -78,12 +78,12 @@ export function analyzeTechnical(
 
   const vwapPosition = last > vwap ? 'above' : 'below'
 
-  const ema: Record<string, number> = {}
-  const emaSlope: Record<string, number> = {}
-  for (const period of emaPeriods) {
-    ema[period] = calculateEMA(candles, period)
-    emaSlope[period] = calculateEMASlope(candles, period)
-  }
+  const ema: Record<string, number> = Object.fromEntries(
+    emaPeriods.map((period) => [period, calculateEMA(candles, period)])
+  )
+  const emaSlope: Record<string, number> = Object.fromEntries(
+    emaPeriods.map((period) => [period, calculateEMASlope(candles, period)])
+  )
 
   const vwapZScore = calculateVWAPZScore(candles, vwap)
   const adx = calculateADX(candles, 14)

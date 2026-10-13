@@ -3,9 +3,10 @@ import type { LLMMessage, LLMOptions, LLMProvider } from '../types.js'
 
 export class GeminiProvider implements LLMProvider {
   name = 'gemini'
-  private genAI: GoogleGenerativeAI | null = null
 
-  async chat(messages: LLMMessage[], options?: LLMOptions): Promise<string> {
+  constructor(private genAI: GoogleGenerativeAI | null = null) {}
+
+  public async chat(messages: LLMMessage[], options?: LLMOptions): Promise<string> {
     if (!this.genAI) {
       const apiKey = process.env.GEMINI_API_KEY
       if (!apiKey) {
@@ -15,44 +16,38 @@ export class GeminiProvider implements LLMProvider {
     }
 
     const modelName = options?.model || 'gemini-2.5-flash-lite'
-
-    // Extract system message if present
     const systemMessage = messages.find((m) => m.role === 'system')
     const userMessages = messages.filter((m) => m.role !== 'system')
 
-    const modelParams: any = {
+    const modelParams: Record<string, any> = {
       model: modelName,
+      ...(systemMessage ? { systemInstruction: systemMessage.content } : {}),
+      safetySettings: [
+        {
+          category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+        {
+          category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+        {
+          category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+        {
+          category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+      ],
     }
-
-    if (systemMessage) {
-      modelParams.systemInstruction = systemMessage.content
-    }
-
-    modelParams.safetySettings = [
-      {
-        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-      },
-      {
-        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-      },
-      {
-        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-      },
-      {
-        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-      },
-    ]
 
     console.log(
       `[Gemini] Starting chat with model: ${modelName} (System Instruction: ${modelParams.systemInstruction?.length || 0} chars)`
     )
 
     try {
-      const model = this.genAI.getGenerativeModel(modelParams)
+      const model = this.genAI.getGenerativeModel(modelParams as any)
 
       const chat = model.startChat({
         history: userMessages.slice(0, -1).map((m) => ({

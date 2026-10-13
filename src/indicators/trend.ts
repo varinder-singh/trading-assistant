@@ -14,8 +14,5 @@ export function detectTrend(candles: Candle[]): 'bullish' | 'bearish' | 'sideway
   }
 
   const change = ((last - first) / first) * 100
-
-  if (change > 0.5) return 'bullish'
-  if (change < -0.5) return 'bearish'
-  return 'sideways'
+  return change > 0.5 ? 'bullish' : change < -0.5 ? 'bearish' : 'sideways'
 }

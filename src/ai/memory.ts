@@ -1,5 +1,6 @@
-import { db } from '../db/database.js'
-import { sql } from 'kysely'
+import { db as dbDefault } from '../db/database.js'
+import { Kysely, sql } from 'kysely'
+import type { Database } from '../db/database.js'
 
 export interface TradeMemory {
   symbol: string
@@ -19,13 +20,19 @@ export interface RegimeStats {
 }
 
 export class MemoryService {
+  private db: Kysely<Database>
+
+  constructor(db: Kysely<Database> = dbDefault) {
+    this.db = db
+  }
+
   /**
    * Fetches similar past trades and computes statistical metrics to provide context for the current decision.
    */
   async getRegimeStats(userId: string, symbol: string, trend: string, vix: number): Promise<RegimeStats | null> {
     if (!userId) return null
     try {
-      const allTrades = await db
+      const allTrades = await this.db
         .selectFrom('trades')
         .innerJoin('tradeAnalytics', 'tradeAnalytics.tradeId', 'trades.id')
         .select([
@@ -49,13 +56,8 @@ export class MemoryService {
 
       if (allTrades.length === 0) return null
 
-      let wins = 0
-      let totalPnL = 0
-      allTrades.forEach((t) => {
-        const pnl = Number(t.pnl)
-        if (pnl && pnl > 0) wins++
-        if (pnl) totalPnL += pnl
-      })
+      const wins = allTrades.filter((t) => Number(t.pnl) > 0).length
+      const totalPnL = allTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0)
 
       return {
         totalTrades: allTrades.length,
@@ -64,7 +66,7 @@ export class MemoryService {
         recentTrades: allTrades.slice(0, 3).map((t) => ({
           ...t,
           pnl: Number(t.pnl) || 0,
-        })) as TradeMemory[], // keep 3 recent for context
+        })) as TradeMemory[],
       }
     } catch (error) {
       console.error('[MemoryService] Failed to fetch regime stats:', error)
@@ -75,20 +77,26 @@ export class MemoryService {
   formatForPrompt(stats: RegimeStats | null): string {
     if (!stats) return 'No similar past trades found in memory.'
 
-    let prompt = `## PAST TRADE CONTEXT (MEMORY)\n`
-    prompt += `Statistical summary for this regime (Trend: ${stats.recentTrades[0]?.trend_15m || 'N/A'}, VIX: ±2):\n`
-    prompt += `- Total Trades: ${stats.totalTrades}\n`
-    prompt += `- Win Rate: ${stats.winRate.toFixed(1)}%\n`
-    prompt += `- Average PnL: ${stats.averagePnL.toFixed(2)}\n\n`
+    const header = [
+      `## PAST TRADE CONTEXT (MEMORY)`,
+      `Statistical summary for this regime (Trend: ${stats.recentTrades[0]?.trend_15m || 'N/A'}, VIX: ±2):`,
+      `- Total Trades: ${stats.totalTrades}`,
+      `- Win Rate: ${stats.winRate.toFixed(1)}%`,
+      `- Average PnL: ${stats.averagePnL.toFixed(2)}\n`,
+      `Recent Trades in Similar Conditions:`,
+    ].join('\n')
 
-    prompt += `Recent Trades in Similar Conditions:\n`
-    stats.recentTrades.forEach((t, i) => {
-      const pnl = Number(t.pnl)
-      prompt += `${i + 1}. ${t.symbol} ${t.side} | PnL: ₹${pnl.toFixed(2)} (${pnl > 0 ? 'PROFIT' : 'LOSS'}) | Trend: ${t.trend_15m} | VIX: ${t.vix_level}\n`
-      prompt += `   Reasoning: ${t.ai_reasoning}\n\n`
-    })
-    prompt += `NOTE: Past losses may indicate regime-specific patterns worth noting, but do NOT let them reduce your confidence if the CURRENT technical setup, options flow, and wave structure independently support a trade. Each setup is unique — judge it on its own merits.\n`
-    return prompt
+    const tradesList = stats.recentTrades
+      .map((t, i) => {
+        const pnl = Number(t.pnl)
+        const status = pnl > 0 ? 'PROFIT' : 'LOSS'
+        return `${i + 1}. ${t.symbol} ${t.side} | PnL: ₹${pnl.toFixed(2)} (${status}) | Trend: ${t.trend_15m} | VIX: ${t.vix_level}\n   Reasoning: ${t.ai_reasoning}\n`
+      })
+      .join('\n')
+
+    const note = `NOTE: Past losses may indicate regime-specific patterns worth noting, but do NOT let them reduce your confidence if the CURRENT technical setup, options flow, and wave structure independently support a trade. Each setup is unique — judge it on its own merits.\n`
+
+    return `${header}\n${tradesList}\n${note}`
   }
 }
 

@@ -9,11 +9,9 @@ export async function getNews(symbol: string): Promise<string[]> {
     HDFCBANK: "HDFC Bank news",
   }
 
-  const query = queryMap[symbol.toUpperCase()] || symbol
-
+  const query = queryMap[symbol.toUpperCase()] ?? symbol
   const url = `https://newsapi.org/v2/everything?q=${encodeURIComponent(query)}&pageSize=5&apiKey=${apiKey}`
 
   const res = await axios.get(url)
-
   return res.data.articles.map((a: any) => a.title)
 }

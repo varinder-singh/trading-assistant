@@ -30,12 +30,14 @@ export async function getKiteCandles(
   const fromStr = formatToIST(from)
   const toStr = formatToIST(now)
 
-  let kiteInterval = interval
-  if (interval === "1h") kiteInterval = "60minute"
-  if (interval === "1d") kiteInterval = "day"
-  if (interval === "3m") kiteInterval = "3minute"
-  if (interval === "15m") kiteInterval = "15minute"
-  if (interval === "30m") kiteInterval = "30minute"
+  const intervalMap: Record<string, string> = {
+    '1h': '60minute',
+    '1d': 'day',
+    '3m': '3minute',
+    '15m': '15minute',
+    '30m': '30minute',
+  }
+  const kiteInterval = intervalMap[interval] ?? interval
 
   const data = await kc.getHistoricalData(token.toString(), kiteInterval as any, fromStr as string, toStr as string)
   return data.map((d: any) => ({
@@ -109,24 +111,25 @@ export async function getMultiTimeframeCandles(symbol: string, kc?: KiteConnectI
   ])
 
   // Aggregate 1m into 3m candles
-  const candles3m: Candle[] = []
-  for (let i = 0; i < candles1m.length; i += 3) {
-    const chunk = candles1m.slice(i, i + 3)
-    if (chunk.length === 0) continue
+  const chunkCount = Math.ceil(candles1m.length / 3)
+  const candles3m: Candle[] = Array.from({ length: chunkCount }, (_, idx) =>
+    candles1m.slice(idx * 3, idx * 3 + 3)
+  ).flatMap((chunk) => {
+    const first = chunk[0]
+    const last = chunk[chunk.length - 1]
+    if (!first || !last) return []
 
-    const first = chunk[0];
-    const last = chunk[chunk.length - 1];
-    if (!first || !last) continue;
-
-    candles3m.push({
-      time: first.time,
-      open: first.open,
-      high: Math.max(...chunk.map(c => c.high)),
-      low: Math.min(...chunk.map(c => c.low)),
-      close: last.close,
-      volume: chunk.reduce((sum, c) => sum + (c.volume || 0), 0),
-    })
-  }
+    return [
+      {
+        time: first.time,
+        open: first.open,
+        high: Math.max(...chunk.map((c) => c.high)),
+        low: Math.min(...chunk.map((c) => c.low)),
+        close: last.close,
+        volume: chunk.reduce((sum, c) => sum + (c.volume || 0), 0),
+      },
+    ]
+  })
 
   return { candles1d, candles1h, candles30m, candles15m, candles3m }
 }

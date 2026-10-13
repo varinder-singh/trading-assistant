@@ -35,11 +35,7 @@ export function calculateBSPrice(
   const d1 = (Math.log(S / K) + (r + (v * v) / 2) * T) / (v * Math.sqrt(T))
   const d2 = d1 - v * Math.sqrt(T)
 
-  if (type === 'CE') {
-    return S * cdf(d1) - K * Math.exp(-r * T) * cdf(d2)
-  } else {
-    return K * Math.exp(-r * T) * cdf(-d2) - S * cdf(-d1)
-  }
+  return type === 'CE' ? S * cdf(d1) - K * Math.exp(-r * T) * cdf(d2) : K * Math.exp(-r * T) * cdf(-d2) - S * cdf(-d1)
 }
 
 /**

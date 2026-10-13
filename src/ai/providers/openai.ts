@@ -3,10 +3,11 @@ import type { LLMMessage, LLMOptions, LLMProvider } from '../types.js'
 
 export class OpenAIProvider implements LLMProvider {
   name = 'openai'
-  private client: AzureOpenAI | null = null
   private deploymentName: string = ''
 
-  async chat(messages: LLMMessage[], options?: LLMOptions): Promise<string> {
+  constructor(private client: AzureOpenAI | null = null) {}
+
+  public async chat(messages: LLMMessage[], options?: LLMOptions): Promise<string> {
     if (!this.client) {
       const endpoint = (
         process.env.AZURE_OPENAI_ENDPOINT ?? 'https://delta-codex-us-2-poc.services.ai.azure.com/openai/v1'
@@ -28,7 +29,7 @@ export class OpenAIProvider implements LLMProvider {
 
     const response = await this.client.chat.completions.create({
       model: options?.model || this.deploymentName,
-      messages: messages as any, // Cast due to slight interface differences in OpenAI types
+      messages: messages as any,
       temperature: options?.temperature ?? 0.7,
     })
 

@@ -14,19 +14,15 @@ export interface SaveScoreData {
 }
 
 export class GtiRepository {
-  private db: Kysely<Database>
-
-  constructor(db: Kysely<Database> = dbDefault) {
-    this.db = db
-  }
+  constructor(private readonly db: Kysely<Database> = dbDefault) {}
 
   /**
    * Save a GTI score for a completed candle.
    */
-  async saveScore(data: SaveScoreData) {
+  public async saveScore(data: SaveScoreData) {
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
-    return await this.db
+    return this.db
       .insertInto('gtiScores')
       .values({
         id,
@@ -51,8 +47,8 @@ export class GtiRepository {
   /**
    * Get recent GTI scores for a symbol and timeframe, ordered by candleTime desc.
    */
-  async getScoresBySymbol(symbol: string, timeframe: number, limit = 50) {
-    return await this.db
+  public async getScoresBySymbol(symbol: string, timeframe: number, limit = 50) {
+    return this.db
       .selectFrom('gtiScores')
       .where('symbol', '=', symbol)
       .where('timeframe', '=', timeframe)
@@ -66,8 +62,8 @@ export class GtiRepository {
    * Get all GTI scores for a symbol on a specific date (YYYY-MM-DD).
    * Useful for post-market review.
    */
-  async getScoresForDate(symbol: string, date: string) {
-    return await this.db
+  public async getScoresForDate(symbol: string, date: string) {
+    return this.db
       .selectFrom('gtiScores')
       .where('symbol', '=', symbol)
       .where('timestamp', '>=', `${date}T00:00:00`)

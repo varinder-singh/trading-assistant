@@ -137,6 +137,24 @@ export function analyzeOptions(
   // Calculate global days to expiry
   let globalDaysToExpiry = 0
   const firstInstrument = instruments.find((i) => i.expiry)
+  function getBuildupState(coi: number, priceChange: number): KiteOptionOiRow['buildup'] {
+    if (coi > 0) return priceChange >= 0 ? 'Long Buildup' : 'Short Buildup'
+    if (coi < 0) return priceChange >= 0 ? 'Short Covering' : 'Long Unwinding'
+    return 'Neutral'
+  }
+
+  function getMarketFlow(totalCoi: number, weightedPriceChange: number): KiteOptionsAnalysis['marketFlow'] {
+    if (totalCoi > 0) return weightedPriceChange > 0 ? 'LONG_BUILDUP' : 'SHORT_BUILDUP'
+    if (totalCoi < 0) return weightedPriceChange > 0 ? 'SHORT_COVERING' : 'LONG_UNWINDING'
+    return 'NEUTRAL'
+  }
+
+  function getDeltaBounds(daysToExpiry: number): { minDelta: number; maxDelta: number } {
+    if (daysToExpiry < 1) return { minDelta: 0.4, maxDelta: 0.65 }
+    if (daysToExpiry < 2) return { minDelta: 0.3, maxDelta: 0.55 }
+    return { minDelta: 0.2, maxDelta: 0.5 }
+  }
+
   if (firstInstrument && firstInstrument.expiry) {
     const today = new Date()
     const expiryDate = new Date(firstInstrument.expiry)
@@ -144,28 +162,19 @@ export function analyzeOptions(
     globalDaysToExpiry = Math.max(0.001, (expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
   }
 
-  for (const inst of instruments) {
+  instruments.forEach((inst) => {
     const key = `NFO:${inst.tradingsymbol}`
     const q = quotes[key]
-    if (!q) continue
+    if (!q) return
 
     const currentOi = q.oi ?? 0
     const ltp = q.last_price ?? 0
 
-    // 1. Calculate Shift since intervalMins ago
     const snapshot = windowSnapshot?.data.get(key)
     const coi = snapshot ? currentOi - snapshot.oi : 0
     const priceChange = snapshot ? ltp - snapshot.ltp : 0
+    const buildup = getBuildupState(coi, priceChange)
 
-    // 2. Determine Buildup State
-    let buildup: KiteOptionOiRow['buildup'] = 'Neutral'
-    if (coi > 0) {
-      buildup = priceChange >= 0 ? 'Long Buildup' : 'Short Buildup'
-    } else if (coi < 0) {
-      buildup = priceChange >= 0 ? 'Short Covering' : 'Long Unwinding'
-    }
-
-    // 3. Yesterday's Comparison
     const yOi = inst.instrument_token ? yesterdayOiMap?.get(inst.instrument_token) : undefined
 
     let greeks = q.greeks || undefined
@@ -209,34 +218,28 @@ export function analyzeOptions(
         support = inst.strike
       }
     }
-  }
+  })
 
   const pcr = callOI > 0 ? putOI / callOI : 0
   const pcrAtm = atmCallOI > 0 ? atmPutOI / atmCallOI : 0
 
-  // Aggregate Market Flow Calculation
-  let totalCoi = 0
-  let weightedPriceChange = 0
-  for (const row of rows) {
-    if (row.intervalOi) {
-      totalCoi += row.intervalOi
-      weightedPriceChange +=
-        row.intervalOi * (row.buildup === 'Short Covering' || row.buildup === 'Long Buildup' ? 1 : -1)
-    }
-  }
+  const { totalCoi, weightedPriceChange } = rows.reduce(
+    (acc, row) => {
+      if (!row.intervalOi) return acc
+      const weight = row.buildup === 'Short Covering' || row.buildup === 'Long Buildup' ? 1 : -1
+      return {
+        totalCoi: acc.totalCoi + row.intervalOi,
+        weightedPriceChange: acc.weightedPriceChange + row.intervalOi * weight,
+      }
+    },
+    { totalCoi: 0, weightedPriceChange: 0 }
+  )
 
-  let marketFlow: KiteOptionsAnalysis['marketFlow'] = 'NEUTRAL'
-  if (totalCoi > 0) {
-    marketFlow = weightedPriceChange > 0 ? 'LONG_BUILDUP' : 'SHORT_BUILDUP'
-  } else if (totalCoi < 0) {
-    marketFlow = weightedPriceChange > 0 ? 'SHORT_COVERING' : 'LONG_UNWINDING'
-  }
+  const marketFlow = getMarketFlow(totalCoi, weightedPriceChange)
 
-  // CONTRARIAN PCR LOGIC (Matches AI Rules)
   const sentiment = pcr > 1.2 ? 'bullish' : pcr < 0.8 ? 'bearish' : 'neutral'
   const atmSentiment = pcrAtm > 1.2 ? 'bullish' : pcrAtm < 0.8 ? 'bearish' : 'neutral'
 
-  // Greeks Context and Strike Selection
   let atmGreeks = { delta: 0, gamma: 0, theta: 0, iv: 0, vega: 0 }
   const ceRows = rows.filter((r) => r.type === 'CE' && r.ltp > 0 && r.greeks)
   const peRows = rows.filter((r) => r.type === 'PE' && r.ltp > 0 && r.greeks)
@@ -252,21 +255,7 @@ export function analyzeOptions(
   }
 
   const getBestGammaStrike = (optionRows: KiteOptionOiRow[], daysToExpiry: number) => {
-    // DTE-aware delta bands:
-    // 0DTE (< 1 day):   0.40 – 0.65 → Allow slightly ITM (up to 0.65) for theta protection during consolidations, targeting ATM gamma.
-    // 1-2 DTE:          0.30 – 0.55 → Slightly wider to allow near-ATM strikes with better leverage
-    // 2+ DTE:           0.20 – 0.50 → Allow slightly OTM for superior percentage returns and gamma leverage
-    let minDelta: number, maxDelta: number
-    if (daysToExpiry < 1) {
-      minDelta = 0.4
-      maxDelta = 0.65
-    } else if (daysToExpiry < 2) {
-      minDelta = 0.3
-      maxDelta = 0.55
-    } else {
-      minDelta = 0.2
-      maxDelta = 0.5
-    }
+    const { minDelta, maxDelta } = getDeltaBounds(daysToExpiry)
 
     const validRows = optionRows.filter((r) => {
       if (!r.greeks) return false

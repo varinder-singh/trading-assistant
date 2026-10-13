@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import type { GTIScore } from '../types/analysis.js'
-import { isMarketOpen } from '../utils/market.js'
+import { isMarketOpen } from '../utils/market-hours.js'
 
 export interface LiveTick {
   last_price: number
@@ -30,19 +30,19 @@ export class LiveAnalyzer extends EventEmitter {
     super()
   }
 
-  setLevels(levels: AnalysisLevels) {
+  public setLevels(levels: AnalysisLevels): void {
     this.levels = levels
   }
 
-  addTick(tick: LiveTick) {
+  public addTick(tick: LiveTick): void {
     tick.received_at = Date.now()
 
     const lastTick = this.ticks.length > 0 ? this.ticks[this.ticks.length - 1] : null
-    if (lastTick && lastTick.last_price === tick.last_price) {
-      lastTick.received_at = tick.received_at
-    } else {
-      this.ticks.push(tick)
-    }
+    const isSamePrice = lastTick?.last_price === tick.last_price
+
+    this.ticks = isSamePrice
+      ? this.ticks.map((t, i) => (i === this.ticks.length - 1 ? { ...t, received_at: tick.received_at } : t))
+      : [...this.ticks, tick]
 
     this.cleanupOldTicks()
     this.checkTriggers(tick)
@@ -51,67 +51,65 @@ export class LiveAnalyzer extends EventEmitter {
   /**
    * Update the current GTI score. Called by the WS server when GTI is computed.
    */
-  updateGTI(gtiScore: GTIScore) {
+  public updateGTI(gtiScore: GTIScore): void {
     const prevScore = this.lastGTIScore
     this.lastGTIScore = gtiScore
 
-    if (!prevScore) return
-    if (!isMarketOpen()) return
+    if (!prevScore || !isMarketOpen()) return
 
     const now = Date.now()
     if (now - this.lastTriggerTime < this.triggerCooldownMs) return
 
-    // GTI Surge: Score crosses the institutional threshold
+    this.checkGtiSurge(prevScore, gtiScore, now)
+    this.checkGtiDivergence(prevScore, gtiScore, now)
+
+    const last = this.ticks[this.ticks.length - 1]
+    if (last) {
+      this.priceAtLastGTICheck = last.last_price
+    }
+  }
+
+  private checkGtiSurge(prevScore: GTIScore, gtiScore: GTIScore, now: number): void {
     const wasBelowThreshold = Math.abs(prevScore.composite) < this.gtiSurgeThreshold
     const isAboveThreshold = Math.abs(gtiScore.composite) >= this.gtiSurgeThreshold
-    if (wasBelowThreshold && isAboveThreshold) {
-      const direction = gtiScore.composite > 0 ? 'ACCUMULATION' : 'DISTRIBUTION'
+    if (!wasBelowThreshold || !isAboveThreshold) return
+
+    const direction = gtiScore.composite > 0 ? 'ACCUMULATION' : 'DISTRIBUTION'
+    this.trigger(
+      `GTI Institutional Surge: ${direction} (${gtiScore.composite.toFixed(2)}, ${gtiScore.classification})`,
+      { last_price: this.priceAtLastGTICheck, instrument_token: 0, received_at: now }
+    )
+  }
+
+  private checkGtiDivergence(prevScore: GTIScore, gtiScore: GTIScore, now: number): void {
+    if (prevScore.confidence <= 30 || gtiScore.confidence <= 30) return
+
+    const lastTick = this.ticks[this.ticks.length - 1]
+    if (!lastTick) return
+
+    const priceRising = this.priceAtLastGTICheck > 0 && lastTick.last_price > this.priceAtLastGTICheck
+    const gtiDropping = gtiScore.composite < prevScore.composite - 0.3
+
+    if (priceRising && gtiDropping) {
       this.trigger(
-        `GTI Institutional Surge: ${direction} (${gtiScore.composite.toFixed(2)}, ${gtiScore.classification})`,
-        { last_price: this.priceAtLastGTICheck, instrument_token: 0, received_at: now } as LiveTick
+        `GTI Divergence: Price rising but institutional flow weakening (${gtiScore.composite.toFixed(2)} ← ${prevScore.composite.toFixed(2)})`,
+        {
+          last_price: lastTick.last_price,
+          instrument_token: lastTick.instrument_token,
+          received_at: now,
+        }
       )
     }
-
-    // GTI Divergence: Price rising but GTI falling, or vice versa
-    if (prevScore.confidence > 30 && gtiScore.confidence > 30) {
-      const lastTick = this.ticks.length > 0 ? this.ticks[this.ticks.length - 1] : undefined
-      const priceRising = this.priceAtLastGTICheck > 0 && lastTick && lastTick.last_price > this.priceAtLastGTICheck
-      const gtiDropping = gtiScore.composite < prevScore.composite - 0.3
-
-      if (priceRising && gtiDropping && lastTick) {
-        this.trigger(
-          `GTI Divergence: Price rising but institutional flow weakening (${gtiScore.composite.toFixed(2)} ← ${prevScore.composite.toFixed(2)})`,
-          {
-            last_price: lastTick.last_price,
-            instrument_token: lastTick.instrument_token,
-            received_at: now,
-          } as LiveTick
-        )
-      }
-    }
-
-    if (this.ticks.length > 0) {
-      const last = this.ticks[this.ticks.length - 1]
-      if (last) {
-        this.priceAtLastGTICheck = last.last_price
-      }
-    }
   }
 
-  private cleanupOldTicks() {
+  private cleanupOldTicks(): void {
     const now = Date.now()
-    this.ticks = this.ticks.filter((t) => {
-      const tickTime = t.received_at ?? now
-      return now - tickTime < this.windowSizeMs
-    })
-    if (this.ticks.length > 500) {
-      this.ticks = this.ticks.slice(-500)
-    }
+    const filtered = this.ticks.filter((t) => now - (t.received_at ?? now) < this.windowSizeMs)
+    this.ticks = filtered.length > 500 ? filtered.slice(-500) : filtered
   }
 
-  private checkTriggers(tick: LiveTick) {
-    if (!this.levels) return
-    if (!isMarketOpen()) return
+  private checkTriggers(tick: LiveTick): void {
+    if (!this.levels || !isMarketOpen()) return
 
     const now = Date.now()
     if (now - this.lastTriggerTime < this.triggerCooldownMs) return
@@ -119,26 +117,23 @@ export class LiveAnalyzer extends EventEmitter {
     const { last_price } = tick
     const { resistance, support } = this.levels
 
-    // 1. Level Breakout
     if (last_price > resistance) {
       this.trigger('Price broke Resistance', tick)
     } else if (last_price < support) {
       this.trigger('Price broke Support', tick)
     }
 
-    // 2. Volatility Spike (0.1% move in 1 minute)
-    if (this.ticks.length > 1) {
-      const firstTick = this.ticks[0]
-      if (firstTick) {
-        const priceChange = Math.abs((last_price - firstTick.last_price) / firstTick.last_price)
-        if (priceChange > 0.001) {
-          this.trigger(`Volatility Spike: ${(priceChange * 100).toFixed(2)}% move in 1m`, tick)
-        }
-      }
+    if (this.ticks.length <= 1) return
+    const firstTick = this.ticks[0]
+    if (!firstTick) return
+
+    const priceChange = Math.abs((last_price - firstTick.last_price) / firstTick.last_price)
+    if (priceChange > 0.001) {
+      this.trigger(`Volatility Spike: ${(priceChange * 100).toFixed(2)}% move in 1m`, tick)
     }
   }
 
-  private trigger(reason: string, tick: LiveTick) {
+  private trigger(reason: string, tick: LiveTick): void {
     this.lastTriggerTime = Date.now()
     this.emit('breakout', {
       reason,
@@ -147,7 +142,7 @@ export class LiveAnalyzer extends EventEmitter {
     })
   }
 
-  getRecentTicks() {
+  public getRecentTicks(): LiveTick[] {
     return this.ticks
   }
 }

@@ -9,22 +9,13 @@ export function calculateEMA(candles: Candle[], period: number): number {
   if (candles.length < period) {
     // Fallback to SMA for initial calculation if not enough data
     const sum = candles.reduce((acc, c) => acc + c.close, 0)
-    return sum / candles.length
+    return candles.length > 0 ? sum / candles.length : 0
   }
 
   const multiplier = 2 / (period + 1)
+  const initialSma = candles.slice(0, period).reduce((acc, c) => acc + c.close, 0) / period
 
-  // Start with SMA for the first 'period' candles
-  let ema = candles.slice(0, period).reduce((acc, c) => acc + c.close, 0) / period
-
-  // Iterate from there to calculate EMA
-  for (let i = period; i < candles.length; i++) {
-    const candle = candles[i]
-    if (!candle) continue
-    ema = (candle.close - ema) * multiplier + ema
-  }
-
-  return ema
+  return candles.slice(period).reduce((ema, candle) => (candle.close - ema) * multiplier + ema, initialSma)
 }
 
 /**
@@ -34,23 +25,19 @@ export function calculateEMA(candles: Candle[], period: number): number {
 export function calculateEMASlope(candles: Candle[], period: number, lookback: number = 3): number {
   if (candles.length < period + lookback) return 0
 
-  const emaValues: number[] = []
-  for (let i = candles.length - lookback; i <= candles.length; i++) {
-    const subCandles = candles.slice(0, i)
-    if (subCandles.length >= period) {
-      emaValues.push(calculateEMA(subCandles, period))
-    }
-  }
+  const sliceIndices = Array.from({ length: lookback + 1 }, (_, idx) => candles.length - lookback + idx)
+  const emaValues = sliceIndices
+    .map((i) => candles.slice(0, i))
+    .filter((sub) => sub.length >= period)
+    .map((sub) => calculateEMA(sub, period))
 
   if (emaValues.length < 2) return 0
 
   const first = emaValues[0]!
   const last = emaValues[emaValues.length - 1]!
   if (first === 0) return 0
+
   const pctChange = ((last - first) / first) * 1000 // scale up for angle representation
-
   const angleRad = Math.atan(pctChange)
-  const angleDeg = (angleRad * 180) / Math.PI
-
-  return angleDeg
+  return (angleRad * 180) / Math.PI
 }

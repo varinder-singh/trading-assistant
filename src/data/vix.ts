@@ -34,5 +34,8 @@ export async function getIndiaVix(): Promise<VixData> {
 }
 
 export function setVixDataSentiment(current: number): VixDataSentiment {
-  return current < 12 ? "low" : current > 25 ? "extreme" : current > 20 ? "high" : "normal"
+  if (current < 12) return "low"
+  if (current > 25) return "extreme"
+  if (current > 20) return "high"
+  return "normal"
 }

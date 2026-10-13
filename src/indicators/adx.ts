@@ -15,46 +15,30 @@ export function calculateADX(candles: Candle[], period: number = 14): ADXResult 
     return { adx: 0, plusDI: 0, minusDI: 0 }
   }
 
-  const trs: number[] = []
-  const plusDMs: number[] = []
-  const minusDMs: number[] = []
-
-  for (let i = 1; i < candles.length; i++) {
-    const current = candles[i]!
-    const prev = candles[i - 1]!
-
-    // 1. True Range (TR)
+  const movements = candles.slice(1).map((current, idx) => {
+    const prev = candles[idx]!
     const tr = Math.max(
       current.high - current.low,
       Math.abs(current.high - prev.close),
       Math.abs(current.low - prev.close)
     )
-    trs.push(tr)
 
-    // 2. Directional Movement (+DM, -DM)
     const upMove = current.high - prev.high
     const downMove = prev.low - current.low
 
-    let plusDM = 0
-    let minusDM = 0
+    const plusDM = upMove > downMove && upMove > 0 ? upMove : 0
+    const minusDM = downMove > upMove && downMove > 0 ? downMove : 0
 
-    if (upMove > downMove && upMove > 0) {
-      plusDM = upMove
-    }
-    if (downMove > upMove && downMove > 0) {
-      minusDM = downMove
-    }
+    return { tr, plusDM, minusDM }
+  })
 
-    plusDMs.push(plusDM)
-    minusDMs.push(minusDM)
-  }
+  const trs = movements.map((m) => m.tr)
+  const plusDMs = movements.map((m) => m.plusDM)
+  const minusDMs = movements.map((m) => m.minusDM)
 
-  // 3. Wilder's Initial Accumulation
-  let smoothedTR = trs.slice(0, period).reduce((a, b) => a + b, 0)
-  let smoothedPlusDM = plusDMs.slice(0, period).reduce((a, b) => a + b, 0)
-  let smoothedMinusDM = minusDMs.slice(0, period).reduce((a, b) => a + b, 0)
-
-  const dxValues: number[] = []
+  const initialTR = trs.slice(0, period).reduce((a, b) => a + b, 0)
+  const initialPlusDM = plusDMs.slice(0, period).reduce((a, b) => a + b, 0)
+  const initialMinusDM = minusDMs.slice(0, period).reduce((a, b) => a + b, 0)
 
   const calculateDX = (tr: number, pDM: number, mDM: number) => {
     if (tr === 0) return 0
@@ -65,44 +49,48 @@ export function calculateADX(candles: Candle[], period: number = 14): ADXResult 
     return { plusDI, minusDI, dx: 100 * (Math.abs(plusDI - minusDI) / sum) }
   }
 
-  // Compute first DX point
-  const initial = calculateDX(smoothedTR, smoothedPlusDM, smoothedMinusDM)
-  let lastPlusDI = 0
-  let lastMinusDI = 0
+  const initialDXRes = calculateDX(initialTR, initialPlusDM, initialMinusDM)
+  const initialDX = typeof initialDXRes === 'object' ? initialDXRes.dx : 0
+  const initialPlusDI = typeof initialDXRes === 'object' ? initialDXRes.plusDI : 0
+  const initialMinusDI = typeof initialDXRes === 'object' ? initialDXRes.minusDI : 0
 
-  if (typeof initial === 'object') {
-    dxValues.push(initial.dx)
-    lastPlusDI = initial.plusDI
-    lastMinusDI = initial.minusDI
-  } else {
-    dxValues.push(0)
-  }
+  const { dxValues, lastPlusDI, lastMinusDI } = trs.slice(period).reduce(
+    (acc, tr, idx) => {
+      const i = period + idx
+      const smoothedTR = acc.smoothedTR - acc.smoothedTR / period + tr
+      const smoothedPlusDM = acc.smoothedPlusDM - acc.smoothedPlusDM / period + plusDMs[i]!
+      const smoothedMinusDM = acc.smoothedMinusDM - acc.smoothedMinusDM / period + minusDMs[i]!
 
-  // 4. Wilder's Smoothing Iteration
-  for (let i = period; i < trs.length; i++) {
-    smoothedTR = smoothedTR - smoothedTR / period + trs[i]!
-    smoothedPlusDM = smoothedPlusDM - smoothedPlusDM / period + plusDMs[i]!
-    smoothedMinusDM = smoothedMinusDM - smoothedMinusDM / period + minusDMs[i]!
+      const currentDX = calculateDX(smoothedTR, smoothedPlusDM, smoothedMinusDM)
+      const dx = typeof currentDX === 'object' ? currentDX.dx : 0
+      const plusDI = typeof currentDX === 'object' ? currentDX.plusDI : acc.lastPlusDI
+      const minusDI = typeof currentDX === 'object' ? currentDX.minusDI : acc.lastMinusDI
 
-    const currentDX = calculateDX(smoothedTR, smoothedPlusDM, smoothedMinusDM)
-    if (typeof currentDX === 'object') {
-      dxValues.push(currentDX.dx)
-      lastPlusDI = currentDX.plusDI
-      lastMinusDI = currentDX.minusDI
-    } else {
-      dxValues.push(0)
+      return {
+        smoothedTR,
+        smoothedPlusDM,
+        smoothedMinusDM,
+        dxValues: [...acc.dxValues, dx],
+        lastPlusDI: plusDI,
+        lastMinusDI: minusDI,
+      }
+    },
+    {
+      smoothedTR: initialTR,
+      smoothedPlusDM: initialPlusDM,
+      smoothedMinusDM: initialMinusDM,
+      dxValues: [initialDX],
+      lastPlusDI: initialPlusDI,
+      lastMinusDI: initialMinusDI,
     }
-  }
+  )
 
-  // 5. Calculate ADX (Wilder's smoothed DX)
   if (dxValues.length < period) {
     return { adx: 0, plusDI: lastPlusDI, minusDI: lastMinusDI }
   }
 
-  let adx = dxValues.slice(0, period).reduce((a, b) => a + b, 0) / period
-  for (let i = period; i < dxValues.length; i++) {
-    adx = (adx * (period - 1) + dxValues[i]!) / period
-  }
+  const initialADX = dxValues.slice(0, period).reduce((a, b) => a + b, 0) / period
+  const adx = dxValues.slice(period).reduce((acc, dx) => (acc * (period - 1) + dx) / period, initialADX)
 
   return { adx, plusDI: lastPlusDI, minusDI: lastMinusDI }
 }

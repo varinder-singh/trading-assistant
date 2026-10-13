@@ -85,7 +85,7 @@ export type TechnicalAnalysis = {
   swings?: SwingPoint[] | undefined
   waveContext?: WaveContext | undefined
   openingRange?: OpeningRange | undefined
-  gtiScore?: import('./analysis.js').GTIScore
+  gtiScore?: GTIScore
   vwapZScore?: number
   emaSlope?: Record<string, number>
   adx?: { adx: number; plusDI: number; minusDI: number }

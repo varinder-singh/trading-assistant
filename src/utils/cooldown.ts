@@ -1,17 +1,18 @@
 export class CooldownManager {
   private cooldowns: Map<string, number> = new Map()
 
-  isOnCooldown(symbol: string): boolean {
+  public isOnCooldown(symbol: string): boolean {
     const expiry = this.cooldowns.get(symbol)
     if (!expiry) return false
-    if (Date.now() > expiry) {
+
+    const isExpired = Date.now() > expiry
+    if (isExpired) {
       this.cooldowns.delete(symbol)
-      return false
     }
-    return true
+    return !isExpired
   }
 
-  setCooldown(symbol: string, minutes: number) {
+  public setCooldown(symbol: string, minutes: number): void {
     const expiry = Date.now() + minutes * 60 * 1000
     this.cooldowns.set(symbol, expiry)
   }

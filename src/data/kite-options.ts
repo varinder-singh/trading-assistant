@@ -43,17 +43,14 @@ export async function getOptionChain(kc: KiteConnect, symbol: string = "NIFTY") 
   const strikes = [...new Set(filtered.map((i) => i.strike))]
     .sort((a: number, b: number) => a - b)
 
-  let atmIndex = -1
-  if (spotPrice > 0) {
-    let minDiff = Infinity
-    for (let i = 0; i < strikes.length; i++) {
-      const diff = Math.abs(strikes[i]! - spotPrice)
-      if (diff < minDiff) {
-        minDiff = diff
-        atmIndex = i
-      }
-    }
-  }
+  const atmIndex =
+    spotPrice > 0 && strikes.length > 0
+      ? strikes.reduce(
+          (bestIdx, strike, i) =>
+            Math.abs(strike - spotPrice) < Math.abs((strikes[bestIdx] ?? Infinity) - spotPrice) ? i : bestIdx,
+          0
+        )
+      : -1
 
   const mid = atmIndex >= 0 ? atmIndex : Math.floor(strikes.length / 2)
   const selectedStrikes = strikes.slice(Math.max(0, mid - 10), Math.min(strikes.length, mid + 10))

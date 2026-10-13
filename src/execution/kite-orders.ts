@@ -3,14 +3,11 @@ import type { TradeResponse, OrderSide, OrderType } from './types.js'
 
 export class KiteOrderService {
   private maxQuantity = 5000 // Strict catastrophic risk limit (allows 9 lots of 550 shares for stock options)
-  private kc: KiteConnect
   private inFlightOrders: Set<string> = new Set()
 
-  constructor(kc: KiteConnect) {
-    this.kc = kc
-  }
+  constructor(private readonly kc: KiteConnect) {}
 
-  async placeOrder(params: {
+  public async placeOrder(params: {
     symbol: string
     side: OrderSide
     quantity: number
@@ -25,7 +22,6 @@ export class KiteOrderService {
     this.inFlightOrders.add(lockKey)
 
     try {
-      // 1. Strict Catastrophic Risk Check (Business logic handles lot sizing)
       if (params.quantity > this.maxQuantity) {
         return {
           success: false,
@@ -33,21 +29,15 @@ export class KiteOrderService {
         }
       }
 
-      // 2. Resolve Segment
       const exchange = params.symbol.includes('-') ? 'NFO' : 'NSE'
-
-      // 3. Place Order via Kite API
-      const orderParams: any = {
+      const orderParams: Record<string, any> = {
         exchange,
         tradingsymbol: params.symbol,
         transaction_type: params.side,
         quantity: params.quantity,
         order_type: params.type,
-        product: 'MIS', // Intraday
-      }
-
-      if (params.price) {
-        orderParams.price = params.price
+        product: 'MIS',
+        ...(params.price ? { price: params.price } : {}),
       }
 
       const response = await this.kc.placeOrder('regular', orderParams)
@@ -67,7 +57,7 @@ export class KiteOrderService {
     }
   }
 
-  async getOrderStatus(orderId: string) {
-    return await this.kc.getOrderHistory(orderId)
+  public async getOrderStatus(orderId: string): Promise<any> {
+    return this.kc.getOrderHistory(orderId)
   }
 }

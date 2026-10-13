@@ -131,6 +131,13 @@ export function computeTieredTargets(input: TieredTargetInput): TieredTargetResu
   return { t1Target, t2Target, t3Target, t1Qty, t2Qty, t1Hit: false, t2Hit: false, strategy }
 }
 
+function getDteMultipliers(daysToExpiry: number): { m1: number; m2: number; m3: number } {
+  if (daysToExpiry < 1) return { m1: 0.5, m2: 1.0, m3: 1.75 }
+  if (daysToExpiry < 2) return { m1: 0.6, m2: 1.25, m3: 2.0 }
+  if (daysToExpiry < 5) return { m1: 0.75, m2: 1.5, m3: 2.5 }
+  return { m1: 1.0, m2: 2.0, m3: 3.0 }
+}
+
 function computeFallbackTargets(
   entryPrice: number,
   premiumRisk: number,
@@ -138,25 +145,7 @@ function computeFallbackTargets(
   quantity: number,
   lotSize: number
 ): TieredTargetResult | null {
-  let m1: number, m2: number, m3: number
-
-  if (daysToExpiry < 1) {
-    m1 = 0.5
-    m2 = 1.0
-    m3 = 1.75
-  } else if (daysToExpiry < 2) {
-    m1 = 0.6
-    m2 = 1.25
-    m3 = 2.0
-  } else if (daysToExpiry < 5) {
-    m1 = 0.75
-    m2 = 1.5
-    m3 = 2.5
-  } else {
-    m1 = 1.0
-    m2 = 2.0
-    m3 = 3.0
-  }
+  const { m1, m2, m3 } = getDteMultipliers(daysToExpiry)
 
   const t1Target = parseFloat((entryPrice + m1 * premiumRisk).toFixed(2))
   const t2Target = parseFloat((entryPrice + m2 * premiumRisk).toFixed(2))
