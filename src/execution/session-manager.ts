@@ -280,11 +280,16 @@ export class UserSession extends EventEmitter {
         gtiTracker.addTick(tick)
       })
 
-      // 3. Feed LiveAnalyzer with watched symbol tick (moved from ClientConnection)
-      if (this.watchedToken && this.analyzer) {
+      // 3. Feed LiveAnalyzer and PaperTrader index price monitor with watched symbol tick
+      if (this.watchedToken) {
         const tick = ticks.find((t) => t.instrument_token === this.watchedToken)
         if (tick) {
-          this.analyzer.addTick(tick)
+          if (this.analyzer) {
+            this.analyzer.addTick(tick)
+          }
+          if (this.watchedSymbol) {
+            this.paperTrader.updateIndexPrice(this.watchedSymbol, tick.last_price)
+          }
         }
       }
 

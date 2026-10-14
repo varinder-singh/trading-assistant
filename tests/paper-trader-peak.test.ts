@@ -120,4 +120,101 @@ describe('PaperTrader High-Watermark Peak Profit Engine', () => {
       expect.objectContaining({ peakPrice: 125 })
     )
   })
+
+  it('should trigger 0DTE Peak Retract Guard on an 8.5% drop from peak', async () => {
+    vi.mocked(tradeRepo.getOpenTrades).mockResolvedValue([
+      { id: 'trade-1005', symbol: 'NIFTY_0DTE_CE', openedAt: new Date().toISOString() } as any,
+    ])
+
+    const todayIso = new Date().toISOString()
+    await trader.placeOrder({
+      symbol: 'NIFTY_0DTE_CE',
+      token: 1005,
+      side: 'BUY',
+      quantity: 65,
+      price: 100,
+      context: {
+        optionExpiry: todayIso, // 0DTE
+        aiStopLoss: 70,
+      },
+    })
+
+    // Surge to 125 (+25% gain)
+    await trader.updatePrice(1005, 125)
+    expect(trader.getAllPositions()).toHaveLength(1)
+
+    // Price drops to 114.3 (8.56% drop from peak). On 1-2 DTE this would NOT trigger (needs 12%),
+    // but on 0DTE it triggers (threshold is 8%)
+    await trader.updatePrice(1005, 114.3)
+    expect(trader.getAllPositions()).toHaveLength(0) // Exited on 0DTE retract guard
+    expect(tradeRepo.closeTrade).toHaveBeenCalledWith(
+      'trade-1005',
+      114.3,
+      expect.stringContaining('ZERO_DTE'),
+      undefined,
+      expect.objectContaining({ peakPrice: 125 })
+    )
+  })
+
+  it('should enforce DTE max premium loss floor when entry stop is absent or too wide', async () => {
+    const todayIso = new Date().toISOString()
+    await trader.placeOrder({
+      symbol: 'NIFTY_FLOOR_CE',
+      token: 1006,
+      side: 'BUY',
+      quantity: 65,
+      price: 50,
+      context: {
+        optionExpiry: todayIso, // 0DTE (max 30% loss -> floor at 35)
+        aiStopLoss: 0.05, // Attempted 0.05 stop (would cause 100% loss)
+      },
+    })
+
+    const pos = trader.getAllPositions()[0]
+    expect(pos?.aiStopLoss).toBe(35) // Floored at 50 * (1 - 0.3) = 35
+
+    // Price drops to 34 -> hits floored SL
+    await trader.updatePrice(1006, 34)
+    expect(trader.getAllPositions()).toHaveLength(0) // Protected from dropping further
+  })
+
+  it('should trigger dual-track exit when underlying index crosses structural invalidation', async () => {
+    vi.mocked(tradeRepo.getOpenTrades).mockResolvedValue([
+      { id: 'trade-1007', symbol: 'NIFTY26O1322700CE', openedAt: new Date().toISOString() } as any,
+    ])
+
+    await trader.placeOrder({
+      symbol: 'NIFTY26O1322700CE',
+      token: 1007,
+      side: 'BUY',
+      quantity: 65,
+      price: 50,
+      context: {
+        currentIndexPrice: 22700,
+        strategyContext: {
+          indexSl: 22650, // Invalidation level on NIFTY index
+          macroTrend: 'bullish',
+          agentType: 'TREND',
+        },
+      },
+    })
+
+    const pos = trader.getAllPositions()[0]
+    expect(pos?.indexInvalidation).toBe(22650)
+
+    // Option price hasn't touched premium SL yet (e.g. 45 vs floor 30)
+    await trader.updatePrice(1007, 45)
+    expect(trader.getAllPositions()).toHaveLength(1)
+
+    // Underlying index drops to 22648 (breaches 22650 invalidation level)
+    await trader.updateIndexPrice('NIFTY', 22648)
+    expect(trader.getAllPositions()).toHaveLength(0) // Exited on index invalidation
+    expect(tradeRepo.closeTrade).toHaveBeenCalledWith(
+      'trade-1007',
+      45,
+      expect.stringContaining('Index Invalidation'),
+      undefined,
+      expect.any(Object)
+    )
+  })
 })

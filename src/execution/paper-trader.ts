@@ -12,6 +12,16 @@ import { KiteOrderService } from './kite-orders.js'
 import { getGreeksFromPrice } from '../analysis/greeks.js'
 import { computeTieredTargets } from './tier-calculator.js'
 import { isMarketOpen } from '../utils/market-hours.js'
+import {
+  getCalendarDaysToExpiry,
+  getExpiryRiskProfile,
+  getOptionType,
+  getPremiumStopFloor,
+  isIndexInvalidated,
+  isRetractGuardTriggered,
+  resolveIndexInvalidation,
+  type ExpiryRiskProfile,
+} from './expiry-risk-profile.js'
 
 export type StrategyContext = {
   macroTrend: AIMacroTrend
@@ -706,6 +716,7 @@ export class PaperTrader extends EventEmitter {
     if (pos.aiTarget !== undefined && pos.aiTarget <= order.price!) {
       delete pos.aiTarget
     }
+    this.enforcePremiumStopFloor(pos)
   }
 
   private async updatePosition(order: TradeOrder, context?: TradeContext) {
@@ -741,6 +752,7 @@ export class PaperTrader extends EventEmitter {
         if (context?.strategyContext) pos.strategyContext = context.strategyContext
         if (context?.optionExpiry) pos.optionExpiry = context.optionExpiry
         if (context?.optionDelta) pos.optionDelta = context.optionDelta
+        this.applyEntryRiskGuards(pos, context)
 
         const daysToExpiry = pos.optionExpiry
           ? Math.max(0, (new Date(pos.optionExpiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
@@ -835,9 +847,102 @@ export class PaperTrader extends EventEmitter {
     }
   }
 
+  /**
+   * Dual-track exit: closes long options whose underlying index has crossed the trade's
+   * structural invalidation level, even if the premium stop has not been touched yet.
+   */
+  async updateIndexPrice(underlying: string, indexPrice: number): Promise<void> {
+    const underlyingPattern = new RegExp(`^${underlying}\\d`)
+    const invalidated = this.getAllPositions().filter(
+      (pos) => underlyingPattern.test(pos.symbol) && this.isPositionInvalidatedByIndex(pos, indexPrice)
+    )
+
+    for (const pos of invalidated) {
+      await this.exitOnIndexInvalidation(pos, indexPrice)
+    }
+  }
+
+  private isPositionInvalidatedByIndex(pos: PaperPosition, indexPrice: number): boolean {
+    const optionType = getOptionType(pos.symbol)
+    if (pos.side !== 'BUY' || !optionType || pos.indexInvalidation === undefined) return false
+    if (this.exitingPositions.has(pos.symbol)) return false
+    return isIndexInvalidated(optionType, indexPrice, pos.indexInvalidation)
+  }
+
+  private async exitOnIndexInvalidation(pos: PaperPosition, indexPrice: number): Promise<void> {
+    const reason = `Index Invalidation (index ${indexPrice.toFixed(2)} crossed ${pos.indexInvalidation?.toFixed(2)})`
+    console.log(`[EXIT] 🧭 ${reason} for ${pos.symbol} @ ₹${pos.currentPrice.toFixed(2)}`)
+    this.emit('notification', {
+      title: `🧭 Index Invalidation Exit`,
+      message: `${pos.symbol}: ${reason}`,
+      type: 'warning',
+    })
+    await this.placeOrder({
+      symbol: pos.symbol,
+      token: pos.token,
+      side: 'SELL',
+      quantity: pos.quantity,
+      price: pos.currentPrice,
+      context: { aiReasoning: reason },
+    })
+  }
+
+  private getRiskProfile(pos: PaperPosition): ExpiryRiskProfile {
+    return getExpiryRiskProfile(getCalendarDaysToExpiry(pos.optionExpiry))
+  }
+
+  /**
+   * Bounds worst-case premium loss by the expiry profile (an AI/ATR-derived stop can otherwise
+   * sit at ₹0.05, i.e. no stop at all) and records the validated index invalidation level.
+   */
+  private applyEntryRiskGuards(pos: PaperPosition, context?: TradeContext): void {
+    this.enforcePremiumStopFloor(pos)
+
+    const indexInvalidation = resolveIndexInvalidation(
+      getOptionType(pos.symbol),
+      context?.strategyContext?.indexSl,
+      context?.currentIndexPrice
+    )
+    if (indexInvalidation !== undefined) pos.indexInvalidation = indexInvalidation
+  }
+
+  private enforcePremiumStopFloor(pos: PaperPosition): void {
+    const profile = this.getRiskProfile(pos)
+    const premiumFloor = getPremiumStopFloor(pos.avgEntryPrice, profile)
+    if (pos.aiStopLoss !== undefined && pos.aiStopLoss >= premiumFloor) return
+
+    console.log(
+      `[Risk Guard] ${pos.symbol} (${profile.bucket}): premium SL ${pos.aiStopLoss?.toFixed(2) ?? '—'} → ${premiumFloor.toFixed(2)} (max ${profile.maxPremiumRiskPct * 100}% premium risk)`
+    )
+    pos.aiStopLoss = premiumFloor
+  }
+
+  private async exitOnPeakRetract(pos: PaperPosition, price: number): Promise<void> {
+    const peakPrice = pos.peakPrice ?? price
+    const bucket = this.getRiskProfile(pos).bucket
+    console.log(
+      `[EXIT] 🛡️ Peak Retract Guard (${bucket}) triggered for ${pos.symbol} @ ₹${price.toFixed(2)} (Peak: ₹${peakPrice.toFixed(2)})`
+    )
+    this.emit('notification', {
+      title: `🛡️ Peak Retract Exit (Profit Protected)`,
+      message: `${pos.symbol}: Exited @ ₹${price.toFixed(2)} to protect peak profit (Peak: ₹${peakPrice.toFixed(2)}, ${bucket})`,
+      type: 'info',
+    })
+    await this.placeOrder({
+      symbol: pos.symbol,
+      token: pos.token,
+      side: 'SELL',
+      quantity: pos.quantity,
+      price: price,
+      context: {
+        aiReasoning: `Peak Profit Retract Guard ${bucket} (MFE Protection from peak ₹${peakPrice.toFixed(2)})`,
+      },
+    })
+  }
+
   private async processPriceTickExits(symbol: string, pos: PaperPosition, price: number): Promise<void> {
     const entryPrice = pos.avgEntryPrice
-    const peakPrice = pos.peakPrice
+    const peakPrice = pos.peakPrice ?? pos.currentPrice
     const peakGainPoints = peakPrice - entryPrice
     const peakGainPct = entryPrice > 0 ? peakGainPoints / entryPrice : 0
 
@@ -866,31 +971,9 @@ export class PaperTrader extends EventEmitter {
       }
     }
 
-    if (peakGainPct >= 0.2 && price < peakPrice) {
-      const dropFromPeakPct = (peakPrice - price) / peakPrice
-      const lostGainRatio = peakGainPoints > 0 ? (peakPrice - price) / peakGainPoints : 0
-
-      if (dropFromPeakPct >= 0.12 || lostGainRatio >= 0.35) {
-        console.log(
-          `[EXIT] 🛡️ Peak Retract Guard triggered for ${symbol} @ ₹${price.toFixed(2)} (Peak: ₹${peakPrice.toFixed(2)}, Drop: -${(dropFromPeakPct * 100).toFixed(1)}%, Lost Gain: -${(lostGainRatio * 100).toFixed(1)}%)`
-        )
-        this.emit('notification', {
-          title: `🛡️ Peak Retract Exit (Profit Protected)`,
-          message: `${symbol}: Exited @ ₹${price.toFixed(2)} to protect peak profit (Peak: ₹${peakPrice.toFixed(2)})`,
-          type: 'info',
-        })
-        await this.placeOrder({
-          symbol: pos.symbol,
-          token: pos.token,
-          side: 'SELL',
-          quantity: pos.quantity,
-          price: price,
-          context: {
-            aiReasoning: `Peak Profit Retract Guard (MFE Protection from peak ₹${peakPrice.toFixed(2)})`,
-          },
-        })
-        return
-      }
+    if (isRetractGuardTriggered(entryPrice, peakPrice, price, this.getRiskProfile(pos))) {
+      await this.exitOnPeakRetract(pos, price)
+      return
     }
 
     if (pos.aiStopLoss && price <= pos.aiStopLoss) {

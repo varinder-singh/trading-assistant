@@ -44,6 +44,7 @@ export interface PaperPosition {
   optionTheta?: number | undefined
   optionVega?: number | undefined
   optionExpiry?: Date | string
+  indexInvalidation?: number // Underlying index level that invalidates the trade thesis (dual-track exit)
   timestamp: Date
 }
 
