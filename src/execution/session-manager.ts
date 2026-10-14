@@ -10,6 +10,7 @@ import { eventRepo, gtiRepo, userRepo } from '../db/repositories/container.js'
 import { isMarketOpen } from '../utils/market-hours.js'
 import type { Connect as KiteConnect } from 'kiteconnect'
 import type { AIMacroTrend } from '../ai/types.js'
+import { getCalendarDaysToExpiry, getExpiryRiskProfile } from './expiry-risk-profile.js'
 
 export class UserSession extends EventEmitter {
   public userId: string
@@ -194,9 +195,18 @@ export class UserSession extends EventEmitter {
             let calculatedSl = signalPrice - optionRiskPoints
             const calculatedTarget = signalPrice + optionRiskPoints * (decision.riskRewardRatio || 1.5)
 
-            const floorPercentage = agentType === 'TREND' ? 0 : 0.2
-            const minAllowedSl = Math.max(signalPrice * floorPercentage, 0.05)
-            if (calculatedSl < minAllowedSl) calculatedSl = minAllowedSl
+            // Enforce DTE-aware premium floor protection (prevents 0.05 / 100% loss trap) (14-OCT-2026 Fix 4.5 Peak Profit Ratchet)
+            const dte = getCalendarDaysToExpiry(option.expiry)
+            const riskProfile = getExpiryRiskProfile(dte)
+            const maxAllowedRiskPct =
+              agentType === 'SCALPER' ? Math.min(0.2, riskProfile.maxPremiumRiskPct) : riskProfile.maxPremiumRiskPct
+            const minAllowedSl = signalPrice * (1 - maxAllowedRiskPct)
+            if (calculatedSl < minAllowedSl) {
+              console.log(
+                `[UserSession] Capping SL for ${option.symbol} (${agentType}, ${riskProfile.bucket}): calculated ₹${calculatedSl.toFixed(2)} → floor ₹${minAllowedSl.toFixed(2)} (max ${(maxAllowedRiskPct * 100).toFixed(0)}% premium risk)`
+              )
+              calculatedSl = minAllowedSl
+            }
 
             // Slippage Filter
             const maxSlippagePct = Number(process.env.MAX_ENTRY_SLIPPAGE_PCT || 5)

@@ -353,12 +353,13 @@ export class PaperTrader extends EventEmitter {
       pos.aiTarget = newPremiumTarget
     }
 
-    const floorPercentage = agentType === 'TREND' ? 0.02 : 0.2
-    const minAllowedSl = Math.max(pos.currentPrice * floorPercentage, 0.05)
+    const profile = this.getRiskProfile(pos)
+    const maxRiskPct = agentType === 'SCALPER' ? Math.min(0.2, profile.maxPremiumRiskPct) : profile.maxPremiumRiskPct
+    const minAllowedSl = pos.avgEntryPrice * (1 - maxRiskPct)
 
     if (newPremiumSl < minAllowedSl) {
       console.warn(
-        `[Risk Manager] Capping SL for ${pos.symbol} at ${agentType} safety floor: ${minAllowedSl.toFixed(2)}`
+        `[Risk Manager] Capping SL for ${pos.symbol} at ${agentType} (${profile.bucket}) safety floor: ${minAllowedSl.toFixed(2)}`
       )
       newPremiumSl = minAllowedSl
     }
