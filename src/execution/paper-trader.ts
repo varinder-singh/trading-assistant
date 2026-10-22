@@ -1,5 +1,14 @@
 import { EventEmitter } from 'node:events'
-import type { TradeOrder, PaperPosition, TradeResponse, OrderSide } from './types.js'
+import type {
+  TradeOrder,
+  PaperPosition,
+  TradeResponse,
+  OrderSide,
+  PendingTriggerOrder,
+  StrategyContext,
+  TradeContext,
+} from './types.js'
+export type { StrategyContext, TradeContext, PendingTriggerOrder }
 import { tradeRepo as defaultTradeRepo } from '../db/repositories/container.js'
 import { evaluatePosition } from '../analysis/trade.js'
 import type { AIMacroTrend, TradingAgentType } from '../ai/types.js'
@@ -17,44 +26,17 @@ import {
   getExpiryRiskProfile,
   getOptionType,
   getPremiumStopFloor,
+  getRatchetedStopLoss,
   isIndexInvalidated,
   isRetractGuardTriggered,
   resolveIndexInvalidation,
   type ExpiryRiskProfile,
 } from './expiry-risk-profile.js'
 
-export type StrategyContext = {
-  macroTrend: AIMacroTrend
-  isCompression?: boolean
-  atr14?: number
-  indexSl: number
-  agentType: TradingAgentType
-  reversalScore?: { bullish: number; bearish: number }
-}
-
-export interface TradeContext {
-  aiReasoning?: string | undefined
-  aiConfidence?: number | undefined
-  vixLevel?: number | undefined
-  rsiLevel?: number | undefined
-  trend15m?: string | undefined
-  aiStopLoss?: number | undefined
-  aiTarget?: number | undefined
-  aiStrike?: number | undefined
-  aiSetup?: string | undefined
-  strategyContext?: StrategyContext | undefined
-  optionDelta?: number | undefined
-  optionTheta?: number | undefined
-  optionVega?: number | undefined
-  optionExpiry?: Date | string | undefined
-  lotSize?: number | undefined
-  aiIndexTargets?: number[] | undefined
-  currentIndexPrice?: number | undefined
-}
-
 export class PaperTrader extends EventEmitter {
   private positions: Map<string, PaperPosition> = new Map()
   private orders: TradeOrder[] = []
+  private pendingTriggerOrders: Map<string, PendingTriggerOrder> = new Map()
   private initialized = false
   private initializationPromise: Promise<void> | null = null
   private exitingPositions: Set<string> = new Set()
@@ -520,9 +502,82 @@ export class PaperTrader extends EventEmitter {
     }
   }
 
-  private validateBuyOrder(params: { symbol: string; strike?: number; context?: TradeContext }): {
+  async queuePendingOrder(order: PendingTriggerOrder): Promise<void> {
+    await this.initialize()
+
+    if (this.todayRealizedPnL <= this.maxDailyLoss) this.tradingHalted = true
+    if (this.tradingHalted) {
+      console.warn(
+        `⚠️ [PAPER TRADE] Trading halted for the day (Limits reached). Cannot queue pending order for ${order.symbol}.`
+      )
+      return
+    }
+
+    const existing = Array.from(this.pendingTriggerOrders.values()).find(
+      (o) => o.symbol === order.symbol && o.status === 'PENDING'
+    )
+    if (existing) {
+      console.warn(`⚠️ [PAPER TRADE] Pending order already exists for ${order.symbol}. Rejecting duplicate queue.`)
+      return
+    }
+
+    this.pendingTriggerOrders.set(order.id, order)
+
+    const pendingRecord: TradeOrder = {
+      id: order.id,
+      symbol: order.symbol,
+      token: order.token,
+      side: order.side,
+      quantity: order.quantity,
+      price: order.triggerPrice,
+      type: order.type,
+      status: 'PENDING',
+      timestamp: order.createdAt,
+      ...(order.strike !== undefined ? { strike: order.strike } : {}),
+    }
+    this.orders.push(pendingRecord)
+
+    console.log(
+      `⏳ [PAPER TRADE] Queued Pending Trigger Order ${order.id}: ${order.side} ${order.quantity}x ${order.symbol} @ trigger ₹${order.triggerPrice.toFixed(2)} (TTL: ${Math.round(order.ttlMs / 60000)}m)`
+    )
+
+    this.emit('notification', {
+      title: '⏳ Pending Trigger Order Queued',
+      message: `${order.symbol} Limit BUY @ ₹${order.triggerPrice.toFixed(2)} (TTL: ${Math.round(order.ttlMs / 60000)}m)`,
+      type: 'info',
+    })
+  }
+
+  getPendingOrders(): PendingTriggerOrder[] {
+    return Array.from(this.pendingTriggerOrders.values())
+  }
+
+  async cancelPendingOrder(orderId: string, reason: string = 'User Cancelled'): Promise<boolean> {
+    const order = this.pendingTriggerOrders.get(orderId)
+    if (!order || order.status !== 'PENDING') return false
+
+    order.status = 'CANCELLED'
+    this.pendingTriggerOrders.delete(orderId)
+
+    const recorded = this.orders.find((o) => o.id === orderId)
+    if (recorded) recorded.status = 'CANCELLED'
+
+    console.log(`[PAPER TRADE] ❌ Cancelled pending trigger order ${orderId} (${reason})`)
+    this.emit('notification', {
+      title: '❌ Pending Order Cancelled',
+      message: `${order.symbol} order cancelled: ${reason}`,
+      type: 'info',
+    })
+    return true
+  }
+
+  private validateBuyOrder(params: {
+    symbol: string
+    strike?: number | undefined
+    context?: TradeContext | undefined
+  }): {
     valid: boolean
-    error?: string
+    error?: string | undefined
   } {
     if (this.todayRealizedPnL <= this.maxDailyLoss) this.tradingHalted = true
     if (this.tradingHalted) {
@@ -572,7 +627,7 @@ export class PaperTrader extends EventEmitter {
     return { valid: true }
   }
 
-  private calculateBuyQuantity(params: { context?: TradeContext }): number {
+  private calculateBuyQuantity(params: { context?: TradeContext | undefined }): number {
     const baseLotSize = params.context?.lotSize || 1
     let numLots = 1
 
@@ -824,7 +879,130 @@ export class PaperTrader extends EventEmitter {
     if (!this.initialized) await this.initialize()
 
     let changed = false
+    const now = Date.now()
 
+    // 1. Process Pending Trigger Orders for this token
+    for (const [orderId, order] of Array.from(this.pendingTriggerOrders.entries())) {
+      if (order.token === token && order.status === 'PENDING') {
+        // TTL Check
+        if (now > order.expiresAt.getTime()) {
+          order.status = 'CANCELLED'
+          this.pendingTriggerOrders.delete(orderId)
+          const recorded = this.orders.find((o) => o.id === orderId)
+          if (recorded) recorded.status = 'CANCELLED'
+
+          console.log(
+            `⏳ [PAPER TRADE] Pending trigger order ${orderId} (${order.symbol}) expired after ${Math.round(order.ttlMs / 60000)}m TTL.`
+          )
+          this.emit('notification', {
+            title: '⏳ Trigger Order Expired',
+            message: `${order.symbol} pending order expired (TTL exceeded).`,
+            type: 'info',
+          })
+          continue
+        }
+
+        // Pullback Trigger Condition: price reaches or pulls back to triggerPrice
+        if (price <= order.triggerPrice && price > 0) {
+          if (this.todayRealizedPnL <= this.maxDailyLoss) this.tradingHalted = true
+          if (this.tradingHalted) {
+            console.warn(
+              `⚠️ [PAPER TRADE] Trigger entry for ${order.symbol} cancelled: Trading halted for the day.`
+            )
+            order.status = 'CANCELLED'
+            this.pendingTriggerOrders.delete(orderId)
+            const recorded = this.orders.find((o) => o.id === orderId)
+            if (recorded) recorded.status = 'CANCELLED'
+            this.emit('notification', {
+              title: '⚠️ Trigger Order Cancelled',
+              message: `${order.symbol} pending order cancelled: Trading halted for the day.`,
+              type: 'warning',
+            })
+            continue
+          }
+
+          const buyValidation = this.validateBuyOrder({
+            symbol: order.symbol,
+            strike: order.strike,
+            context: order.context,
+          })
+          if (!buyValidation.valid) {
+            console.warn(
+              `⚠️ [PAPER TRADE] Trigger entry for ${order.symbol} cancelled prior to fill: ${buyValidation.error}`
+            )
+            order.status = 'CANCELLED'
+            this.pendingTriggerOrders.delete(orderId)
+            const recorded = this.orders.find((o) => o.id === orderId)
+            if (recorded) recorded.status = 'CANCELLED'
+            this.emit('notification', {
+              title: '⚠️ Trigger Order Cancelled',
+              message: `${order.symbol} pending order cancelled: ${buyValidation.error}`,
+              type: 'warning',
+            })
+            continue
+          }
+
+          console.log(
+            `🎯 [PAPER TRADE] Trigger entry filled for ${order.symbol}: CMP ₹${price.toFixed(2)} <= trigger ₹${order.triggerPrice.toFixed(2)}`
+          )
+          order.status = 'COMPLETE'
+          this.pendingTriggerOrders.delete(orderId)
+
+          const fillPrice = price
+          const optionRiskPoints = order.optionRiskPoints ?? 15
+          const newSl = fillPrice - optionRiskPoints
+          const dte = order.context?.optionExpiry
+            ? getCalendarDaysToExpiry(order.context.optionExpiry)
+            : undefined
+          const profile = getExpiryRiskProfile(dte)
+          const maxAllowedRiskPct =
+            order.context?.strategyContext?.agentType === 'SCALPER'
+              ? Math.min(0.2, profile.maxPremiumRiskPct)
+              : profile.maxPremiumRiskPct
+          const minAllowedSl = fillPrice * (1 - maxAllowedRiskPct)
+          const recalculatedSl = Math.max(newSl, minAllowedSl)
+          const rrr = order.riskRewardRatio ?? order.context?.strategyContext?.riskRewardRatio ?? 1.5
+          const recalculatedTarget = fillPrice + optionRiskPoints * rrr
+
+          const tradeContext: TradeContext = {
+            ...order.context,
+            aiStopLoss: recalculatedSl,
+            aiTarget: recalculatedTarget,
+            currentIndexPrice: order.currentIndexPrice,
+            optionRiskPoints,
+          }
+
+          const tradeOrder: TradeOrder = {
+            id: order.id,
+            symbol: order.symbol,
+            token: order.token,
+            side: order.side,
+            quantity: order.quantity,
+            price: fillPrice,
+            type: 'LIMIT',
+            status: 'COMPLETE',
+            timestamp: new Date(),
+            ...(order.strike !== undefined ? { strike: order.strike } : {}),
+          }
+
+          const existingOrderRecord = this.orders.find((o) => o.id === order.id)
+          if (existingOrderRecord) {
+            existingOrderRecord.status = 'COMPLETE'
+            existingOrderRecord.price = fillPrice
+            existingOrderRecord.timestamp = tradeOrder.timestamp
+          } else {
+            this.orders.push(tradeOrder)
+          }
+
+          this.todayTradeCount++
+          await this.updatePosition(tradeOrder, tradeContext)
+          this.emitOrderEvents(tradeOrder, { context: tradeContext })
+          changed = true
+        }
+      }
+    }
+
+    // 2. Active Positions Evaluation
     for (const [symbol, pos] of this.positions.entries()) {
       if (pos.token === token) {
         pos.currentPrice = price
@@ -860,6 +1038,33 @@ export class PaperTrader extends EventEmitter {
 
     for (const pos of invalidated) {
       await this.exitOnIndexInvalidation(pos, indexPrice)
+    }
+
+    // Pre-fill dual-track index invalidation for pending trigger orders
+    for (const [orderId, order] of Array.from(this.pendingTriggerOrders.entries())) {
+      if (order.status === 'PENDING' && underlyingPattern.test(order.symbol)) {
+        const optionType = getOptionType(order.symbol)
+        if (
+          optionType &&
+          order.indexInvalidation !== undefined &&
+          isIndexInvalidated(optionType, indexPrice, order.indexInvalidation)
+        ) {
+          order.status = 'CANCELLED'
+          this.pendingTriggerOrders.delete(orderId)
+
+          const recorded = this.orders.find((o) => o.id === orderId)
+          if (recorded) recorded.status = 'CANCELLED'
+
+          console.log(
+            `[PAPER TRADE] 🧭 Pending Trigger Order ${orderId} (${order.symbol}) cancelled: thesis invalidated by index (index ${indexPrice.toFixed(2)} crossed ${order.indexInvalidation.toFixed(2)})`
+          )
+          this.emit('notification', {
+            title: '🧭 Pending Order Cancelled',
+            message: `${order.symbol}: Thesis invalidated by index @ ${indexPrice.toFixed(2)}`,
+            type: 'warning',
+          })
+        }
+      }
     }
   }
 
@@ -944,32 +1149,21 @@ export class PaperTrader extends EventEmitter {
   private async processPriceTickExits(symbol: string, pos: PaperPosition, price: number): Promise<void> {
     const entryPrice = pos.avgEntryPrice
     const peakPrice = pos.peakPrice ?? pos.currentPrice
-    const peakGainPoints = peakPrice - entryPrice
-    const peakGainPct = entryPrice > 0 ? peakGainPoints / entryPrice : 0
+    const ratchet = getRatchetedStopLoss(entryPrice, peakPrice)
 
-    if (peakGainPct >= 0.15 && entryPrice > 0) {
-      let targetSl = pos.aiStopLoss
-      if (peakGainPct >= 0.5) {
-        targetSl = entryPrice + 0.7 * peakGainPoints
-      } else if (peakGainPct >= 0.3) {
-        targetSl = entryPrice + 0.5 * peakGainPoints
-      } else {
-        targetSl = entryPrice * 1.02
-      }
-
-      if (pos.aiStopLoss === undefined || targetSl > pos.aiStopLoss) {
-        const oldSl = pos.aiStopLoss?.toFixed(2) ?? '—'
-        pos.aiStopLoss = targetSl
-        pos.trailingSlLocked = targetSl
-        console.log(
-          `[PaperTrader] 📈 Peak Profit Ratchet: ${symbol} peak price ₹${peakPrice.toFixed(2)} (+${(peakGainPct * 100).toFixed(1)}%). SL ratcheted from ₹${oldSl} to ₹${targetSl.toFixed(2)}`
-        )
-        this.emit('notification', {
-          title: `📈 Peak Profit Locked`,
-          message: `${symbol}: Peak +${(peakGainPct * 100).toFixed(1)}% gain (₹${peakPrice.toFixed(2)}). SL ratcheted to ₹${targetSl.toFixed(2)}`,
-          type: 'info',
-        })
-      }
+    if (ratchet && (pos.aiStopLoss === undefined || ratchet.targetSl > pos.aiStopLoss)) {
+      const { targetSl, peakGainPct } = ratchet
+      const oldSl = pos.aiStopLoss?.toFixed(2) ?? '—'
+      pos.aiStopLoss = targetSl
+      pos.trailingSlLocked = targetSl
+      console.log(
+        `[PaperTrader] 📈 Peak Profit Ratchet: ${symbol} peak price ₹${peakPrice.toFixed(2)} (+${(peakGainPct * 100).toFixed(1)}%). SL ratcheted from ₹${oldSl} to ₹${targetSl.toFixed(2)}`
+      )
+      this.emit('notification', {
+        title: `📈 Peak Profit Locked`,
+        message: `${symbol}: Peak +${(peakGainPct * 100).toFixed(1)}% gain (₹${peakPrice.toFixed(2)}). SL ratcheted to ₹${targetSl.toFixed(2)}`,
+        type: 'info',
+      })
     }
 
     if (isRetractGuardTriggered(entryPrice, peakPrice, price, this.getRiskProfile(pos))) {
@@ -1002,9 +1196,10 @@ export class PaperTrader extends EventEmitter {
     if (pos.t1Target && !pos.t1Hit && price >= pos.t1Target) {
       pos.t1Hit = true
       const prevSl = pos.aiStopLoss?.toFixed(2) ?? '—'
-      pos.aiStopLoss = Math.max(pos.aiStopLoss || 0, pos.avgEntryPrice)
 
       if (pos.t1Qty && pos.t1Qty > 0) {
+        pos.aiStopLoss = Math.max(pos.aiStopLoss || 0, pos.avgEntryPrice)
+        pos.trailingSlLocked = pos.aiStopLoss
         console.log(`[EXIT] 🥇 T1 hit for ${symbol} @ ₹${price} — selling ${pos.t1Qty}qty, SL→breakeven`)
         this.emit('notification', {
           title: `🥇 T1 Hit — Partial Booked`,
@@ -1020,10 +1215,16 @@ export class PaperTrader extends EventEmitter {
           context: { aiReasoning: `T1 target hit @ ₹${pos.t1Target}` },
         })
       } else {
-        console.log(`[T1] 🥇 T1 hit for ${symbol} @ ₹${price} — SL moved to breakeven (1-lot: no partial exit)`)
+        // 1-lot position: no partial exit possible, lock 50% of the T1 gain cushion
+        const cushionedSl = parseFloat((pos.avgEntryPrice + 0.5 * (price - pos.avgEntryPrice)).toFixed(2))
+        pos.aiStopLoss = Math.max(pos.aiStopLoss || 0, cushionedSl)
+        pos.trailingSlLocked = pos.aiStopLoss
+        console.log(
+          `[T1] 🥇 T1 hit for ${symbol} @ ₹${price} — SL moved to ₹${cushionedSl.toFixed(2)} (1-lot: 50% gain cushion)`
+        )
         this.emit('notification', {
-          title: `🥇 T1 — Breakeven Stop Set`,
-          message: `${symbol} @ ₹${price.toFixed(2)} crossed T1. SL moved to ₹${pos.avgEntryPrice.toFixed(2)} (breakeven). Trade is now risk-free.`,
+          title: `🥇 T1 — Profit Cushion Locked`,
+          message: `${symbol} @ ₹${price.toFixed(2)} crossed T1. SL moved to ₹${cushionedSl.toFixed(2)} (50% T1 gain locked).`,
           type: 'info',
         })
         this.emit('pnl_update', this.getAllPositions())
@@ -1031,7 +1232,10 @@ export class PaperTrader extends EventEmitter {
     } else if (pos.t2Target && pos.t1Hit && !pos.t2Hit && price >= pos.t2Target) {
       pos.t2Hit = true
       const prevSl = pos.aiStopLoss?.toFixed(2) ?? '—'
-      if (pos.t1Target) pos.aiStopLoss = Math.max(pos.aiStopLoss || 0, pos.t1Target)
+      if (pos.t1Target) {
+        pos.aiStopLoss = Math.max(pos.aiStopLoss || 0, pos.t1Target)
+        pos.trailingSlLocked = pos.aiStopLoss
+      }
 
       if (pos.t2Qty && pos.t2Qty > 0) {
         console.log(`[EXIT] 🥈 T2 hit for ${symbol} @ ₹${price} — selling ${pos.t2Qty}qty, SL→T1`)

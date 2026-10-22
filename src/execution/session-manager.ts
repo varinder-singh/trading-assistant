@@ -9,8 +9,126 @@ import { runAnalysis } from '../analysis/trade.js'
 import { eventRepo, gtiRepo, userRepo } from '../db/repositories/container.js'
 import { isMarketOpen } from '../utils/market-hours.js'
 import type { Connect as KiteConnect } from 'kiteconnect'
-import type { AIMacroTrend } from '../ai/types.js'
+import type { AIMacroTrend, TradingAgentType } from '../ai/types.js'
 import { getCalendarDaysToExpiry, getExpiryRiskProfile } from './expiry-risk-profile.js'
+import type { PendingTriggerOrder, TradeContext } from './types.js'
+
+/**
+ * Fix 1: Calculate pre-breakout baseline option price adjusted for directional index spike.
+ * For CE: Option surges when triggerIndexPrice > baseIndexPrice.
+ * For PE: Option surges when triggerIndexPrice < baseIndexPrice.
+ */
+export function calculateBaseSignalPrice(params: {
+  optionType: 'CE' | 'PE'
+  preLlmOptionLtp?: number | undefined
+  entryPrice: number
+  estimatedDelta: number
+  baseIndexPrice: number
+  triggerIndexPrice: number
+}): number {
+  const {
+    optionType,
+    preLlmOptionLtp,
+    entryPrice,
+    estimatedDelta,
+    baseIndexPrice,
+    triggerIndexPrice,
+  } = params
+
+  const indexSpike =
+    optionType === 'CE'
+      ? Math.max(0, triggerIndexPrice - baseIndexPrice)
+      : Math.max(0, baseIndexPrice - triggerIndexPrice)
+
+  if (preLlmOptionLtp && indexSpike > 0) {
+    const rawBase = preLlmOptionLtp - estimatedDelta * indexSpike
+    const rounded = Math.round(rawBase * 20) / 20
+    return Math.max(0.05, Math.round(rounded * 100) / 100)
+  }
+
+  return preLlmOptionLtp || entryPrice
+}
+
+/**
+ * Fix 2: Calculate bounded index/option risk and target anchored to bounded risk and DTE floor.
+ */
+export function calculateBoundedRiskAndTarget(params: {
+  spotPrice: number
+  stopLoss: number
+  atr14: number
+  agentType: TradingAgentType
+  estimatedDelta: number
+  signalPrice: number
+  riskRewardRatio?: number | undefined
+  expiry?: Date | string | undefined
+}): {
+  indexRiskPoints: number
+  optionRiskPoints: number
+  calculatedSl: number
+  calculatedTarget: number
+} {
+  const {
+    spotPrice,
+    stopLoss,
+    atr14,
+    agentType,
+    estimatedDelta,
+    signalPrice,
+    riskRewardRatio = 1.5,
+    expiry,
+  } = params
+
+  const minAtrRisk = 1.5 * atr14
+  const maxAtrRisk = agentType === 'SCALPER' ? 2.5 * atr14 : 4.0 * atr14
+  const rawStructuralRisk = Math.abs(spotPrice - stopLoss)
+  // Guard against LLM returning an option price / points offset (e.g. 109.8) instead of index level
+  const isValidIndexSl = stopLoss > spotPrice * 0.9 && stopLoss < spotPrice * 1.1
+  const structuralRiskPoints = isValidIndexSl ? rawStructuralRisk : minAtrRisk
+  const indexRiskPoints = Math.min(Math.max(structuralRiskPoints, minAtrRisk), maxAtrRisk)
+
+  const optionRiskPoints = indexRiskPoints * estimatedDelta
+
+  // Anchor Target and SL to the bounded optionRiskPoints
+  let calculatedSl = signalPrice - optionRiskPoints
+  const rrr = riskRewardRatio || 1.5
+  let calculatedTarget = signalPrice + optionRiskPoints * rrr
+  if (agentType === 'SCALPER' && calculatedTarget > signalPrice * 1.5) {
+    calculatedTarget = signalPrice * 1.5
+  }
+
+  // Enforce DTE-aware premium floor protection (prevents 0.05 / 100% loss trap)
+  const dte = getCalendarDaysToExpiry(expiry)
+  const riskProfile = getExpiryRiskProfile(dte)
+  const maxAllowedRiskPct =
+    agentType === 'SCALPER' ? Math.min(0.2, riskProfile.maxPremiumRiskPct) : riskProfile.maxPremiumRiskPct
+  const minAllowedSl = signalPrice * (1 - maxAllowedRiskPct)
+  if (calculatedSl < minAllowedSl) {
+    calculatedSl = minAllowedSl
+  }
+
+  return {
+    indexRiskPoints,
+    optionRiskPoints,
+    calculatedSl,
+    calculatedTarget,
+  }
+}
+
+/**
+ * Predicate to evaluate whether entry slippage or point distance warrants queueing a trigger order.
+ */
+export function isEntrySpikeTriggered(params: {
+  entryPrice: number
+  baseSignalPrice: number
+  optionRiskPoints: number
+  maxSlippagePct?: number | undefined
+}): boolean {
+  const maxSlippagePct = params.maxSlippagePct ?? Number(process.env.MAX_ENTRY_SLIPPAGE_PCT || 5)
+  return (
+    params.entryPrice > params.baseSignalPrice * (1 + maxSlippagePct / 100) ||
+    params.entryPrice - params.baseSignalPrice > 0.35 * params.optionRiskPoints
+  )
+}
 
 export class UserSession extends EventEmitter {
   public userId: string
@@ -170,11 +288,8 @@ export class UserSession extends EventEmitter {
 
           if (entryPrice > 0) {
             const optionRow = optionsAnalysis?.rows?.find((r: any) => r.strike === decision.strike && r.type === type)
-            const structuralRiskPoints = Math.abs(tf.price - decision.stopLoss)
-            const atr14 = analysisResult.dailyContext?.atr14 || 20
-            const minAtrRisk = 1.5 * atr14
-            const indexRiskPoints = Math.max(structuralRiskPoints, minAtrRisk)
-            // Edited 04/10/2026 earlier options delta was hard coded as 0.5
+
+            // Estimated delta calculation
             const estimatedDelta = optionRow?.greeks?.delta
               ? Math.abs(optionRow.greeks.delta)
               : decision.strike && tf.price
@@ -186,43 +301,50 @@ export class UserSession extends EventEmitter {
                     ? 0.4
                     : 0.75 // ITM CE vs OTM CE
                 : 0.5
-            const optionRiskPoints = indexRiskPoints * estimatedDelta
 
-            // Retrieve signal-time option price (pre-LLM options chain analysis)
-            const signalPrice = optionRow?.ltp || entryPrice
+            // --- Fix 1: Pre-Breakout Baseline Option Price (baseSignalPrice) ---
+            const baseIndexPrice =
+              Array.isArray(context.recentTicks) && context.recentTicks.length > 0
+                ? context.recentTicks[0].last_price
+                : context.tick?.last_price || tf.price
+            const triggerIndexPrice = context.tick?.last_price || tf.price
 
-            // Anchor Target and SL to the Signal Price
-            let calculatedSl = signalPrice - optionRiskPoints
-            const calculatedTarget = signalPrice + optionRiskPoints * (decision.riskRewardRatio || 1.5)
+            const baseSignalPrice = calculateBaseSignalPrice({
+              optionType: type,
+              preLlmOptionLtp: optionRow?.ltp,
+              entryPrice,
+              estimatedDelta,
+              baseIndexPrice,
+              triggerIndexPrice,
+            })
 
-            // Enforce DTE-aware premium floor protection (prevents 0.05 / 100% loss trap) (14-OCT-2026 Fix 4.5 Peak Profit Ratchet)
-            const dte = getCalendarDaysToExpiry(option.expiry)
-            const riskProfile = getExpiryRiskProfile(dte)
-            const maxAllowedRiskPct =
-              agentType === 'SCALPER' ? Math.min(0.2, riskProfile.maxPremiumRiskPct) : riskProfile.maxPremiumRiskPct
-            const minAllowedSl = signalPrice * (1 - maxAllowedRiskPct)
-            if (calculatedSl < minAllowedSl) {
-              console.log(
-                `[UserSession] Capping SL for ${option.symbol} (${agentType}, ${riskProfile.bucket}): calculated ₹${calculatedSl.toFixed(2)} → floor ₹${minAllowedSl.toFixed(2)} (max ${(maxAllowedRiskPct * 100).toFixed(0)}% premium risk)`
-              )
-              calculatedSl = minAllowedSl
-            }
+            // --- Fix 2: Strict ATR Risk Bounding & Target Anchoring ---
+            const atr14 = analysisResult.dailyContext?.atr14 || 20
+            const {
+              indexRiskPoints,
+              optionRiskPoints,
+              calculatedSl,
+              calculatedTarget,
+            } = calculateBoundedRiskAndTarget({
+              spotPrice: tf.price,
+              stopLoss: decision.stopLoss,
+              atr14,
+              agentType,
+              estimatedDelta,
+              signalPrice: baseSignalPrice,
+              riskRewardRatio: decision.riskRewardRatio || 1.5,
+              expiry: option.expiry,
+            })
 
-            // Slippage Filter
+            // --- Fix 1: Real-Time Spike Guard & Pending Trigger Queue ---
             const maxSlippagePct = Number(process.env.MAX_ENTRY_SLIPPAGE_PCT || 5)
-            const slippagePct = ((entryPrice - signalPrice) / signalPrice) * 100
-
-            if (entryPrice > signalPrice * (1 + maxSlippagePct / 100)) {
-              console.warn(
-                `⚠️ [UserSession] Entry BLOCKED: High slippage. Signal Price: ₹${signalPrice.toFixed(2)}, CMP: ₹${entryPrice.toFixed(2)} (${slippagePct.toFixed(1)}% slippage, limit is ${maxSlippagePct}%).`
-              )
-              this.emit('notification', {
-                title: `⚠️ Trade Blocked (Slippage)`,
-                message: `${option.symbol} CMP ₹${entryPrice.toFixed(2)} too high relative to signal ₹${signalPrice.toFixed(2)} (${slippagePct.toFixed(1)}% slippage).`,
-                type: 'warning',
-              })
-              return
-            }
+            const slippagePct = ((entryPrice - baseSignalPrice) / baseSignalPrice) * 100
+            const isSpikeTriggered = isEntrySpikeTriggered({
+              entryPrice,
+              baseSignalPrice,
+              optionRiskPoints,
+              maxSlippagePct,
+            })
 
             if (entryPrice >= calculatedTarget) {
               console.warn(
@@ -231,6 +353,68 @@ export class UserSession extends EventEmitter {
               return
             }
 
+            const tradeContext: TradeContext = {
+              optionExpiry: option.expiry.toISOString(),
+              optionDelta: estimatedDelta,
+              aiReasoning: decision.reason,
+              aiConfidence: decision.confidence,
+              aiStrike: decision.strike || undefined,
+              aiSetup: decision.setup,
+              strategyContext: {
+                macroTrend: decision.macroTrend as AIMacroTrend,
+                indexSl: decision.stopLoss,
+                agentType,
+                riskRewardRatio: decision.riskRewardRatio || 1.5,
+              },
+              vixLevel: vix.current,
+              rsiLevel: tf.rsi,
+              trend15m: tf.trend,
+              aiStopLoss: calculatedSl,
+              aiTarget: calculatedTarget,
+              aiIndexTargets: decision.targets?.length ? decision.targets : undefined,
+              currentIndexPrice: tf.price,
+              lotSize: analysisResult.lotSize,
+              optionRiskPoints,
+              baseSignalPrice,
+              triggerPrice: baseSignalPrice,
+            }
+
+            if (isSpikeTriggered) {
+              console.log(
+                `⚡ [UserSession] Spike Guard triggered for ${option.symbol}: CMP ₹${entryPrice.toFixed(2)} vs Base ₹${baseSignalPrice.toFixed(2)} (${slippagePct.toFixed(1)}% slippage). Queueing Pullback Trigger Order.`
+              )
+
+              const ttlMs = 15 * 60 * 1000 // 15-minute TTL
+              const pendingOrder: PendingTriggerOrder = {
+                id: `pending_${Math.random().toString(36).substr(2, 9)}`,
+                symbol: option.symbol,
+                token: option.token,
+                strike: decision.strike || undefined,
+                side: 'BUY',
+                quantity: analysisResult.lotSize || 65,
+                triggerPrice: baseSignalPrice,
+                type: 'LIMIT',
+                status: 'PENDING',
+                createdAt: new Date(),
+                expiresAt: new Date(Date.now() + ttlMs),
+                ttlMs,
+                indexInvalidation: decision.stopLoss,
+                currentIndexPrice: tf.price,
+                optionRiskPoints,
+                estimatedDelta,
+                riskRewardRatio: decision.riskRewardRatio || 1.5,
+                baseSignalPrice,
+                context: {
+                  ...tradeContext,
+                  isTriggerOrder: true,
+                },
+              }
+
+              await this.paperTrader.queuePendingOrder(pendingOrder)
+              return
+            }
+
+            // Normal immediate market buy if within slippage limit
             await this.paperTrader.placeOrder({
               symbol: option.symbol,
               token: option.token,
@@ -238,27 +422,7 @@ export class UserSession extends EventEmitter {
               side: 'BUY',
               quantity: 1,
               price: entryPrice,
-              context: {
-                optionExpiry: option.expiry.toISOString(),
-                optionDelta: estimatedDelta, // Edited 04/10/2026
-                aiReasoning: decision.reason,
-                aiConfidence: decision.confidence,
-                aiStrike: decision.strike || undefined,
-                aiSetup: decision.setup,
-                strategyContext: {
-                  macroTrend: decision.macroTrend as AIMacroTrend,
-                  indexSl: decision.stopLoss,
-                  agentType,
-                },
-                vixLevel: vix.current,
-                rsiLevel: tf.rsi,
-                trend15m: tf.trend,
-                aiStopLoss: calculatedSl,
-                aiTarget: calculatedTarget,
-                aiIndexTargets: decision.targets?.length ? decision.targets : undefined,
-                currentIndexPrice: tf.price,
-                lotSize: analysisResult.lotSize,
-              },
+              context: tradeContext,
             })
           }
         }
@@ -310,11 +474,13 @@ export class UserSession extends EventEmitter {
     this.ticker.on('connect', () => {
       console.log(`[UserSession] Ticker connected for user ${this.userId}`)
 
-      // Re-subscribe position tokens
+      // Re-subscribe position tokens and pending order tokens
       const positionTokens = this.paperTrader.getAllPositions().map((p) => p.token)
-      if (positionTokens.length > 0) {
-        this.ticker.subscribe(positionTokens)
-        this.ticker.setMode(this.ticker.modeFull, positionTokens)
+      const pendingTokens = this.paperTrader.getPendingOrders().map((o) => o.token)
+      const allTokens = Array.from(new Set([...positionTokens, ...pendingTokens]))
+      if (allTokens.length > 0) {
+        this.ticker.subscribe(allTokens)
+        this.ticker.setMode(this.ticker.modeFull, allTokens)
       }
 
       // Re-subscribe watched token

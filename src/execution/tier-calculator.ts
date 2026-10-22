@@ -37,9 +37,9 @@ export interface TieredTargetInput {
    * These are Fibonacci/wave extension levels in NIFTY/BANKNIFTY points.
    * e.g. [24050, 24150] when NIFTY is at 23900
    */
-  aiIndexTargets?: number[]
+  aiIndexTargets?: number[] | undefined
   /** Current live index price (NIFTY/BANKNIFTY) needed to translate index targets to premium */
-  currentIndexPrice?: number
+  currentIndexPrice?: number | undefined
 }
 
 export interface TieredTargetResult {
@@ -110,10 +110,11 @@ export function computeTieredTargets(input: TieredTargetInput): TieredTargetResu
 
     strategy = 'AI_WAVE_TARGETS'
 
-    // Sanity check: if AI targets are below entry (bad data), fall back
-    if (t1Target <= entryPrice || t2Target <= t1Target) {
+    // Sanity check: if AI targets are below entry or T1 exceeds realistic intraday bounds, fall back to DTE risk multiples
+    const maxReasonableT1 = daysToExpiry < 1 ? entryPrice * 1.25 : entryPrice * 1.35
+    if (t1Target <= entryPrice || t2Target <= t1Target || t1Target > maxReasonableT1) {
       console.warn(
-        `[TierCalc] AI targets invalid (T1=${t1Target}, entry=${entryPrice}). Falling back to DTE multiples.`
+        `[TierCalc] AI targets invalid or out-of-range for DTE=${daysToExpiry.toFixed(1)} (T1=${t1Target}, max=${maxReasonableT1.toFixed(2)}). Falling back to DTE multiples.`
       )
       return computeFallbackTargets(entryPrice, premiumRisk, daysToExpiry, quantity, lotSize)
     }

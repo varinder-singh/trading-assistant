@@ -48,7 +48,7 @@ describe('PaperTrader High-Watermark Peak Profit Engine', () => {
     expect(pos?.maxUnrealizedPnL).toBe(650) // Max PnL remains 650
   })
 
-  it('should ratchet SL to breakeven + 2% when peak gain reaches +15%', async () => {
+  it('should ratchet SL to 55% of peak gain when peak gain reaches +12% tier', async () => {
     await trader.placeOrder({
       symbol: 'NIFTY_TEST_CE',
       token: 1002,
@@ -61,14 +61,14 @@ describe('PaperTrader High-Watermark Peak Profit Engine', () => {
     const pos = trader.getAllPositions()[0]
     expect(pos?.aiStopLoss).toBe(85)
 
-    // Price reaches +16% gain (116)
+    // Price reaches +16% gain (116) -> matches +12% tier (lockPeakGainRatio: 0.55)
     await trader.updatePrice(1002, 116)
     expect(pos?.peakPrice).toBe(116)
-    // Ratchet Tier 1: 100 * 1.02 = 102
-    expect(pos?.aiStopLoss).toBe(102)
+    // Ratchet (+12% tier): 100 + 0.55 * 16 = 108.8
+    expect(pos?.aiStopLoss).toBeCloseTo(108.8, 2)
   })
 
-  it('should ratchet SL to 50% of peak gain when peak gain reaches +30%', async () => {
+  it('should ratchet SL to 75% of peak gain when peak gain reaches +35% tier', async () => {
     await trader.placeOrder({
       symbol: 'NIFTY_TEST_CE',
       token: 1003,
@@ -80,14 +80,14 @@ describe('PaperTrader High-Watermark Peak Profit Engine', () => {
 
     const pos = trader.getAllPositions()[0]
 
-    // Price reaches +40% gain (140)
+    // Price reaches +40% gain (140) -> matches +35% tier (lockPeakGainRatio: 0.75)
     await trader.updatePrice(1003, 140)
     expect(pos?.peakPrice).toBe(140)
-    // Tier 2 Ratchet (+30%+ peak gain): 100 + 0.50 * 40 = 120
-    expect(pos?.aiStopLoss).toBe(120)
+    // Tier (+35%+ peak gain): 100 + 0.75 * 40 = 130
+    expect(pos?.aiStopLoss).toBe(130)
 
-    // Price drops to 120 -> hits ratcheted SL
-    await trader.updatePrice(1003, 119)
+    // Price drops below 130 -> hits ratcheted SL
+    await trader.updatePrice(1003, 129)
     expect(trader.getAllPositions()).toHaveLength(0) // Position closed
   })
 
@@ -165,16 +165,16 @@ describe('PaperTrader High-Watermark Peak Profit Engine', () => {
       quantity: 65,
       price: 50,
       context: {
-        optionExpiry: todayIso, // 0DTE (max 30% loss -> floor at 35)
+        optionExpiry: todayIso, // 0DTE (max 20% loss -> floor at 40)
         aiStopLoss: 0.05, // Attempted 0.05 stop (would cause 100% loss)
       },
     })
 
     const pos = trader.getAllPositions()[0]
-    expect(pos?.aiStopLoss).toBe(35) // Floored at 50 * (1 - 0.3) = 35
+    expect(pos?.aiStopLoss).toBe(40) // Floored at 50 * (1 - 0.2) = 40
 
-    // Price drops to 34 -> hits floored SL
-    await trader.updatePrice(1006, 34)
+    // Price drops to 39 -> hits floored SL
+    await trader.updatePrice(1006, 39)
     expect(trader.getAllPositions()).toHaveLength(0) // Protected from dropping further
   })
 
@@ -193,7 +193,7 @@ describe('PaperTrader High-Watermark Peak Profit Engine', () => {
         currentIndexPrice: 22700,
         strategyContext: {
           indexSl: 22650, // Invalidation level on NIFTY index
-          macroTrend: 'bullish',
+          macroTrend: 'COMPRESSION_BULLISH',
           agentType: 'TREND',
         },
       },

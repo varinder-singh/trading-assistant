@@ -4,6 +4,7 @@ import {
   getExpiryRiskProfile,
   isRetractGuardTriggered,
   getPremiumStopFloor,
+  getRatchetedStopLoss,
   isIndexInvalidated,
   resolveIndexInvalidation,
 } from '../src/execution/expiry-risk-profile.js'
@@ -32,17 +33,19 @@ describe('Expiry Risk Profile (Deep Fix 5)', () => {
     it('maps 0 DTE to ZERO_DTE profile', () => {
       const profile = getExpiryRiskProfile(0)
       expect(profile.bucket).toBe('ZERO_DTE')
+      expect(profile.retractActivationPct).toBe(0.1)
       expect(profile.maxDropFromPeakPct).toBe(0.08)
       expect(profile.maxLostGainRatio).toBe(0.25)
-      expect(profile.maxPremiumRiskPct).toBe(0.3)
+      expect(profile.maxPremiumRiskPct).toBe(0.2)
     })
 
     it('maps 1-2 DTE to NEAR_DTE profile', () => {
       const profile = getExpiryRiskProfile(2)
       expect(profile.bucket).toBe('NEAR_DTE')
+      expect(profile.retractActivationPct).toBe(0.12)
       expect(profile.maxDropFromPeakPct).toBe(0.12)
       expect(profile.maxLostGainRatio).toBe(0.35)
-      expect(profile.maxPremiumRiskPct).toBe(0.4)
+      expect(profile.maxPremiumRiskPct).toBe(0.3)
     })
 
     it('maps > 2 DTE to FAR_DTE profile', () => {
@@ -69,11 +72,18 @@ describe('Expiry Risk Profile (Deep Fix 5)', () => {
       expect(isRetractGuardTriggered(entry, peak, price, zeroDte)).toBe(true)
     })
 
-    it('does not trigger if peak gain is below 20%', () => {
+    it('does not trigger if peak gain is below 10%', () => {
       const entry = 100
-      const peak = 115 // +15% (< 20%)
-      const price = 105 // 8.7% drop from peak
+      const peak = 108 // +8% (< 10% activation)
+      const price = 98 // drop > 8%, but guard not armed
       expect(isRetractGuardTriggered(entry, peak, price, zeroDte)).toBe(false)
+    })
+
+    it('triggers on 0DTE on 8.7% drop when peak gain is >= 10%', () => {
+      const entry = 100
+      const peak = 115 // +15% (>= 10% activation)
+      const price = 105 // (115 - 105) / 115 = 8.7% drop from peak
+      expect(isRetractGuardTriggered(entry, peak, price, zeroDte)).toBe(true)
     })
 
     it('triggers on 0DTE when lost gain ratio >= 25%', () => {
@@ -85,15 +95,45 @@ describe('Expiry Risk Profile (Deep Fix 5)', () => {
   })
 
   describe('getPremiumStopFloor', () => {
-    it('enforces 30% max loss floor for 0DTE', () => {
+    it('enforces 20% max loss floor for 0DTE', () => {
       const zeroDte = getExpiryRiskProfile(0)
-      expect(getPremiumStopFloor(100, zeroDte)).toBe(70)
-      expect(getPremiumStopFloor(50.9, zeroDte)).toBeCloseTo(35.63, 2)
+      expect(getPremiumStopFloor(100, zeroDte)).toBe(80)
+      expect(getPremiumStopFloor(50.9, zeroDte)).toBeCloseTo(40.72, 2)
     })
 
-    it('enforces 40% max loss floor for NEAR_DTE', () => {
+    it('enforces 30% max loss floor for NEAR_DTE', () => {
       const nearDte = getExpiryRiskProfile(2)
-      expect(getPremiumStopFloor(100, nearDte)).toBe(60)
+      expect(getPremiumStopFloor(100, nearDte)).toBe(70)
+    })
+  })
+
+  describe('getRatchetedStopLoss (PEAK_PROFIT_RATCHET_TIERS)', () => {
+    it('returns undefined when peak gain is below the lowest tier (+8%)', () => {
+      expect(getRatchetedStopLoss(100, 107.9)).toBeUndefined()
+    })
+
+    it('locks 35% of peak gain at +8% to +11.9% tier', () => {
+      const res = getRatchetedStopLoss(100, 110) // +10% gain (10 pts)
+      expect(res?.tier.minPeakGainPct).toBe(0.08)
+      expect(res?.targetSl).toBeCloseTo(103.5, 2)
+    })
+
+    it('locks 55% of peak gain at +12% to +19.9% tier (e.g. Oct 19 22900 PE 46.7 -> 52.85)', () => {
+      const res = getRatchetedStopLoss(46.7, 52.85) // +13.17% gain (6.15 pts)
+      expect(res?.tier.minPeakGainPct).toBe(0.12)
+      expect(res?.targetSl).toBeCloseTo(50.0825, 2)
+    })
+
+    it('locks 65% of peak gain at +20% to +34.9% tier', () => {
+      const res = getRatchetedStopLoss(100, 125) // +25% gain (25 pts)
+      expect(res?.tier.minPeakGainPct).toBe(0.2)
+      expect(res?.targetSl).toBeCloseTo(116.25, 2)
+    })
+
+    it('locks 75% of peak gain at +35%+ tier', () => {
+      const res = getRatchetedStopLoss(100, 140) // +40% gain (40 pts)
+      expect(res?.tier.minPeakGainPct).toBe(0.35)
+      expect(res?.targetSl).toBeCloseTo(130, 2)
     })
   })
 

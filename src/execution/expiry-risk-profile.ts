@@ -22,17 +22,17 @@ export type ExpiryRiskProfile = {
 const PROFILES: Record<ExpiryBucket, ExpiryRiskProfile> = {
   ZERO_DTE: {
     bucket: 'ZERO_DTE',
-    retractActivationPct: 0.2,
+    retractActivationPct: 0.1,
     maxDropFromPeakPct: 0.08,
     maxLostGainRatio: 0.25,
-    maxPremiumRiskPct: 0.3,
+    maxPremiumRiskPct: 0.2,
   },
   NEAR_DTE: {
     bucket: 'NEAR_DTE',
-    retractActivationPct: 0.2,
+    retractActivationPct: 0.12,
     maxDropFromPeakPct: 0.12,
     maxLostGainRatio: 0.35,
-    maxPremiumRiskPct: 0.4,
+    maxPremiumRiskPct: 0.3,
   },
   FAR_DTE: {
     bucket: 'FAR_DTE',
@@ -88,6 +88,44 @@ export function isRetractGuardTriggered(
 /** Lowest premium stop allowed for a long option, bounding worst-case loss per trade. */
 export function getPremiumStopFloor(entryPrice: number, profile: ExpiryRiskProfile): number {
   return entryPrice * (1 - profile.maxPremiumRiskPct)
+}
+
+export type PeakRatchetTier = {
+  /** Minimum peak gain (fraction of entry, e.g. 0.08 = +8%) required to activate this tier */
+  minPeakGainPct: number
+  /** Fraction of peak gain points locked above entry (e.g. 0.55 = entry + 55% of peak gain) */
+  lockPeakGainRatio: number
+}
+
+/**
+ * Declarative Peak Profit Ratchet tiers (ordered highest-to-lowest peak gain).
+ * Easy to read and tune in one place alongside the Retract Guard profiles.
+ */
+export const PEAK_PROFIT_RATCHET_TIERS: readonly PeakRatchetTier[] = [
+  { minPeakGainPct: 0.35, lockPeakGainRatio: 0.75 }, // +35%+ peak gain -> lock 75% of peak gain
+  { minPeakGainPct: 0.2, lockPeakGainRatio: 0.65 }, // +20%+ peak gain -> lock 65% of peak gain
+  { minPeakGainPct: 0.12, lockPeakGainRatio: 0.55 }, // +12%+ peak gain -> lock 55% of peak gain
+  { minPeakGainPct: 0.08, lockPeakGainRatio: 0.35 }, // +8%+  peak gain -> lock 35% of peak gain
+]
+
+/**
+ * Computes the ratcheted stop-loss price from the matching PeakRatchetTier,
+ * or undefined when the peak gain has not yet reached the lowest tier.
+ */
+export function getRatchetedStopLoss(
+  entryPrice: number,
+  peakPrice: number,
+  tiers: readonly PeakRatchetTier[] = PEAK_PROFIT_RATCHET_TIERS
+): { targetSl: number; peakGainPct: number; tier: PeakRatchetTier } | undefined {
+  if (entryPrice <= 0 || peakPrice <= entryPrice) return undefined
+
+  const peakGainPoints = peakPrice - entryPrice
+  const peakGainPct = peakGainPoints / entryPrice
+  const matchedTier = tiers.find((t) => peakGainPct >= t.minPeakGainPct)
+  if (!matchedTier) return undefined
+
+  const targetSl = entryPrice + matchedTier.lockPeakGainRatio * peakGainPoints
+  return { targetSl, peakGainPct, tier: matchedTier }
 }
 
 export type OptionType = 'CE' | 'PE'

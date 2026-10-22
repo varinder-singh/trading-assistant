@@ -32,6 +32,65 @@ export function cleanJson(text: string): string {
   return cleaned
 }
 
+export function sanitizeAiDecision(
+  result: AISuccessResponse,
+  input: any,
+  agentType: TradingAgentType = 'SCALPER'
+): AISuccessResponse {
+  if (result.decision !== 'BUY') return result
+
+  // 1. Confidence bounding
+  if (result.confidence < 0 || result.confidence > 100) {
+    result.confidence = Math.min(Math.max(result.confidence || 0, 0), 100)
+  }
+
+  const isBearish = result.optionAction === 'BUY_PE'
+  const indexPrice = result.entry || input?.tf15m?.price || input?.price || 0
+
+  if (indexPrice > 0) {
+    if (!result.entry) {
+      result.entry = indexPrice
+    }
+
+    // 2. Stop Loss Validation
+    // Directional Check:
+    // For PE (Bearish): stop must be strictly above entry (stopLoss > indexPrice)
+    // For CE (Bullish): stop must be strictly below entry (stopLoss < indexPrice)
+    const isDirectionInvalid = isBearish
+      ? result.stopLoss <= indexPrice
+      : result.stopLoss >= indexPrice
+
+    // Distance Check:
+    // Distance must fall within 0.1% to 2.0% of indexPrice
+    const distPct = Math.abs(result.stopLoss - indexPrice) / indexPrice
+    const isDistanceInvalid = distPct < 0.001 || distPct > 0.02
+    const isMacroOutOfRange = result.stopLoss < indexPrice * 0.9 || result.stopLoss > indexPrice * 1.1
+
+    if (isDirectionInvalid || isDistanceInvalid || isMacroOutOfRange || !result.stopLoss) {
+      console.warn(
+        `[AI Validation] Invalid Stop Loss (${result.stopLoss}) for indexPrice ${indexPrice} (${(distPct * 100).toFixed(2)}% distance, direction=${isBearish ? 'PE' : 'CE'}). AI Hallucination detected, overriding.`
+      )
+      result.stopLoss = isBearish ? indexPrice * 1.005 : indexPrice * 0.995
+    }
+
+    // 3. Targets Validation
+    const firstTarget = result.targets?.[0]
+    const hasInvalidTarget = isBearish
+      ? firstTarget !== undefined && firstTarget >= indexPrice
+      : firstTarget !== undefined && firstTarget <= indexPrice
+    const isTargetDistanceInvalid = firstTarget !== undefined && Math.abs(firstTarget - indexPrice) / indexPrice > 0.05
+
+    if (!firstTarget || hasInvalidTarget || isTargetDistanceInvalid) {
+      console.warn(
+        `[AI Validation] Invalid Target (${firstTarget}) for direction ${isBearish ? 'PE' : 'CE'} (indexPrice ${indexPrice}). AI Hallucination detected, overriding.`
+      )
+      result.targets = [isBearish ? indexPrice * 0.995 : indexPrice * 1.005]
+    }
+  }
+
+  return result
+}
+
 import type { LLMProvider } from './types.js'
 import { MemoryService } from './memory.js'
 
@@ -303,35 +362,7 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
         const result: AISuccessResponse = JSON.parse(cleanJson(text))
 
         // Validation & Guardrails
-        if (result.decision === 'BUY') {
-          if (result.confidence < 0 || result.confidence > 100) {
-            result.confidence = Math.min(Math.max(result.confidence, 0), 100)
-          }
-          const isBearish = result.optionAction === 'BUY_PE'
-          const hasInvalidSl = isBearish
-            ? result.stopLoss && result.entry && result.stopLoss <= result.entry
-            : result.stopLoss && result.entry && result.stopLoss >= result.entry
-
-          if (hasInvalidSl) {
-            console.warn(
-              `[AI Validation] Invalid Stop Loss (${result.stopLoss}) for direction. AI Hallucination detected, overriding.`
-            )
-            result.stopLoss = isBearish ? result.entry * 1.005 : result.entry * 0.995
-          }
-
-          const hasInvalidTarget = isBearish
-            ? result.targets && result.targets[0] !== undefined && result.entry && result.targets[0] >= result.entry
-            : result.targets && result.targets[0] !== undefined && result.entry && result.targets[0] <= result.entry
-
-          if (hasInvalidTarget) {
-            console.warn(
-              `[AI Validation] Invalid Target (${result.targets && result.targets[0]}) for direction. AI Hallucination detected, overriding.`
-            )
-            if (result.targets) {
-              result.targets[0] = isBearish ? result.entry * 0.995 : result.entry * 1.005
-            }
-          }
-        }
+        sanitizeAiDecision(result, input, agentType)
 
         this.emitUpdate({
           agent: agentType,
@@ -428,6 +459,7 @@ ${marketDataStr}
       ])
 
       const result: AISuccessResponse = JSON.parse(cleanJson(consensusRes))
+      sanitizeAiDecision(result, input, agentType)
 
       this.emitUpdate({
         agent: agentType,
