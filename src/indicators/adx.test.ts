@@ -11,18 +11,14 @@ describe('calculateADX', () => {
   })
 
   it('should calculate ADX correctly for a simple trend', () => {
-    const candles: Candle[] = []
-    // Create 35 ascending candles (strong uptrend)
-    for (let i = 0; i < 35; i++) {
-      candles.push({
-        time: i * 60,
-        open: 100 + i,
-        high: 102 + i,
-        low: 99 + i,
-        close: 101 + i,
-        volume: 1000,
-      })
-    }
+    const candles: Candle[] = Array.from({ length: 35 }, (_, i) => ({
+      time: i * 60,
+      open: 100 + i,
+      high: 102 + i,
+      low: 99 + i,
+      close: 101 + i,
+      volume: 1000,
+    }))
 
     const result = calculateADX(candles, 14)
     expect(result.plusDI).toBeGreaterThan(result.minusDI)

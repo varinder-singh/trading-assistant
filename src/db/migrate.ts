@@ -18,13 +18,14 @@ async function migrateToLatest(): Promise<void> {
 
   const { error, results } = await migrator.migrateToLatest()
 
-  results?.forEach((it) => {
-    const msg =
-      it.status === 'Success'
-        ? `✅ Migration "${it.migrationName}" was executed successfully`
-        : `❌ Failed to execute migration "${it.migrationName}"`
-    console.log(msg)
-  })
+  const logMessages = results?.map((it) =>
+    it.status === 'Success'
+      ? `✅ Migration "${it.migrationName}" was executed successfully`
+      : `❌ Failed to execute migration "${it.migrationName}"`
+  )
+  if (logMessages && logMessages.length > 0) {
+    console.log(logMessages.join('\n'))
+  }
 
   if (error) {
     console.error('❌ Failed to migrate')

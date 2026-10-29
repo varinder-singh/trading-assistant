@@ -10,7 +10,7 @@ export function calculateSwings(candles: Candle[], lookback: number = 2): SwingP
 
   const indices = Array.from({ length: candles.length - lookback * 2 }, (_, idx) => idx + lookback)
 
-  return indices.flatMap((i) => {
+  return indices.flatMap((i): SwingPoint[] => {
     const current = candles[i]
     if (!current) return []
 

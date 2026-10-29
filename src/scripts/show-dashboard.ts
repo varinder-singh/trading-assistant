@@ -29,7 +29,7 @@ async function showDashboard() {
     }
 
     // Inject the mock position directly
-    // @ts-ignore - overriding private map for mock
+    // @ts-expect-error - overriding private map for mock
     paperTrader.positions.set('NIFTY_MOCK_CE', {
       symbol: 'NIFTY_MOCK_CE',
       token: 12345,

@@ -68,68 +68,67 @@ export function computeTieredTargets(input: TieredTargetInput): TieredTargetResu
   if (!aiStopLoss || aiStopLoss >= entryPrice) return null
 
   const premiumRisk = entryPrice - aiStopLoss
-  const absDelta = Math.abs(optionDelta)
+  const aiTargets = translateAiTargets(input)
 
-  // Strategy A requires a real delta to translate index points to premium.
-  // If delta is missing or near-zero, fall through to Strategy B immediately.
-  const canTranslate = absDelta > 0.01
-
-  let t1Target: number
-  let t2Target: number
-  let t3Target: number
-  let strategy: TieredTargetResult['strategy']
-
-  // Strategy A: AI Wave/Fibonacci Index Targets
-  const hasAiTargets =
-    canTranslate &&
-    input.aiIndexTargets &&
-    input.aiIndexTargets.length >= 1 &&
-    input.currentIndexPrice !== undefined &&
-    input.currentIndexPrice > 0
-
-  if (hasAiTargets) {
-    const indexPrice = input.currentIndexPrice!
-    const indexTargets = input.aiIndexTargets!
-
-    // Translate each index target level to option premium gain to option price
-    const premiumTargets = indexTargets.map((indexTarget) => {
-      const indexGain = Math.abs(indexTarget - indexPrice)
-      const premiumGain = indexGain * absDelta
-      return parseFloat((entryPrice + premiumGain).toFixed(2))
-    })
-
-    t1Target = premiumTargets[0] ?? entryPrice
-    t2Target =
-      premiumTargets.length >= 2
-        ? (premiumTargets[1] ?? t1Target)
-        : parseFloat((t1Target + (t1Target - entryPrice) * 0.618).toFixed(2))
-
-    // T3: Fibonacci 1.618 extension of the T1->T2 gap
-    const t1t2Gap = t2Target - t1Target
-    t3Target = parseFloat((t2Target + t1t2Gap * 1.618).toFixed(2))
-
-    strategy = 'AI_WAVE_TARGETS'
-
-    // Sanity check: if AI targets are below entry or T1 exceeds realistic intraday bounds, fall back to DTE risk multiples
-    const maxReasonableT1 = daysToExpiry < 1 ? entryPrice * 1.25 : entryPrice * 1.35
-    if (t1Target <= entryPrice || t2Target <= t1Target || t1Target > maxReasonableT1) {
-      console.warn(
-        `[TierCalc] AI targets invalid or out-of-range for DTE=${daysToExpiry.toFixed(1)} (T1=${t1Target}, max=${maxReasonableT1.toFixed(2)}). Falling back to DTE multiples.`
-      )
-      return computeFallbackTargets(entryPrice, premiumRisk, daysToExpiry, quantity, lotSize)
-    }
-  } else {
+  if (!aiTargets || !areAiTargetsRealistic(aiTargets, entryPrice, daysToExpiry)) {
     return computeFallbackTargets(entryPrice, premiumRisk, daysToExpiry, quantity, lotSize)
   }
 
   const { t1Qty, t2Qty } = computeLotSplit(quantity, lotSize)
+  const { t1Target, t2Target, t3Target } = aiTargets
 
   console.log(
-    `[TierCalc] Strategy=${strategy} | Delta=${absDelta.toFixed(2)} | ` +
+    `[TierCalc] Strategy=AI_WAVE_TARGETS | Delta=${Math.abs(optionDelta).toFixed(2)} | ` +
       `T1=INR${t1Target} (${t1Qty}qty) | T2=INR${t2Target} (${t2Qty}qty) | T3=INR${t3Target} (runner)`
   )
 
-  return { t1Target, t2Target, t3Target, t1Qty, t2Qty, t1Hit: false, t2Hit: false, strategy }
+  return { t1Target, t2Target, t3Target, t1Qty, t2Qty, t1Hit: false, t2Hit: false, strategy: 'AI_WAVE_TARGETS' }
+}
+
+interface PremiumTargets {
+  t1Target: number
+  t2Target: number
+  t3Target: number
+}
+
+const roundToPaise = (value: number): number => parseFloat(value.toFixed(2))
+
+/**
+ * Strategy A: translate the AI's index-level targets into option premium targets via delta.
+ * Returns null when a real delta or usable index targets are missing, so the caller falls back to Strategy B.
+ */
+function translateAiTargets(input: TieredTargetInput): PremiumTargets | null {
+  const { entryPrice, optionDelta, aiIndexTargets, currentIndexPrice } = input
+  const absDelta = Math.abs(optionDelta)
+
+  if (absDelta <= 0.01 || !aiIndexTargets?.length || !currentIndexPrice || currentIndexPrice <= 0) return null
+
+  const premiumTargets = aiIndexTargets.map((indexTarget) =>
+    roundToPaise(entryPrice + Math.abs(indexTarget - currentIndexPrice) * absDelta)
+  )
+
+  const t1Target = premiumTargets[0] ?? entryPrice
+  const t2Target = premiumTargets[1] ?? roundToPaise(t1Target + (t1Target - entryPrice) * 0.618)
+
+  // T3: Fibonacci 1.618 extension of the T1->T2 gap
+  const t3Target = roundToPaise(t2Target + (t2Target - t1Target) * 1.618)
+
+  return { t1Target, t2Target, t3Target }
+}
+
+/** AI targets must sit above entry, be ordered, and keep T1 within realistic intraday bounds for the DTE. */
+function areAiTargetsRealistic(targets: PremiumTargets, entryPrice: number, daysToExpiry: number): boolean {
+  const { t1Target, t2Target } = targets
+  const maxReasonableT1 = daysToExpiry < 1 ? entryPrice * 1.25 : entryPrice * 1.35
+  const isRealistic = t1Target > entryPrice && t2Target > t1Target && t1Target <= maxReasonableT1
+
+  if (!isRealistic) {
+    console.warn(
+      `[TierCalc] AI targets invalid or out-of-range for DTE=${daysToExpiry.toFixed(1)} (T1=${t1Target}, max=${maxReasonableT1.toFixed(2)}). Falling back to DTE multiples.`
+    )
+  }
+
+  return isRealistic
 }
 
 function getDteMultipliers(daysToExpiry: number): { m1: number; m2: number; m3: number } {

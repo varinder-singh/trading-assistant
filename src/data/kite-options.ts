@@ -9,40 +9,7 @@ type KiteOptionInstrument = Instrument & {
   instrument_type: "CE" | "PE"
 }
 
-export async function getOptionChain(kc: KiteConnect, symbol: string = "NIFTY") {
-  const underlyingTicker = resolveKiteUnderlying(symbol)
-
-  // Fetch instruments and underlying spot price in parallel
-  const [instruments, underlyingQuote] = await Promise.all([
-    kc.getInstruments("NFO"),
-    kc.getQuote([underlyingTicker]).catch(err => {
-      console.warn(`[getOptionChain] Failed to fetch spot quote for ${underlyingTicker}:`, err)
-      return {} as Record<string, any>
-    })
-  ])
-
-  const spotPrice = underlyingQuote[underlyingTicker]?.last_price || 0
-  console.log(`[getOptionChain] Resolved spot price for ${symbol} (${underlyingTicker}): ${spotPrice}`)
-
-  const symbolOptions = instruments.filter(
-    (i): i is KiteOptionInstrument =>
-      i.name === symbol &&
-      i.segment === "NFO-OPT" &&
-      (i.instrument_type === "CE" || i.instrument_type === "PE")
-  )
-
-  // 🧠 Get nearest expiry
-  const expiries = [...new Set(symbolOptions.map((i) => i.expiry.toISOString().slice(0, 10)))]
-  const nearestExpiry = expiries.sort()[0]
-
-  const filtered = symbolOptions.filter(
-    (i) => i.expiry.toISOString().slice(0, 10) === nearestExpiry
-  )
-
-  // ⚠️ Limit strikes around ATM (important)
-  const strikes = [...new Set(filtered.map((i) => i.strike))]
-    .sort((a: number, b: number) => a - b)
-
+function selectAtmStrikes(strikes: number[], spotPrice: number): number[] {
   const atmIndex =
     spotPrice > 0 && strikes.length > 0
       ? strikes.reduce(
@@ -53,7 +20,34 @@ export async function getOptionChain(kc: KiteConnect, symbol: string = "NIFTY") 
       : -1
 
   const mid = atmIndex >= 0 ? atmIndex : Math.floor(strikes.length / 2)
-  const selectedStrikes = strikes.slice(Math.max(0, mid - 10), Math.min(strikes.length, mid + 10))
+  return strikes.slice(Math.max(0, mid - 10), Math.min(strikes.length, mid + 10))
+}
+
+export async function getOptionChain(kc: KiteConnect, symbol: string = 'NIFTY') {
+  const underlyingTicker = resolveKiteUnderlying(symbol)
+
+  const [instruments, underlyingQuote] = await Promise.all([
+    kc.getInstruments('NFO'),
+    kc.getQuote([underlyingTicker]).catch((err) => {
+      console.warn(`[getOptionChain] Failed to fetch spot quote for ${underlyingTicker}:`, err)
+      return {} as Record<string, any>
+    }),
+  ])
+
+  const spotPrice = underlyingQuote[underlyingTicker]?.last_price || 0
+  console.log(`[getOptionChain] Resolved spot price for ${symbol} (${underlyingTicker}): ${spotPrice}`)
+
+  const symbolOptions = instruments.filter(
+    (i): i is KiteOptionInstrument =>
+      i.name === symbol && i.segment === 'NFO-OPT' && (i.instrument_type === 'CE' || i.instrument_type === 'PE')
+  )
+
+  const expiries = [...new Set(symbolOptions.map((i) => i.expiry.toISOString().slice(0, 10)))]
+  const nearestExpiry = expiries.sort()[0]
+
+  const filtered = symbolOptions.filter((i) => i.expiry.toISOString().slice(0, 10) === nearestExpiry)
+  const strikes = [...new Set(filtered.map((i) => i.strike))].sort((a: number, b: number) => a - b)
+  const selectedStrikes = selectAtmStrikes(strikes, spotPrice)
 
   const finalOptions = filtered
     .filter((i) => selectedStrikes.includes(i.strike))

@@ -34,14 +34,24 @@ function formatHeatmapTable(rows: any[], atmStrike: number): string {
     '-'.repeat(110),
   ].join('\n')
 
-  const formatRowSide = (r: any, isCE: boolean) => {
-    if (!r) return ''.padEnd(46)
-    const buildup = (r.buildup || '-').padEnd(15)
-    const coiStr = (r.intervalOi > 0 ? `+${r.intervalOi}` : `${r.intervalOi || 0}`).padEnd(11)
-    const ltp = r.ltp.toFixed(2).padEnd(8)
-    const delta = r.greeks?.delta ? Math.abs(r.greeks.delta).toFixed(2).padEnd(7) : '-      '
+  const extractMetrics = (r: any) => {
+    if (!r) return null
+    return {
+      buildup: (r.buildup || '-').padEnd(15),
+      coiStr: (r.intervalOi > 0 ? `+${r.intervalOi}` : `${r.intervalOi || 0}`).padEnd(11),
+      ltp: r.ltp.toFixed(2).padEnd(8),
+      delta: r.greeks?.delta ? Math.abs(r.greeks.delta).toFixed(2).padEnd(7) : '-      ',
+    }
+  }
 
-    return isCE ? `${buildup} | ${coiStr} | ${ltp} | ${delta}` : `${delta} | ${ltp} | ${coiStr} | ${buildup}`
+  const formatCeRow = (r: any): string => {
+    const m = extractMetrics(r)
+    return m ? `${m.buildup} | ${m.coiStr} | ${m.ltp} | ${m.delta}` : ''.padEnd(46)
+  }
+
+  const formatPeRow = (r: any): string => {
+    const m = extractMetrics(r)
+    return m ? `${m.delta} | ${m.ltp} | ${m.coiStr} | ${m.buildup}` : ''.padEnd(46)
   }
 
   const tableBody = strikes
@@ -50,7 +60,7 @@ function formatHeatmapTable(rows: any[], atmStrike: number): string {
       const pe = rows.find((r) => r.strike === strike && r.type === 'PE')
       const strikeStr = strike === atmStrike ? `[${strike}]`.padEnd(7) : strike.toString().padEnd(7)
 
-      return `${formatRowSide(ce, true)} | ${strikeStr} | ${formatRowSide(pe, false)}`
+      return `${formatCeRow(ce)} | ${strikeStr} | ${formatPeRow(pe)}`
     })
     .join('\n')
 

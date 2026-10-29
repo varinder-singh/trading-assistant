@@ -97,7 +97,7 @@ export interface PaperPosition {
   t1Qty?: number | undefined // Qty (whole lots) to sell at T1 (0 for 1-lot: just moves SL)
   t2Qty?: number | undefined // Qty (whole lots) to sell at T2
   aiSetup?: string | undefined
-  strategyContext?: any | undefined
+  strategyContext?: StrategyContext | undefined
   optionDelta?: number | undefined
   optionTheta?: number | undefined
   optionVega?: number | undefined

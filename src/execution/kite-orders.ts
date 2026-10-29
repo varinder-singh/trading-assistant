@@ -1,6 +1,8 @@
 import type { Connect as KiteConnect } from 'kiteconnect'
 import type { TradeResponse, OrderSide, OrderType } from './types.js'
 
+type KiteOrderParams = Parameters<KiteConnect['placeOrder']>[1]
+
 export class KiteOrderService {
   private maxQuantity = 5000 // Strict catastrophic risk limit (allows 9 lots of 550 shares for stock options)
   private inFlightOrders: Set<string> = new Set()
@@ -29,18 +31,7 @@ export class KiteOrderService {
         }
       }
 
-      const exchange = params.symbol.includes('-') ? 'NFO' : 'NSE'
-      const orderParams: Record<string, any> = {
-        exchange,
-        tradingsymbol: params.symbol,
-        transaction_type: params.side,
-        quantity: params.quantity,
-        order_type: params.type,
-        product: 'MIS',
-        ...(params.price ? { price: params.price } : {}),
-      }
-
-      const response = await this.kc.placeOrder('regular', orderParams)
+      const response = await this.kc.placeOrder('regular', this.toKiteOrderParams(params))
 
       return {
         success: true,
@@ -59,5 +50,23 @@ export class KiteOrderService {
 
   public async getOrderStatus(orderId: string): Promise<any> {
     return this.kc.getOrderHistory(orderId)
+  }
+
+  private toKiteOrderParams(params: {
+    symbol: string
+    side: OrderSide
+    quantity: number
+    type: OrderType
+    price?: number
+  }): KiteOrderParams {
+    return {
+      exchange: params.symbol.includes('-') ? 'NFO' : 'NSE',
+      tradingsymbol: params.symbol,
+      transaction_type: params.side,
+      quantity: params.quantity,
+      order_type: params.type,
+      product: 'MIS',
+      ...(params.price ? { price: params.price } : {}),
+    }
   }
 }

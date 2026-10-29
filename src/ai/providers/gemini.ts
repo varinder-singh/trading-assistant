@@ -1,6 +1,8 @@
 import { GoogleGenerativeAI, HarmBlockThreshold, HarmCategory } from '@google/generative-ai'
 import type { LLMMessage, LLMOptions, LLMProvider } from '../types.js'
 
+type GeminiModelParams = Parameters<GoogleGenerativeAI['getGenerativeModel']>[0]
+
 export class GeminiProvider implements LLMProvider {
   name = 'gemini'
 
@@ -19,7 +21,7 @@ export class GeminiProvider implements LLMProvider {
     const systemMessage = messages.find((m) => m.role === 'system')
     const userMessages = messages.filter((m) => m.role !== 'system')
 
-    const modelParams: Record<string, any> = {
+    const modelParams: GeminiModelParams = {
       model: modelName,
       ...(systemMessage ? { systemInstruction: systemMessage.content } : {}),
       safetySettings: [
@@ -43,11 +45,11 @@ export class GeminiProvider implements LLMProvider {
     }
 
     console.log(
-      `[Gemini] Starting chat with model: ${modelName} (System Instruction: ${modelParams.systemInstruction?.length || 0} chars)`
+      `[Gemini] Starting chat with model: ${modelName} (System Instruction: ${systemMessage?.content.length || 0} chars)`
     )
 
     try {
-      const model = this.genAI.getGenerativeModel(modelParams as any)
+      const model = this.genAI.getGenerativeModel(modelParams)
 
       const chat = model.startChat({
         history: userMessages.slice(0, -1).map((m) => ({

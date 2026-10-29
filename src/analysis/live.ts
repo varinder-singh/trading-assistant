@@ -4,10 +4,10 @@ import { isMarketOpen } from '../utils/market-hours.js'
 
 export interface LiveTick {
   last_price: number
-  volume_traded?: number
-  timestamp?: Date
+  volume_traded?: number | undefined
+  timestamp?: Date | undefined
   instrument_token: number
-  received_at?: number
+  received_at?: number | undefined
 }
 
 export interface AnalysisLevels {

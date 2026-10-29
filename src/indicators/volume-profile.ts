@@ -1,5 +1,16 @@
 import type { Candle, ProfileType, VolumeNode, VolumeProfile } from '../types/analysis.js'
 
+interface BinContribution {
+  bin: number
+  volume: number
+}
+
+interface ValueAreaState {
+  currentVol: number
+  upBin: number
+  downBin: number
+}
+
 function determineProfileType(
   range: number,
   poc: number,
@@ -17,14 +28,8 @@ function determineProfileType(
   return 'D'
 }
 
-export function calculateVolumeProfile(
-  candles: Candle[],
-  tickSize: number = 5,
-  valueAreaPct: number = 0.7
-): VolumeProfile | null {
-  if (candles.length === 0) return null
-
-  const { minPrice, maxPrice, totalVolume } = candles.reduce(
+function calculatePriceBounds(candles: Candle[]): { minPrice: number; maxPrice: number; totalVolume: number } {
+  return candles.reduce(
     (acc, c) => ({
       minPrice: Math.min(acc.minPrice, c.low),
       maxPrice: Math.max(acc.maxPrice, c.high),
@@ -32,71 +37,88 @@ export function calculateVolumeProfile(
     }),
     { minPrice: Infinity, maxPrice: -Infinity, totalVolume: 0 }
   )
+}
 
+/** Distributes a candle's volume evenly across every price bin the candle spans. */
+function toBinContributions(candle: Candle, roundedMin: number, tickSize: number): BinContribution[] {
+  const startBin = Math.floor((candle.low - roundedMin) / tickSize)
+  const endBin = Math.floor((candle.high - roundedMin) / tickSize)
+  const binsAffected = endBin - startBin + 1
+
+  return Array.from({ length: binsAffected }, (_, idx) => ({
+    bin: startBin + idx,
+    volume: candle.volume / binsAffected,
+  }))
+}
+
+function buildVolumeBins(candles: Candle[], roundedMin: number, tickSize: number, binCount: number): number[] {
+  const contributions = candles
+    .flatMap((candle) => toBinContributions(candle, roundedMin, tickSize))
+    .filter(({ bin }) => bin >= 0 && bin < binCount)
+
+  return Array.from({ length: binCount }, (_, i) =>
+    contributions.filter(({ bin }) => bin === i).reduce((sum, { volume }) => sum + volume, 0)
+  )
+}
+
+/** Expands the value area one bin at a time (towards the heavier side) until the target volume is covered. */
+function expandValueArea(bins: number[], state: ValueAreaState, targetVol: number): ValueAreaState {
+  const { currentVol, upBin, downBin } = state
+  const canExpandUp = upBin < bins.length
+  const canExpandDown = downBin >= 0
+
+  if (currentVol >= targetVol || (!canExpandUp && !canExpandDown)) return state
+
+  const volUp = canExpandUp ? (bins[upBin] ?? 0) : 0
+  const volDown = canExpandDown ? (bins[downBin] ?? 0) : 0
+
+  return canExpandUp && volUp >= volDown
+    ? expandValueArea(bins, { currentVol: currentVol + volUp, upBin: upBin + 1, downBin }, targetVol)
+    : expandValueArea(bins, { currentVol: currentVol + volDown, upBin, downBin: downBin - 1 }, targetVol)
+}
+
+function calculateValueArea(
+  bins: number[],
+  pocBin: number,
+  roundedMin: number,
+  tickSize: number,
+  targetVol: number
+): { vah: number; val: number } {
+  const initialState = { currentVol: bins[pocBin] ?? 0, upBin: pocBin + 1, downBin: pocBin - 1 }
+  const { upBin, downBin } = expandValueArea(bins, initialState, targetVol)
+
+  return {
+    vah: roundedMin + (upBin - 1) * tickSize,
+    val: roundedMin + (downBin + 1) * tickSize,
+  }
+}
+
+function buildVolumeNodes(bins: number[], roundedMin: number, tickSize: number): VolumeNode[] {
+  return bins.map((volume, i) => ({ price: roundedMin + i * tickSize, volume }))
+}
+
+export function calculateVolumeProfile(
+  candles: Candle[],
+  tickSize: number = 5,
+  valueAreaPct: number = 0.7
+): VolumeProfile | null {
+  if (candles.length === 0) return null
+
+  const { minPrice, maxPrice, totalVolume } = calculatePriceBounds(candles)
   if (totalVolume === 0) return null
 
-  // Round min to nearest tick size downwards, max to nearest tick size upwards
   const roundedMin = Math.floor(minPrice / tickSize) * tickSize
   const roundedMax = Math.ceil(maxPrice / tickSize) * tickSize
-
   const binCount = Math.floor((roundedMax - roundedMin) / tickSize) + 1
-  const bins = new Float64Array(binCount)
 
-  // Distribute volume evenly across the bins that the candle spans
-  candles.forEach((c) => {
-    const startBin = Math.floor((c.low - roundedMin) / tickSize)
-    const endBin = Math.floor((c.high - roundedMin) / tickSize)
-    const binsAffected = endBin - startBin + 1
-    const volPerBin = c.volume / binsAffected
-
-    Array.from({ length: binsAffected }, (_, idx) => startBin + idx).forEach((i) => {
-      if (i >= 0 && i < binCount) {
-        bins[i] = (bins[i] ?? 0) + volPerBin
-      }
-    })
-  })
-
-  const pocBin = Array.from(bins).reduce((maxIdx, vol, i, arr) => (vol > (arr[maxIdx] ?? -1) ? i : maxIdx), 0)
+  const bins = buildVolumeBins(candles, roundedMin, tickSize, binCount)
+  const pocBin = bins.reduce((maxIdx, vol, i) => (vol > (bins[maxIdx] ?? -1) ? i : maxIdx), 0)
   const maxVol = bins[pocBin] ?? 0
   const poc = roundedMin + pocBin * tickSize
 
-  // Calculate Value Area expanding symmetrically from POC
-  const targetVol = totalVolume * valueAreaPct
-  let currentVol = bins[pocBin] ?? 0
-  let upBin = pocBin + 1
-  let downBin = pocBin - 1
-
-  while (currentVol < targetVol && (upBin < binCount || downBin >= 0)) {
-    const volUp = upBin < binCount ? (bins[upBin] ?? 0) : 0
-    const volDown = downBin >= 0 ? (bins[downBin] ?? 0) : 0
-
-    if (volUp >= volDown && upBin < binCount) {
-      currentVol += volUp
-      upBin++
-    } else if (volDown > volUp && downBin >= 0) {
-      currentVol += volDown
-      downBin--
-    } else if (upBin < binCount) {
-      currentVol += volUp
-      upBin++
-    } else {
-      currentVol += volDown
-      downBin--
-    }
-  }
-
-  const vah = roundedMin + (upBin - 1) * tickSize
-  const val = roundedMin + (downBin + 1) * tickSize
-
-  const range = roundedMax - roundedMin
+  const { vah, val } = calculateValueArea(bins, pocBin, roundedMin, tickSize, totalVolume * valueAreaPct)
   const avgVolPerBin = totalVolume / binCount
-  const valueAreaRange = vah - val
-  const profileType = determineProfileType(range, poc, roundedMin, maxVol, avgVolPerBin, valueAreaRange)
+  const profileType = determineProfileType(roundedMax - roundedMin, poc, roundedMin, maxVol, avgVolPerBin, vah - val)
 
-  const nodes: VolumeNode[] = Array.from({ length: binCount }, (_, i) => ({
-    price: roundedMin + i * tickSize,
-    volume: bins[i] ?? 0,
-  }))
-
-  return { poc, vah, val, profileType, nodes }
+  return { poc, vah, val, profileType, nodes: buildVolumeNodes(bins, roundedMin, tickSize) }
 }

@@ -55,31 +55,25 @@ export function calculateIV(
   const intrinsic = Math.max(0, type === 'CE' ? S - K : K - S)
   if (targetPrice <= intrinsic) return 0.01 // Option trading at or below intrinsic, IV is near zero
 
-  let v = 0.3 // Initial guess 30%
   const MAX_ITERATIONS = 100
   const TOLERANCE = 0.001
 
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
+  const step = (v: number, iteration: number): number => {
+    if (iteration >= MAX_ITERATIONS) return v
+
     const price = calculateBSPrice(S, K, T, r, v, type)
     const diff = price - targetPrice
-
-    if (Math.abs(diff) < TOLERANCE) {
-      return v
-    }
+    if (Math.abs(diff) < TOLERANCE) return v
 
     const d1 = (Math.log(S / K) + (r + (v * v) / 2) * T) / (v * Math.sqrt(T))
-    const vega = S * Math.sqrt(T) * pdf(d1) // Vega is same for Call and Put
+    const vega = S * Math.sqrt(T) * pdf(d1)
+    if (vega === 0) return v
 
-    if (vega === 0) break // Derivative is 0, cannot proceed
-
-    v = v - diff / vega
-
-    // Bound v to avoid negative or extreme IVs
-    if (v < 0.001) v = 0.001
-    if (v > 5.0) v = 5.0
+    const nextV = Math.min(5.0, Math.max(0.001, v - diff / vega))
+    return step(nextV, iteration + 1)
   }
 
-  return v
+  return step(0.3, 0)
 }
 
 /**

@@ -19,74 +19,63 @@ import { eventHub } from '../utils/event-hub.js'
 import { memoryService } from './memory.js'
 
 export function cleanJson(text: string): string {
-  let cleaned = text
+  return text
     .replace(/^```(?:json)?\n?/, '')
     .replace(/\n?```$/, '')
     .trim()
+    .replace(/"(?:[^"\\]|\\.)*"/g, (match) => match.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t'))
+}
 
-  // Replace raw newlines, carriage returns, and tabs inside double-quoted string values
-  cleaned = cleaned.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
-    return match.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t')
-  })
+function sanitizeStopLoss(result: AISuccessResponse, indexPrice: number, isBearish: boolean): void {
+  const isDirectionInvalid = isBearish ? result.stopLoss <= indexPrice : result.stopLoss >= indexPrice
+  const distPct = Math.abs(result.stopLoss - indexPrice) / indexPrice
+  const isDistanceInvalid = distPct < 0.001 || distPct > 0.02
+  const isMacroOutOfRange = result.stopLoss < indexPrice * 0.9 || result.stopLoss > indexPrice * 1.1
 
-  return cleaned
+  if (isDirectionInvalid || isDistanceInvalid || isMacroOutOfRange || !result.stopLoss) {
+    console.warn(
+      `[AI Validation] Invalid Stop Loss (${result.stopLoss}) for indexPrice ${indexPrice} (${(distPct * 100).toFixed(2)}% distance, direction=${isBearish ? 'PE' : 'CE'}). AI Hallucination detected, overriding.`
+    )
+    result.stopLoss = isBearish ? indexPrice * 1.005 : indexPrice * 0.995
+  }
+}
+
+function sanitizeTargets(result: AISuccessResponse, indexPrice: number, isBearish: boolean): void {
+  const firstTarget = result.targets?.[0]
+  const hasInvalidTarget = isBearish
+    ? firstTarget !== undefined && firstTarget >= indexPrice
+    : firstTarget !== undefined && firstTarget <= indexPrice
+  const isTargetDistanceInvalid = firstTarget !== undefined && Math.abs(firstTarget - indexPrice) / indexPrice > 0.05
+
+  if (!firstTarget || hasInvalidTarget || isTargetDistanceInvalid) {
+    console.warn(
+      `[AI Validation] Invalid Target (${firstTarget}) for direction ${isBearish ? 'PE' : 'CE'} (indexPrice ${indexPrice}). AI Hallucination detected, overriding.`
+    )
+    result.targets = [isBearish ? indexPrice * 0.995 : indexPrice * 1.005]
+  }
 }
 
 export function sanitizeAiDecision(
   result: AISuccessResponse,
   input: any,
-  agentType: TradingAgentType = 'SCALPER'
+  _agentType: TradingAgentType = 'SCALPER'
 ): AISuccessResponse {
   if (result.decision !== 'BUY') return result
 
-  // 1. Confidence bounding
   if (result.confidence < 0 || result.confidence > 100) {
     result.confidence = Math.min(Math.max(result.confidence || 0, 0), 100)
   }
 
   const isBearish = result.optionAction === 'BUY_PE'
   const indexPrice = result.entry || input?.tf15m?.price || input?.price || 0
+  if (indexPrice <= 0) return result
 
-  if (indexPrice > 0) {
-    if (!result.entry) {
-      result.entry = indexPrice
-    }
-
-    // 2. Stop Loss Validation
-    // Directional Check:
-    // For PE (Bearish): stop must be strictly above entry (stopLoss > indexPrice)
-    // For CE (Bullish): stop must be strictly below entry (stopLoss < indexPrice)
-    const isDirectionInvalid = isBearish
-      ? result.stopLoss <= indexPrice
-      : result.stopLoss >= indexPrice
-
-    // Distance Check:
-    // Distance must fall within 0.1% to 2.0% of indexPrice
-    const distPct = Math.abs(result.stopLoss - indexPrice) / indexPrice
-    const isDistanceInvalid = distPct < 0.001 || distPct > 0.02
-    const isMacroOutOfRange = result.stopLoss < indexPrice * 0.9 || result.stopLoss > indexPrice * 1.1
-
-    if (isDirectionInvalid || isDistanceInvalid || isMacroOutOfRange || !result.stopLoss) {
-      console.warn(
-        `[AI Validation] Invalid Stop Loss (${result.stopLoss}) for indexPrice ${indexPrice} (${(distPct * 100).toFixed(2)}% distance, direction=${isBearish ? 'PE' : 'CE'}). AI Hallucination detected, overriding.`
-      )
-      result.stopLoss = isBearish ? indexPrice * 1.005 : indexPrice * 0.995
-    }
-
-    // 3. Targets Validation
-    const firstTarget = result.targets?.[0]
-    const hasInvalidTarget = isBearish
-      ? firstTarget !== undefined && firstTarget >= indexPrice
-      : firstTarget !== undefined && firstTarget <= indexPrice
-    const isTargetDistanceInvalid = firstTarget !== undefined && Math.abs(firstTarget - indexPrice) / indexPrice > 0.05
-
-    if (!firstTarget || hasInvalidTarget || isTargetDistanceInvalid) {
-      console.warn(
-        `[AI Validation] Invalid Target (${firstTarget}) for direction ${isBearish ? 'PE' : 'CE'} (indexPrice ${indexPrice}). AI Hallucination detected, overriding.`
-      )
-      result.targets = [isBearish ? indexPrice * 0.995 : indexPrice * 1.005]
-    }
+  if (!result.entry) {
+    result.entry = indexPrice
   }
+
+  sanitizeStopLoss(result, indexPrice, isBearish)
+  sanitizeTargets(result, indexPrice, isBearish)
 
   return result
 }
@@ -166,7 +155,7 @@ export class LLMService {
     return cleaned
   }
 
-  public async evaluateMarketState(input: any, userId: string = ''): Promise<OrchestratorResponse> {
+  public async evaluateMarketState(input: any, _userId: string = ''): Promise<OrchestratorResponse> {
     console.log('[AI] Starting evaluateMarketState (Orchestrator)...')
     this.emitUpdate({
       agent: 'Orchestrator',
@@ -224,15 +213,9 @@ ${JSON.stringify(cleanedInput, null, 2)}
     }
   }
 
-  public async analyzeSentimentWithAI(input: any) {
-    let userPrompt = ''
-    let systemMessage = ''
-    if (input.prompt) {
-      userPrompt = input.prompt
-    }
-    if (input.systemPrompt) {
-      systemMessage = input.systemPrompt
-    }
+  public async analyzeSentimentWithAI(input: { prompt?: string; systemPrompt?: string }) {
+    const userPrompt = input.prompt || ''
+    const systemMessage = input.systemPrompt || ''
 
     const provider = this.providerFactory()
     const text = await provider.chat([
@@ -243,51 +226,39 @@ ${JSON.stringify(cleanedInput, null, 2)}
     return result
   }
 
-  public async analyzeWithAI(
-    input: any,
-    agentType: TradingAgentType = 'SCALPER'
-  ): Promise<AISuccessResponse | undefined> {
-    console.log(`[AI] Starting analyzeWithAI using ${agentType} agent...`)
-    this.emitUpdate({
-      agent: agentType,
-      status: 'thinking',
-      message: `Analyzing technicals and order flow for ${agentType} setup...`,
-    })
+  private injectWave5Target(systemMessage: string, input: any): string {
+    const wave5Target = input.tf15m?.waveContext?.wave5Target || input.marketData?.tf15m?.waveContext?.wave5Target
+    if (!wave5Target) return systemMessage
 
-    let userPrompt = ''
-    let systemMessage =
+    return systemMessage.replace(
+      /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,
+      `The mathematical Wave 5 Exhaustion Target is exactly ${wave5Target.toFixed(2)}. If price enters within 5 points of this level, shift trailing stop tightly.`
+    )
+  }
+
+  private buildSingleAgentSystemPrompt(input: any, agentType: TradingAgentType): string {
+    if (input.systemPrompt) return input.systemPrompt
+
+    const baseMessage =
       'You are a professional NSE options trader and technical analyst specializing in NIFTY intraday and swing trades. You produce precise, actionable trade plans based on technical indicators, options flow data (OI/COI), and market sentiment. You always respond with valid JSON only.'
 
     if (agentType === 'TREND') {
-      systemMessage += TREND_RULES
-      // Programmatic Math Injection: Inject Wave 5 target if available
-      const wave5Target = input.tf15m?.waveContext?.wave5Target || input.marketData?.tf15m?.waveContext?.wave5Target
-      if (wave5Target) {
-        systemMessage = systemMessage.replace(
-          /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,
-          `The mathematical Wave 5 Exhaustion Target is exactly ${wave5Target.toFixed(2)}. If price enters within 5 points of this level, shift trailing stop tightly.`
-        )
-      }
-    } else {
-      systemMessage += SCALPER_RULES
+      return this.injectWave5Target(baseMessage + TREND_RULES, input)
     }
+    return baseMessage + SCALPER_RULES
+  }
 
-    try {
-      if (input.prompt) {
-        userPrompt = input.prompt
-      } else {
-        const cleanedInput = this.sanitizeForLLM(input)
+  private buildLiveContextSection(cleanedInput: any): string {
+    if (!cleanedInput.liveContext) return ''
 
-        let liveContextSection = ''
-        if (cleanedInput.liveContext) {
-          const oiInsights = cleanedInput.optionsAnalysisZerodha?.windowStats
-            ? `\n- OI Window Insights (${cleanedInput.optionsAnalysisZerodha.windowStats.intervalMins}m): Top Short Covering: ${cleanedInput.optionsAnalysisZerodha.windowStats.topShortCovering.map((r: any) => r.symbol).join(', ')}`
-            : ''
-          const flowInsight = cleanedInput.optionsAnalysisZerodha?.marketFlow
-            ? `\n- Aggregate Market Flow: ${cleanedInput.optionsAnalysisZerodha.marketFlow}`
-            : ''
+    const oiInsights = cleanedInput.optionsAnalysisZerodha?.windowStats
+      ? `\n- OI Window Insights (${cleanedInput.optionsAnalysisZerodha.windowStats.intervalMins}m): Top Short Covering: ${cleanedInput.optionsAnalysisZerodha.windowStats.topShortCovering.map((r: any) => r.symbol).join(', ')}`
+      : ''
+    const flowInsight = cleanedInput.optionsAnalysisZerodha?.marketFlow
+      ? `\n- Aggregate Market Flow: ${cleanedInput.optionsAnalysisZerodha.marketFlow}`
+      : ''
 
-          liveContextSection = `
+    return `
 ## REAL-TIME WEBSOCKET CONTEXT (TRULY LIVE)
 - Trigger Reason: ${cleanedInput.liveContext.reason}
 - Last Price: ${cleanedInput.liveContext.tick.last_price}${oiInsights}${flowInsight}
@@ -296,11 +267,12 @@ ${JSON.stringify(cleanedInput, null, 2)}
 
 NOTE: This real-time data takes PRECEDENCE over historical candles.
 `
-        }
+  }
 
-        let previousDecisionSection = ''
-        if (cleanedInput.previousDecision) {
-          previousDecisionSection = `
+  private buildPreviousDecisionSection(cleanedInput: any): string {
+    if (!cleanedInput.previousDecision) return ''
+
+    return `
 ## PREVIOUS AI DECISION (FEEDBACK LOOP)
 Your last analysis resulted in:
 - Decision: ${cleanedInput.previousDecision.decision}
@@ -309,19 +281,28 @@ Your last analysis resulted in:
 
 Use this to decide if the current live breakout confirms your previous bias.
 `
-        }
+  }
 
-        let reversalScoreSection = ''
-        if (cleanedInput.reversalScore) {
-          reversalScoreSection = `
+  private buildReversalScoreSection(cleanedInput: any): string {
+    if (!cleanedInput.reversalScore) return ''
+
+    return `
 ## REVERSAL QUALITY SCORE (0 to 5)
 - Bullish Reversal Score: ${cleanedInput.reversalScore.bullish}/5
 - Bearish Reversal Score: ${cleanedInput.reversalScore.bearish}/5
 NOTE: Do NOT take a reversal trade (Playbook B) if the score is less than 3/5.
 `
-        }
+  }
 
-        userPrompt = `Analyze market data and produce a trade decision using DUAL TIMEFRAME analysis with ORDER FLOW focus.
+  private buildSingleAgentUserPrompt(input: any): string {
+    if (input.prompt) return input.prompt
+
+    const cleanedInput = this.sanitizeForLLM(input)
+    const liveContextSection = this.buildLiveContextSection(cleanedInput)
+    const previousDecisionSection = this.buildPreviousDecisionSection(cleanedInput)
+    const reversalScoreSection = this.buildReversalScoreSection(cleanedInput)
+
+    return `Analyze market data and produce a trade decision using DUAL TIMEFRAME analysis with ORDER FLOW focus.
 ${liveContextSection}
 ${previousDecisionSection}
 ${reversalScoreSection}
@@ -346,12 +327,23 @@ ${JSON.stringify(cleanedInput, null, 2)}
 
 IMPORTANT: Do NOT attempt to guess the option premium price. Identify the structural support/resistance on the INDEX chart (Tier 1/Tier 2) and use that as the stopLoss.
 `
-      }
+  }
 
-      if (input.systemPrompt) {
-        systemMessage = input.systemPrompt
-      }
+  public async analyzeWithAI(
+    input: any,
+    agentType: TradingAgentType = 'SCALPER'
+  ): Promise<AISuccessResponse | undefined> {
+    console.log(`[AI] Starting analyzeWithAI using ${agentType} agent...`)
+    this.emitUpdate({
+      agent: agentType,
+      status: 'thinking',
+      message: `Analyzing technicals and order flow for ${agentType} setup...`,
+    })
 
+    const systemMessage = this.buildSingleAgentSystemPrompt(input, agentType)
+
+    try {
+      const userPrompt = this.buildSingleAgentUserPrompt(input)
       const provider = this.providerFactory()
       const text = await provider.chat([
         { role: 'system', content: systemMessage },
@@ -360,8 +352,6 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
 
       try {
         const result: AISuccessResponse = JSON.parse(cleanJson(text))
-
-        // Validation & Guardrails
         sanitizeAiDecision(result, input, agentType)
 
         this.emitUpdate({
@@ -401,7 +391,6 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
     try {
       const provider = this.providerFactory()
 
-      // Fetch Memory
       const symbol = input.symbol || 'NIFTY'
       const trend = input.tf15m?.trend || 'SIDEWAYS'
       const vix = input.vix?.current || 15
@@ -411,7 +400,6 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
       const cleanedInput = this.sanitizeForLLM(input)
       const marketDataStr = JSON.stringify(cleanedInput, null, 2)
 
-      // 1. Run Technical and Options agents in parallel
       this.emitUpdate({
         agent: agentType,
         status: 'thinking',
@@ -441,7 +429,6 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
         message: `Ensemble: Technical: ${technical.bias}, Options: ${options.bias}. Determining consensus...`,
       })
 
-      // 2. Run Consensus Agent
       const consensusPrompt = `
 Assess the following inputs and provide a final trade decision.
 ## TECHNICAL ASSESSMENT
@@ -488,22 +475,12 @@ ${marketDataStr}
       message: `Evaluating risk for ${input.openPosition.symbol}...`,
     })
 
-    let systemMessage = `You are a professional NSE Risk Manager. Your sole task is to manage an OPEN options position based on live technicals and OI flow.
+    const rawSystemMessage = `You are a professional NSE Risk Manager. Your sole task is to manage an OPEN options position based on live technicals and OI flow.
 The position was originally opened by a ${agentType} agent. You must decide whether to HOLD, EXIT, or UPDATE_SL. Respond with valid JSON only.
 
-`
-    systemMessage += POSITION_MANAGEMENT_RULES
+${POSITION_MANAGEMENT_RULES}`
+    const systemMessage = this.injectWave5Target(rawSystemMessage, input)
 
-    // Programmatic Math Injection: Inject Wave 5 target if available
-    const wave5Target = input.tf15m?.waveContext?.wave5Target || input.marketData?.tf15m?.waveContext?.wave5Target
-    if (wave5Target) {
-      systemMessage = systemMessage.replace(
-        /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,
-        `The mathematical Wave 5 Exhaustion Target is exactly ${wave5Target.toFixed(2)}. If price enters within 5 points of this level, shift trailing stop tightly.`
-      )
-    }
-
-    // Fetch Memory for Risk Context
     const symbol = input.openPosition?.symbol || 'NIFTY'
     const trend = input.marketData?.tf15m?.trend || 'SIDEWAYS'
     const vix = input.marketData?.vix?.current || 15

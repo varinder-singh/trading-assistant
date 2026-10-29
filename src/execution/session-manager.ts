@@ -3,7 +3,7 @@ import { PaperTrader } from './paper-trader.js'
 import { createTicker } from '../data/kite-ticker.js'
 import { createKiteClient, getInstrumentToken, getOptionToken } from '../data/kite.js'
 import { LiveAnalyzer, type AnalysisLevels } from '../analysis/live.js'
-import { candleBuilder, seedCandleBuilder } from '../data/candle-builder.js'
+import { candleBuilder } from '../data/candle-builder.js'
 import { gtiTracker } from '../indicators/gti-tracker.js'
 import { runAnalysis } from '../analysis/trade.js'
 import { eventRepo, gtiRepo, userRepo } from '../db/repositories/container.js'
@@ -26,14 +26,7 @@ export function calculateBaseSignalPrice(params: {
   baseIndexPrice: number
   triggerIndexPrice: number
 }): number {
-  const {
-    optionType,
-    preLlmOptionLtp,
-    entryPrice,
-    estimatedDelta,
-    baseIndexPrice,
-    triggerIndexPrice,
-  } = params
+  const { optionType, preLlmOptionLtp, entryPrice, estimatedDelta, baseIndexPrice, triggerIndexPrice } = params
 
   const indexSpike =
     optionType === 'CE'
@@ -67,16 +60,7 @@ export function calculateBoundedRiskAndTarget(params: {
   calculatedSl: number
   calculatedTarget: number
 } {
-  const {
-    spotPrice,
-    stopLoss,
-    atr14,
-    agentType,
-    estimatedDelta,
-    signalPrice,
-    riskRewardRatio = 1.5,
-    expiry,
-  } = params
+  const { spotPrice, stopLoss, atr14, agentType, estimatedDelta, signalPrice, riskRewardRatio = 1.5, expiry } = params
 
   const minAtrRisk = 1.5 * atr14
   const maxAtrRisk = agentType === 'SCALPER' ? 2.5 * atr14 : 4.0 * atr14
@@ -89,12 +73,9 @@ export function calculateBoundedRiskAndTarget(params: {
   const optionRiskPoints = indexRiskPoints * estimatedDelta
 
   // Anchor Target and SL to the bounded optionRiskPoints
-  let calculatedSl = signalPrice - optionRiskPoints
   const rrr = riskRewardRatio || 1.5
-  let calculatedTarget = signalPrice + optionRiskPoints * rrr
-  if (agentType === 'SCALPER' && calculatedTarget > signalPrice * 1.5) {
-    calculatedTarget = signalPrice * 1.5
-  }
+  const rawTarget = signalPrice + optionRiskPoints * rrr
+  const calculatedTarget = agentType === 'SCALPER' ? Math.min(rawTarget, signalPrice * 1.5) : rawTarget
 
   // Enforce DTE-aware premium floor protection (prevents 0.05 / 100% loss trap)
   const dte = getCalendarDaysToExpiry(expiry)
@@ -102,9 +83,7 @@ export function calculateBoundedRiskAndTarget(params: {
   const maxAllowedRiskPct =
     agentType === 'SCALPER' ? Math.min(0.2, riskProfile.maxPremiumRiskPct) : riskProfile.maxPremiumRiskPct
   const minAllowedSl = signalPrice * (1 - maxAllowedRiskPct)
-  if (calculatedSl < minAllowedSl) {
-    calculatedSl = minAllowedSl
-  }
+  const calculatedSl = Math.max(signalPrice - optionRiskPoints, minAllowedSl)
 
   return {
     indexRiskPoints,
@@ -177,7 +156,7 @@ export class UserSession extends EventEmitter {
       return
     }
 
-    await seedCandleBuilder(this.kc, token)
+    await candleBuilder.seedFromKite(this.kc, token)
 
     // Cleanup previous analyzer listeners
     this.analyzer.off('breakout', this.onBreakout)
@@ -239,7 +218,6 @@ export class UserSession extends EventEmitter {
       return
     }
 
-    // Concurrency Lock: Prevent multiple overlapping AI analyses
     if (this.isAnalyzing) {
       console.log(
         `[UserSession] AI is already analyzing for ${this.watchedSymbol}. Dropping concurrent breakout event.`
@@ -269,174 +247,200 @@ export class UserSession extends EventEmitter {
         undefined,
         this.userId
       )
-      const { tf15m: tf, aiDecision: decision, vix, agentType, optionsAnalysis } = analysisResult
-      this.lastDecision = decision
-
+      this.lastDecision = analysisResult.aiDecision
       this.emit('analysis', analysisResult)
 
-      if (decision && decision.optionAction !== 'NONE') {
-        const type = decision.optionAction === 'BUY_CE' ? 'CE' : 'PE'
-        const option = await getOptionToken(this.kc, this.watchedSymbol, decision.strike || 0, type)
-
-        if (option) {
-          console.log(`[UserSession] Executing Paper Trade for ${option.symbol} (${agentType} Agent)...`)
-          this.ticker.subscribe([option.token])
-          this.ticker.setMode(this.ticker.modeFull, [option.token])
-
-          const quote = await this.kc.getQuote([`NFO:${option.symbol}`])
-          const entryPrice = quote[`NFO:${option.symbol}`]?.last_price || 0
-
-          if (entryPrice > 0) {
-            const optionRow = optionsAnalysis?.rows?.find((r: any) => r.strike === decision.strike && r.type === type)
-
-            // Estimated delta calculation
-            const estimatedDelta = optionRow?.greeks?.delta
-              ? Math.abs(optionRow.greeks.delta)
-              : decision.strike && tf.price
-                ? type === 'CE'
-                  ? tf.price > (decision.strike ?? 0)
-                    ? 0.75
-                    : 0.4 // ITM CE vs OTM CE
-                  : tf.price > (decision.strike ?? 0)
-                    ? 0.4
-                    : 0.75 // ITM CE vs OTM CE
-                : 0.5
-
-            // --- Fix 1: Pre-Breakout Baseline Option Price (baseSignalPrice) ---
-            const baseIndexPrice =
-              Array.isArray(context.recentTicks) && context.recentTicks.length > 0
-                ? context.recentTicks[0].last_price
-                : context.tick?.last_price || tf.price
-            const triggerIndexPrice = context.tick?.last_price || tf.price
-
-            const baseSignalPrice = calculateBaseSignalPrice({
-              optionType: type,
-              preLlmOptionLtp: optionRow?.ltp,
-              entryPrice,
-              estimatedDelta,
-              baseIndexPrice,
-              triggerIndexPrice,
-            })
-
-            // --- Fix 2: Strict ATR Risk Bounding & Target Anchoring ---
-            const atr14 = analysisResult.dailyContext?.atr14 || 20
-            const {
-              indexRiskPoints,
-              optionRiskPoints,
-              calculatedSl,
-              calculatedTarget,
-            } = calculateBoundedRiskAndTarget({
-              spotPrice: tf.price,
-              stopLoss: decision.stopLoss,
-              atr14,
-              agentType,
-              estimatedDelta,
-              signalPrice: baseSignalPrice,
-              riskRewardRatio: decision.riskRewardRatio || 1.5,
-              expiry: option.expiry,
-            })
-
-            // --- Fix 1: Real-Time Spike Guard & Pending Trigger Queue ---
-            const maxSlippagePct = Number(process.env.MAX_ENTRY_SLIPPAGE_PCT || 5)
-            const slippagePct = ((entryPrice - baseSignalPrice) / baseSignalPrice) * 100
-            const isSpikeTriggered = isEntrySpikeTriggered({
-              entryPrice,
-              baseSignalPrice,
-              optionRiskPoints,
-              maxSlippagePct,
-            })
-
-            if (entryPrice >= calculatedTarget) {
-              console.warn(
-                `⚠️ [UserSession] Entry BLOCKED: CMP ₹${entryPrice.toFixed(2)} has already reached or exceeded the target ₹${calculatedTarget.toFixed(2)}.`
-              )
-              return
-            }
-
-            const tradeContext: TradeContext = {
-              optionExpiry: option.expiry.toISOString(),
-              optionDelta: estimatedDelta,
-              aiReasoning: decision.reason,
-              aiConfidence: decision.confidence,
-              aiStrike: decision.strike || undefined,
-              aiSetup: decision.setup,
-              strategyContext: {
-                macroTrend: decision.macroTrend as AIMacroTrend,
-                indexSl: decision.stopLoss,
-                agentType,
-                riskRewardRatio: decision.riskRewardRatio || 1.5,
-              },
-              vixLevel: vix.current,
-              rsiLevel: tf.rsi,
-              trend15m: tf.trend,
-              aiStopLoss: calculatedSl,
-              aiTarget: calculatedTarget,
-              aiIndexTargets: decision.targets?.length ? decision.targets : undefined,
-              currentIndexPrice: tf.price,
-              lotSize: analysisResult.lotSize,
-              optionRiskPoints,
-              baseSignalPrice,
-              triggerPrice: baseSignalPrice,
-            }
-
-            if (isSpikeTriggered) {
-              console.log(
-                `⚡ [UserSession] Spike Guard triggered for ${option.symbol}: CMP ₹${entryPrice.toFixed(2)} vs Base ₹${baseSignalPrice.toFixed(2)} (${slippagePct.toFixed(1)}% slippage). Queueing Pullback Trigger Order.`
-              )
-
-              const ttlMs = 15 * 60 * 1000 // 15-minute TTL
-              const pendingOrder: PendingTriggerOrder = {
-                id: `pending_${Math.random().toString(36).substr(2, 9)}`,
-                symbol: option.symbol,
-                token: option.token,
-                strike: decision.strike || undefined,
-                side: 'BUY',
-                quantity: analysisResult.lotSize || 65,
-                triggerPrice: baseSignalPrice,
-                type: 'LIMIT',
-                status: 'PENDING',
-                createdAt: new Date(),
-                expiresAt: new Date(Date.now() + ttlMs),
-                ttlMs,
-                indexInvalidation: decision.stopLoss,
-                currentIndexPrice: tf.price,
-                optionRiskPoints,
-                estimatedDelta,
-                riskRewardRatio: decision.riskRewardRatio || 1.5,
-                baseSignalPrice,
-                context: {
-                  ...tradeContext,
-                  isTriggerOrder: true,
-                },
-              }
-
-              await this.paperTrader.queuePendingOrder(pendingOrder)
-              return
-            }
-
-            // Normal immediate market buy if within slippage limit
-            await this.paperTrader.placeOrder({
-              symbol: option.symbol,
-              token: option.token,
-              strike: decision.strike || undefined,
-              side: 'BUY',
-              quantity: 1,
-              price: entryPrice,
-              context: tradeContext,
-            })
-          }
-        }
-      }
+      await this.executeOptionSignal(analysisResult, context)
     } catch (err: any) {
-      console.error(`[UserSession] Error during breakout analysis:`, err)
-      // Check for Zerodha authentication error
-      if (err?.message?.includes('Token is invalid') || err?.status === 403 || err?.status === 401) {
-        console.error(`[UserSession] 🚨 Zerodha token expired or invalid for user ${this.userId}.`)
-        this.tokenExpired = true
-        this.emit('token_expired', { message: 'Zerodha token expired. Please re-login.' })
-      }
+      this.handleBreakoutError(err)
     } finally {
       this.isAnalyzing = false
+    }
+  }
+
+  private resolveEstimatedDelta(
+    optionDelta: number | undefined,
+    strike: number | null | undefined,
+    spotPrice: number,
+    type: 'CE' | 'PE'
+  ): number {
+    if (optionDelta) return Math.abs(optionDelta)
+    if (!strike || !spotPrice) return 0.5
+    const isItm = type === 'CE' ? spotPrice > strike : spotPrice < strike
+    return isItm ? 0.75 : 0.4
+  }
+
+  private async executeOptionSignal(
+    analysisResult: Awaited<ReturnType<typeof runAnalysis>>,
+    context: any
+  ): Promise<void> {
+    const { tf15m: tf, aiDecision: decision, vix, agentType, optionsAnalysis } = analysisResult
+    if (!decision || decision.optionAction === 'NONE') return
+
+    const type = decision.optionAction === 'BUY_CE' ? 'CE' : 'PE'
+    const option = await getOptionToken(this.kc, this.watchedSymbol, decision.strike || 0, type)
+    if (!option) return
+
+    console.log(`[UserSession] Executing Paper Trade for ${option.symbol} (${agentType} Agent)...`)
+    this.ticker.subscribe([option.token])
+    this.ticker.setMode(this.ticker.modeFull, [option.token])
+
+    const quote = await this.kc.getQuote([`NFO:${option.symbol}`])
+    const entryPrice = quote[`NFO:${option.symbol}`]?.last_price || 0
+    if (entryPrice <= 0) return
+
+    const optionRow = optionsAnalysis?.rows?.find((r) => r.strike === decision.strike && r.type === type)
+    const estimatedDelta = this.resolveEstimatedDelta(optionRow?.greeks?.delta, decision.strike, tf.price, type)
+
+    const baseIndexPrice =
+      Array.isArray(context.recentTicks) && context.recentTicks.length > 0
+        ? context.recentTicks[0].last_price
+        : context.tick?.last_price || tf.price
+    const triggerIndexPrice = context.tick?.last_price || tf.price
+
+    const baseSignalPrice = calculateBaseSignalPrice({
+      optionType: type,
+      preLlmOptionLtp: optionRow?.ltp,
+      entryPrice,
+      estimatedDelta,
+      baseIndexPrice,
+      triggerIndexPrice,
+    })
+
+    const atr14 = analysisResult.dailyContext?.atr14 || 20
+    const { optionRiskPoints, calculatedSl, calculatedTarget } = calculateBoundedRiskAndTarget({
+      spotPrice: tf.price,
+      stopLoss: decision.stopLoss,
+      atr14,
+      agentType,
+      estimatedDelta,
+      signalPrice: baseSignalPrice,
+      riskRewardRatio: decision.riskRewardRatio || 1.5,
+      expiry: option.expiry,
+    })
+
+    if (entryPrice >= calculatedTarget) {
+      console.warn(
+        `⚠️ [UserSession] Entry BLOCKED: CMP ₹${entryPrice.toFixed(2)} has already reached or exceeded the target ₹${calculatedTarget.toFixed(2)}.`
+      )
+      return
+    }
+
+    const tradeContext: TradeContext = {
+      optionExpiry: option.expiry.toISOString(),
+      optionDelta: estimatedDelta,
+      aiReasoning: decision.reason,
+      aiConfidence: decision.confidence,
+      aiStrike: decision.strike || undefined,
+      aiSetup: decision.setup,
+      strategyContext: {
+        macroTrend: decision.macroTrend as AIMacroTrend,
+        indexSl: decision.stopLoss,
+        agentType,
+        riskRewardRatio: decision.riskRewardRatio || 1.5,
+      },
+      vixLevel: vix.current,
+      rsiLevel: tf.rsi,
+      trend15m: tf.trend,
+      aiStopLoss: calculatedSl,
+      aiTarget: calculatedTarget,
+      aiIndexTargets: decision.targets?.length ? decision.targets : undefined,
+      currentIndexPrice: tf.price,
+      lotSize: analysisResult.lotSize,
+      optionRiskPoints,
+      baseSignalPrice,
+      triggerPrice: baseSignalPrice,
+    }
+
+    const maxSlippagePct = Number(process.env.MAX_ENTRY_SLIPPAGE_PCT || 5)
+    if (isEntrySpikeTriggered({ entryPrice, baseSignalPrice, optionRiskPoints, maxSlippagePct })) {
+      await this.queueSpikeTriggerOrder({
+        option,
+        decision,
+        lotSize: analysisResult.lotSize,
+        spotPrice: tf.price,
+        entryPrice,
+        baseSignalPrice,
+        optionRiskPoints,
+        estimatedDelta,
+        tradeContext,
+      })
+      return
+    }
+
+    await this.paperTrader.placeOrder({
+      symbol: option.symbol,
+      token: option.token,
+      strike: decision.strike || undefined,
+      side: 'BUY',
+      quantity: 1,
+      price: entryPrice,
+      context: tradeContext,
+    })
+  }
+
+  private async queueSpikeTriggerOrder(params: {
+    option: { symbol: string; token: number }
+    decision: { strike?: number | null | undefined; stopLoss: number; riskRewardRatio?: number | undefined }
+    lotSize?: number | undefined
+    spotPrice: number
+    entryPrice: number
+    baseSignalPrice: number
+    optionRiskPoints: number
+    estimatedDelta: number
+    tradeContext: TradeContext
+  }): Promise<void> {
+    const {
+      option,
+      decision,
+      lotSize,
+      spotPrice,
+      entryPrice,
+      baseSignalPrice,
+      optionRiskPoints,
+      estimatedDelta,
+      tradeContext,
+    } = params
+    const slippagePct = ((entryPrice - baseSignalPrice) / baseSignalPrice) * 100
+    console.log(
+      `⚡ [UserSession] Spike Guard triggered for ${option.symbol}: CMP ₹${entryPrice.toFixed(2)} vs Base ₹${baseSignalPrice.toFixed(2)} (${slippagePct.toFixed(1)}% slippage). Queueing Pullback Trigger Order.`
+    )
+
+    const ttlMs = 15 * 60 * 1000
+    const pendingOrder: PendingTriggerOrder = {
+      id: `pending_${Math.random().toString(36).substr(2, 9)}`,
+      symbol: option.symbol,
+      token: option.token,
+      strike: decision.strike || undefined,
+      side: 'BUY',
+      quantity: lotSize || 65,
+      triggerPrice: baseSignalPrice,
+      type: 'LIMIT',
+      status: 'PENDING',
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + ttlMs),
+      ttlMs,
+      indexInvalidation: decision.stopLoss,
+      currentIndexPrice: spotPrice,
+      optionRiskPoints,
+      estimatedDelta,
+      riskRewardRatio: decision.riskRewardRatio || 1.5,
+      baseSignalPrice,
+      context: {
+        ...tradeContext,
+        isTriggerOrder: true,
+      },
+    }
+
+    await this.paperTrader.queuePendingOrder(pendingOrder)
+  }
+
+  private handleBreakoutError(err: any): void {
+    console.error(`[UserSession] Error during breakout analysis:`, err)
+    if (err?.message?.includes('Token is invalid') || err?.status === 403 || err?.status === 401) {
+      console.error(`[UserSession] 🚨 Zerodha token expired or invalid for user ${this.userId}.`)
+      this.tokenExpired = true
+      this.emit('token_expired', { message: 'Zerodha token expired. Please re-login.' })
     }
   }
 
@@ -530,63 +534,45 @@ export class UserSession extends EventEmitter {
     candleBuilder.on('candle_close', this.candleCloseHandler)
   }
 
-  updateToken(accessToken: string, apiKey?: string) {
-    if (this.accessToken === accessToken && this.apiKey === apiKey) {
-      return
+  private cleanupTickerAndCandleListeners(): void {
+    try {
+      this.ticker.disconnect()
+      if (typeof (this.ticker as any).removeAllListeners === 'function') {
+        ;(this.ticker as any).removeAllListeners()
+      }
+    } catch (err) {
+      console.warn(`[UserSession] Error during ticker disconnect for ${this.userId}:`, err)
     }
+
+    if (this.candleCloseHandler) {
+      candleBuilder.off('candle_close', this.candleCloseHandler)
+      this.candleCloseHandler = null
+    }
+  }
+
+  updateToken(accessToken: string, apiKey?: string) {
+    if (this.accessToken === accessToken && this.apiKey === apiKey) return
 
     console.log(`[UserSession] Token refreshed for user ${this.userId}. Re-initializing client and ticker.`)
     this.accessToken = accessToken
     this.apiKey = apiKey
     this.tokenExpired = false
 
-    // Recreate KiteConnect client and pass to PaperTrader
     this.kc = createKiteClient(accessToken, apiKey)
     this.paperTrader.setKiteClient(this.kc)
 
-    // Clean up old ticker instance
-    try {
-      this.ticker.disconnect()
-      if (typeof (this.ticker as any).removeAllListeners === 'function') {
-        ;(this.ticker as any).removeAllListeners()
-      }
-    } catch (err) {
-      console.warn(`[UserSession] Error cleaning up old ticker for ${this.userId}:`, err)
-    }
+    this.cleanupTickerAndCandleListeners()
 
-    // Remove old candle_close handler before creating new ticker listeners
-    if (this.candleCloseHandler) {
-      candleBuilder.off('candle_close', this.candleCloseHandler)
-      this.candleCloseHandler = null
-    }
-
-    // Recreate and reconnect ticker
     this.ticker = createTicker(accessToken, apiKey)
     this.setupTickerListeners()
     this.ticker.connect()
 
-    // Emit event so other layers (e.g. websocket connections) can re-bind
     this.emit('ticker_recreated')
   }
 
   destroy() {
-    // Cleanup LiveAnalyzer
     this.analyzer.off('breakout', this.onBreakout)
-
-    // Cleanup candle_close listener
-    if (this.candleCloseHandler) {
-      candleBuilder.off('candle_close', this.candleCloseHandler)
-      this.candleCloseHandler = null
-    }
-
-    try {
-      this.ticker.disconnect()
-      if (typeof (this.ticker as any).removeAllListeners === 'function') {
-        ;(this.ticker as any).removeAllListeners()
-      }
-    } catch (err) {
-      console.warn(`[UserSession] Error during ticker disconnect:`, err)
-    }
+    this.cleanupTickerAndCandleListeners()
     this.paperTrader.removeAllListeners()
     this.removeAllListeners()
   }

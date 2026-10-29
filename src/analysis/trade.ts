@@ -1,7 +1,7 @@
 import { getMultiTimeframeCandles } from '../data/yahoo.js'
 import { analyzeMultiTimeframe, analyzeDailyContext } from './technical.js'
 import { LLMService } from '../ai/llm.js'
-import { validateRegime } from '../ai/regime-validator.js'
+import { validateRegime, type ValidationResult } from '../ai/regime-validator.js'
 import { getNews } from '../data/news.js'
 import { analyzeSentiment } from './sentiment.js'
 import { getOptionChain } from '../data/kite-options.js'
@@ -64,37 +64,18 @@ export class TradeAnalysisService {
     const dailyContext = analyzeDailyContext(candles.candles1d, candles.candles15m)
     const { quotes, finalOptions, lotSize } = kiteData
 
-    if (!yesterdayOiCache || lastCacheSymbol !== symbol) {
-      const tokens = finalOptions.map((opt: any) => opt.instrument_token).filter((t: any): t is number => !!t)
-      yesterdayOiCache = await getYesterdayClosingOI(kc, tokens)
-      lastCacheSymbol = symbol
-    }
-
-    const intervalMins = Number(process.env.OI_SHIFT_INTERVAL_MINS || 5)
-    const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, tf15m.price, yesterdayOiCache, intervalMins)
-
-    const { ivHistoryRepo } = await import('../db/repositories/iv-history.js')
-    const atmRow = optionsAnalysisZerodha.rows.find(
-      (r) => r.strike === optionsAnalysisZerodha.atmStrike && r.type === 'CE'
+    const optionsAnalysisZerodha = await this.buildEnrichedOptionsAnalysis(
+      kc,
+      symbol,
+      quotes,
+      finalOptions,
+      tf15m.price
     )
-    const currentIv = atmRow?.greeks?.iv || 0.15
-    const ivStats = await ivHistoryRepo.getIvStats(symbol, currentIv, 30)
-    optionsAnalysisZerodha.ivRank = ivStats.ivRank
-    optionsAnalysisZerodha.ivPercentile = ivStats.ivPercentile
-
-    const atmIdx = optionsAnalysisZerodha.rows.findIndex(
-      (r) => r.strike === optionsAnalysisZerodha.atmStrike && r.type === 'CE'
-    )
-    if (atmIdx !== -1) {
-      const startIdx = Math.max(0, atmIdx - 4)
-      const endIdx = Math.min(optionsAnalysisZerodha.rows.length, atmIdx + 6)
-      optionsAnalysisZerodha.rows = optionsAnalysisZerodha.rows.slice(startIdx, endIdx)
-    }
 
     if (cooldownManager.isOnCooldown(symbol) || vix.current > 25) {
       const reason = cooldownManager.isOnCooldown(symbol) ? 'Symbol on Cooldown' : 'VIX > 25 Circuit Breaker'
       console.log(`[Circuit Breaker] Aborting analysis for ${symbol}: ${reason}`)
-      return {
+      return this.buildNoTradeResult({
         tf1h,
         tf30m,
         tf15m,
@@ -103,26 +84,11 @@ export class TradeAnalysisService {
         vix,
         sentiment: { sentiment: 'neutral', confidence: 1, reason: 'Skipped due to circuit breaker' },
         optionsAnalysis: optionsAnalysisZerodha,
-        candles1h: candles.candles1h.slice(-100),
-        candles30m: candles.candles30m ? candles.candles30m.slice(-100) : [],
-        candles15m: candles.candles15m.slice(-100),
-        candles3m: candles.candles3m.slice(-100),
+        candles,
         agentType: 'SCALPER',
-        aiDecision: {
-          decision: 'NO_TRADE',
-          reason,
-          confidence: 100,
-          optionAction: 'NONE',
-          setup: 'NONE',
-          riskRewardRatio: 0,
-          entry: 0,
-          stopLoss: 0,
-          targets: [],
-          instrument: 'OPTIONS',
-          strike: null,
-          macroTrend: 'SIDEWAYS',
-        },
-      }
+        reason,
+        macroTrend: 'SIDEWAYS',
+      })
     }
 
     const sentiment = await analyzeSentiment(headlines)
@@ -144,23 +110,11 @@ export class TradeAnalysisService {
       vix,
       mode,
       time: new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }),
+      ...(gtiScore && gtiScore.confidence > 0 ? { gtiScore } : {}),
     }
 
-    if (gtiScore && gtiScore.confidence > 0) {
-      marketContext.gtiScore = gtiScore
-    }
-    const orchestrator = await this.llmService.evaluateMarketState(marketContext, userId)
-    const validation = validateRegime(orchestrator, marketContext)
-    if (validation.wasOverridden) {
-      console.warn(`[RegimeValidator] OVERRIDE: ${orchestrator.activeAgent} → ${validation.activeAgent}`)
-      validation.checks.filter((c) => !c.passed).forEach((c) => console.warn(`  ✗ ${c.name}: ${c.reason}`))
-    } else {
-      console.log(`[Orchestrator] Active Agent: ${validation.activeAgent} (${orchestrator.confidence}%)`)
-      console.log(`[Orchestrator] Rationale: ${orchestrator.rationale}`)
-    }
-    const activeAgent = validation.activeAgent as TradingAgentType
-
-    const tempAnalysisForScore = {
+    const activeAgent = await this.resolveActiveAgent(marketContext, userId)
+    const reversalScore = this.computeReversalScores({
       tf1h,
       tf30m,
       tf15m,
@@ -169,16 +123,9 @@ export class TradeAnalysisService {
       vix,
       sentiment,
       optionsAnalysis: optionsAnalysisZerodha,
-      candles1h: candles.candles1h,
-      candles15m: candles.candles15m,
-      candles3m: candles.candles3m,
+      candles,
       agentType: activeAgent,
-    } as TradeTechnicalAnalysis
-
-    const reversalScore = {
-      bullish: calculateReversalScore(tempAnalysisForScore, 'BULLISH').score,
-      bearish: calculateReversalScore(tempAnalysisForScore, 'BEARISH').score,
-    }
+    })
 
     const aiDecision = await this.llmService.analyzeWithEnsemble(
       {
@@ -202,33 +149,20 @@ export class TradeAnalysisService {
 
     if (!aiDecision) {
       return {
-        tf1h,
-        tf30m,
-        tf15m,
-        tf3m,
-        dailyContext,
-        aiDecision: {
-          decision: 'NO_TRADE',
+        ...this.buildNoTradeResult({
+          tf1h,
+          tf30m,
+          tf15m,
+          tf3m,
+          dailyContext,
+          vix,
+          sentiment,
+          optionsAnalysis: optionsAnalysisZerodha,
+          candles,
+          agentType: activeAgent || 'SCALPER',
           reason: 'No active trend + high VIX structure requires sitting out.',
-          confidence: 100,
-          optionAction: 'NONE',
-          setup: 'NONE',
-          riskRewardRatio: 0,
-          stopLoss: 0,
-          entry: 0,
-          targets: [],
-          instrument: 'OPTIONS',
-          strike: null,
           macroTrend: mode,
-        },
-        vix,
-        sentiment,
-        optionsAnalysis: optionsAnalysisZerodha,
-        candles1h: candles.candles1h.slice(-100),
-        candles30m: candles.candles30m ? candles.candles30m.slice(-100) : [],
-        candles15m: candles.candles15m.slice(-100),
-        candles3m: candles.candles3m.slice(-100),
-        agentType: activeAgent || 'SCALPER',
+        }),
         gtiHistory: gtiTracker.getHistory(0),
       }
     }
@@ -236,7 +170,7 @@ export class TradeAnalysisService {
     this.processAiDecisionFilters(aiDecision, tf15m, gtiScore)
     this.logAnalysisSummary(liveContext, vix, sentiment, aiDecision, tf15m, tf1h, dailyContext, gtiScore)
 
-    const baseAnalysis: Omit<TradeTechnicalAnalysis, 'reversalScore'> = {
+    return {
       tf1h,
       tf30m,
       tf15m,
@@ -250,14 +184,156 @@ export class TradeAnalysisService {
       candles30m: candles.candles30m ? candles.candles30m.slice(-100) : [],
       candles15m: candles.candles15m.slice(-100),
       candles3m: candles.candles3m.slice(-100),
-      agentType: (activeAgent || 'SCALPER') as import('../ai/types.js').TradingAgentType,
+      agentType: (activeAgent || 'SCALPER') as TradingAgentType,
       gtiHistory: gtiTracker.getHistory(0),
       lotSize: lotSize || 1,
+      reversalScore,
+    }
+  }
+
+  private async buildEnrichedOptionsAnalysis(
+    kc: any,
+    symbol: string,
+    quotes: Record<string, any>,
+    finalOptions: any[],
+    spotPrice: number
+  ) {
+    if (!yesterdayOiCache || lastCacheSymbol !== symbol) {
+      const tokens = finalOptions.map((opt: any) => opt.instrument_token).filter((t: any): t is number => !!t)
+      yesterdayOiCache = await getYesterdayClosingOI(kc, tokens)
+      lastCacheSymbol = symbol
     }
 
+    const intervalMins = Number(process.env.OI_SHIFT_INTERVAL_MINS || 5)
+    const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, spotPrice, yesterdayOiCache, intervalMins)
+
+    const { ivHistoryRepo } = await import('../db/repositories/iv-history.js')
+    const atmRow = optionsAnalysisZerodha.rows.find(
+      (r) => r.strike === optionsAnalysisZerodha.atmStrike && r.type === 'CE'
+    )
+    const currentIv = atmRow?.greeks?.iv || 0.15
+    const ivStats = await ivHistoryRepo.getIvStats(symbol, currentIv, 30)
+    optionsAnalysisZerodha.ivRank = ivStats.ivRank
+    optionsAnalysisZerodha.ivPercentile = ivStats.ivPercentile
+
+    const atmIdx = optionsAnalysisZerodha.rows.findIndex(
+      (r) => r.strike === optionsAnalysisZerodha.atmStrike && r.type === 'CE'
+    )
+    if (atmIdx !== -1) {
+      const startIdx = Math.max(0, atmIdx - 4)
+      const endIdx = Math.min(optionsAnalysisZerodha.rows.length, atmIdx + 6)
+      optionsAnalysisZerodha.rows = optionsAnalysisZerodha.rows.slice(startIdx, endIdx)
+    }
+
+    return optionsAnalysisZerodha
+  }
+
+  private buildNoTradeResult(params: {
+    tf1h: TradeTechnicalAnalysis['tf1h']
+    tf30m: TradeTechnicalAnalysis['tf30m']
+    tf15m: TradeTechnicalAnalysis['tf15m']
+    tf3m: TradeTechnicalAnalysis['tf3m']
+    dailyContext: TradeTechnicalAnalysis['dailyContext']
+    vix: TradeTechnicalAnalysis['vix']
+    sentiment: TradeTechnicalAnalysis['sentiment']
+    optionsAnalysis: TradeTechnicalAnalysis['optionsAnalysis']
+    candles: {
+      candles1h: Candle[]
+      candles30m?: Candle[] | undefined
+      candles15m: Candle[]
+      candles3m: Candle[]
+    }
+    agentType: TradingAgentType
+    reason: string
+    macroTrend: string
+  }): TradeTechnicalAnalysis {
+    const {
+      tf1h,
+      tf30m,
+      tf15m,
+      tf3m,
+      dailyContext,
+      vix,
+      sentiment,
+      optionsAnalysis,
+      candles,
+      agentType,
+      reason,
+      macroTrend,
+    } = params
     return {
-      ...baseAnalysis,
-      reversalScore,
+      tf1h,
+      tf30m,
+      tf15m,
+      tf3m,
+      dailyContext,
+      vix,
+      sentiment,
+      optionsAnalysis,
+      candles1h: candles.candles1h.slice(-100),
+      candles30m: candles.candles30m ? candles.candles30m.slice(-100) : [],
+      candles15m: candles.candles15m.slice(-100),
+      candles3m: candles.candles3m.slice(-100),
+      agentType,
+      aiDecision: {
+        decision: 'NO_TRADE',
+        reason,
+        confidence: 100,
+        optionAction: 'NONE',
+        setup: 'NONE',
+        riskRewardRatio: 0,
+        entry: 0,
+        stopLoss: 0,
+        targets: [],
+        instrument: 'OPTIONS',
+        strike: null,
+        macroTrend: macroTrend as any,
+      },
+    }
+  }
+
+  private async resolveActiveAgent(marketContext: MarketContext, userId: string): Promise<TradingAgentType> {
+    const orchestrator = await this.llmService.evaluateMarketState(marketContext, userId)
+    const validation = validateRegime(orchestrator, marketContext)
+    if (validation.wasOverridden) {
+      this.logRegimeOverride(orchestrator.activeAgent, validation)
+    } else {
+      console.log(`[Orchestrator] Active Agent: ${validation.activeAgent} (${orchestrator.confidence}%)`)
+      console.log(`[Orchestrator] Rationale: ${orchestrator.rationale}`)
+    }
+    return validation.activeAgent as TradingAgentType
+  }
+
+  private computeReversalScores(params: {
+    tf1h: TradeTechnicalAnalysis['tf1h']
+    tf30m: TradeTechnicalAnalysis['tf30m']
+    tf15m: TradeTechnicalAnalysis['tf15m']
+    tf3m: TradeTechnicalAnalysis['tf3m']
+    dailyContext: TradeTechnicalAnalysis['dailyContext']
+    vix: TradeTechnicalAnalysis['vix']
+    sentiment: TradeTechnicalAnalysis['sentiment']
+    optionsAnalysis: TradeTechnicalAnalysis['optionsAnalysis']
+    candles: { candles1h: Candle[]; candles15m: Candle[]; candles3m: Candle[] }
+    agentType: TradingAgentType
+  }): { bullish: number; bearish: number } {
+    const tempAnalysisForScore = {
+      tf1h: params.tf1h,
+      tf30m: params.tf30m,
+      tf15m: params.tf15m,
+      tf3m: params.tf3m,
+      dailyContext: params.dailyContext,
+      vix: params.vix,
+      sentiment: params.sentiment,
+      optionsAnalysis: params.optionsAnalysis,
+      candles1h: params.candles.candles1h,
+      candles15m: params.candles.candles15m,
+      candles3m: params.candles.candles3m,
+      agentType: params.agentType,
+    } as TradeTechnicalAnalysis
+
+    return {
+      bullish: calculateReversalScore(tempAnalysisForScore, 'BULLISH').score,
+      bearish: calculateReversalScore(tempAnalysisForScore, 'BEARISH').score,
     }
   }
 
@@ -301,18 +377,7 @@ export class TradeAnalysisService {
       mode: 'intraday',
     }
 
-    let agentType: TradingAgentType = openPosition.strategyContext?.agentType || 'SCALPER'
-
-    const orchestrator = await this.llmService.evaluateMarketState(marketData, userId)
-    const validation = validateRegime(orchestrator, marketData)
-    if (validation.wasOverridden) {
-      console.warn(`[RegimeValidator] OVERRIDE: ${orchestrator.activeAgent} → ${validation.activeAgent}`)
-      validation.checks.filter((c) => !c.passed).forEach((c) => console.warn(`  ✗ ${c.name}: ${c.reason}`))
-    }
-    if (validation.activeAgent === 'TREND' && agentType === 'SCALPER') {
-      console.log(`[Orchestrator] UPGRADING position management to TREND agent for ${openPosition.symbol}`)
-      agentType = 'TREND'
-    }
+    const agentType = await this.resolvePositionAgentType(openPosition, marketData, userId)
 
     const decision = await this.llmService.managePositionWithAI(
       {
@@ -332,6 +397,34 @@ export class TradeAnalysisService {
     )
 
     return { decision, marketData, agentType }
+  }
+
+  private async resolvePositionAgentType(
+    openPosition: PaperPosition,
+    marketData: MarketContext,
+    userId: string
+  ): Promise<TradingAgentType> {
+    const initialAgent: TradingAgentType = openPosition.strategyContext?.agentType || 'SCALPER'
+    const orchestrator = await this.llmService.evaluateMarketState(marketData, userId)
+    const validation = validateRegime(orchestrator, marketData)
+    if (validation.wasOverridden) {
+      this.logRegimeOverride(orchestrator.activeAgent, validation)
+    }
+    if (validation.activeAgent === 'TREND' && initialAgent === 'SCALPER') {
+      console.log(`[Orchestrator] UPGRADING position management to TREND agent for ${openPosition.symbol}`)
+      return 'TREND'
+    }
+    return initialAgent
+  }
+
+  private logRegimeOverride(originalAgent: string, validation: ValidationResult): void {
+    const failedChecks = validation.checks
+      .filter((check) => !check.passed)
+      .map((check) => `  ✗ ${check.name}: ${check.reason}`)
+
+    console.warn(
+      [`[RegimeValidator] OVERRIDE: ${originalAgent} → ${validation.activeAgent}`, ...failedChecks].join('\n')
+    )
   }
 
   private async fetchAnalysisInputs(
@@ -369,6 +462,30 @@ export class TradeAnalysisService {
     return [candles, headlines, vix, kiteData] as const
   }
 
+  private async resolvePositionCandles(
+    kc: any,
+    symbol: string,
+    injectedCandles: {
+      candles1d: Candle[]
+      candles1h: Candle[]
+      candles30m?: Candle[] | undefined
+      candles15m: Candle[]
+      candles3m: Candle[]
+    }
+  ) {
+    if (injectedCandles.candles15m.length > 0) return injectedCandles
+
+    console.log(`[Risk Manager] Real-time candles empty for ${symbol}. Falling back to Yahoo baseline.`)
+    const macro = await getMultiTimeframeCandles(symbol, kc)
+    return {
+      candles1d: injectedCandles.candles1d,
+      candles1h: injectedCandles.candles1h,
+      candles30m: macro.candles30m,
+      candles15m: macro.candles15m,
+      candles3m: macro.candles3m,
+    }
+  }
+
   private async fetchPositionEvalInputs(
     kc: any,
     symbol: string,
@@ -381,27 +498,11 @@ export class TradeAnalysisService {
     }
   ) {
     if (injectedCandles) {
-      let candles15m = injectedCandles.candles15m
-      let candles30m = injectedCandles.candles30m
-      let candles3m = injectedCandles.candles3m
-
-      if (candles15m.length === 0) {
-        console.log(`[Risk Manager] Real-time candles empty for ${symbol}. Falling back to Yahoo baseline.`)
-        const macro = await getMultiTimeframeCandles(symbol, kc)
-        candles30m = macro.candles30m
-        candles15m = macro.candles15m
-        candles3m = macro.candles3m
-      }
-
-      const candles = {
-        candles1d: injectedCandles.candles1d,
-        candles1h: injectedCandles.candles1h,
-        candles30m,
-        candles15m,
-        candles3m,
-      }
-
-      const [vix, kiteData] = await Promise.all([getIndiaVix(), getOptionChain(kc, symbol)])
+      const [candles, vix, kiteData] = await Promise.all([
+        this.resolvePositionCandles(kc, symbol, injectedCandles),
+        getIndiaVix(),
+        getOptionChain(kc, symbol),
+      ])
       return [candles, vix, kiteData] as const
     }
 
@@ -425,8 +526,7 @@ export class TradeAnalysisService {
   private processAiDecisionFilters(aiDecision: any, tf15m: any, gtiScore: any): void {
     if (!aiDecision.optionAction || aiDecision.optionAction === 'NONE') return
 
-    let normalizedConfidence = aiDecision.confidence
-    if (normalizedConfidence <= 1.0) normalizedConfidence *= 100
+    const normalizedConfidence = aiDecision.confidence <= 1.0 ? aiDecision.confidence * 100 : aiDecision.confidence
 
     if (normalizedConfidence < 60) {
       console.log(`[Analysis] Signal REJECTED: Confidence ${normalizedConfidence}% is below minimum threshold (60%).`)
@@ -492,7 +592,10 @@ export class TradeAnalysisService {
       aiDecision.decision = 'HOLD'
       aiDecision.optionAction = 'NONE'
       aiDecision.reason = `[GTI BLOCKED] ${aiDecision.reason} | Institutional flow (${gtiScore.classification}) severely opposes this trade direction.`
-    } else if (gtiMildOpposing) {
+      return
+    }
+
+    if (gtiMildOpposing) {
       const penalizedConfidence = Math.max(50, normalizedConfidence * 0.7)
       console.warn(
         `[GTI Gatekeeper] ⚠️ WARNING: ${aiDecision.optionAction} — GTI score ${gtiScore.composite.toFixed(2)} (${gtiScore.classification}) mildly opposes. Confidence ${normalizedConfidence}% → ${penalizedConfidence.toFixed(0)}%.`
@@ -503,14 +606,15 @@ export class TradeAnalysisService {
       console.log(
         `🎯 AI EXECUTION SIGNAL: ${aiDecision.optionAction} at strike ${aiDecision.strike} (REDUCED SIZE — GTI caution)`
       )
-    } else {
-      console.log(
-        `🎯 AI EXECUTION SIGNAL: ${aiDecision.optionAction} at strike ${aiDecision.strike}${aiDecision.reducedPosition ? ' (REDUCED SIZE)' : ''}`
-      )
-      console.log(
-        `[GTI] ✅ Institutional flow CONFIRMS direction: ${gtiScore.classification} (${gtiScore.composite.toFixed(2)})`
-      )
+      return
     }
+
+    console.log(
+      `🎯 AI EXECUTION SIGNAL: ${aiDecision.optionAction} at strike ${aiDecision.strike}${aiDecision.reducedPosition ? ' (REDUCED SIZE)' : ''}`
+    )
+    console.log(
+      `[GTI] ✅ Institutional flow CONFIRMS direction: ${gtiScore.classification} (${gtiScore.composite.toFixed(2)})`
+    )
   }
 
   private logAnalysisSummary(

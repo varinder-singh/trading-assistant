@@ -1,5 +1,5 @@
-import { EventEmitter } from "node:events"
-import { getIntradayBaseline } from "./kite-historical.js"
+import { EventEmitter } from 'node:events'
+import { getIntradayBaseline } from './kite-historical.js'
 
 export class CandleBuilder extends EventEmitter {
   private candles: Map<number, Map<number, any[]>> = new Map()
@@ -15,6 +15,27 @@ export class CandleBuilder extends EventEmitter {
     tfMap.set(timeframe, historicalCandles.slice(-500))
   }
 
+  public async seedFromKite(kc: any, token: number): Promise<void> {
+    if (this.isSeeded(token)) return
+
+    console.log(`📊 Seeding CandleBuilder for token ${token}...`)
+    try {
+      const [c1m, c3m, c15m, c30m] = await Promise.all([
+        getIntradayBaseline(kc, token, 'minute', 2),
+        getIntradayBaseline(kc, token, '3minute', 5),
+        getIntradayBaseline(kc, token, '15minute', 5),
+        getIntradayBaseline(kc, token, '30minute', 5),
+      ])
+      this.seed(token, 1, c1m)
+      this.seed(token, 3, c3m)
+      this.seed(token, 15, c15m)
+      this.seed(token, 30, c30m)
+      console.log(`✅ CandleBuilder seeded for token ${token}.`)
+    } catch (err) {
+      console.error(`❌ Failed to seed CandleBuilder for token ${token}:`, err)
+    }
+  }
+
   public addTick(tick: any): void {
     if (!tick.instrument_token || !tick.last_price || !tick.exchange_timestamp) return
 
@@ -26,12 +47,9 @@ export class CandleBuilder extends EventEmitter {
     const timestamp = tick.exchange_timestamp.getTime()
     const volume = tick.last_traded_quantity || 0
 
-    this.timeframes.forEach((tf) => {
-      const candles = tfMap.get(tf)
-      if (candles) {
-        this.updateTimeframeCandle(token, tf, candles, price, timestamp, volume)
-      }
-    })
+    this.timeframes
+      .filter((tf) => tfMap.has(tf))
+      .forEach((tf) => this.updateTimeframeCandle(token, tf, tfMap.get(tf)!, price, timestamp, volume))
   }
 
   private updateTimeframeCandle(
@@ -54,7 +72,7 @@ export class CandleBuilder extends EventEmitter {
     const lastCandleTime = new Date(lastCandle.date).getTime()
 
     if (currentCandleTime > lastCandleTime) {
-      this.emit("candle_close", { token, timeframe: tf, candle: lastCandle })
+      this.emit('candle_close', { token, timeframe: tf, candle: lastCandle })
       candles.push(this.createNewCandle(currentCandleTime, price, volume))
       if (candles.length > 500) candles.shift()
       return
@@ -84,24 +102,3 @@ export class CandleBuilder extends EventEmitter {
 }
 
 export const candleBuilder = new CandleBuilder()
-
-export async function seedCandleBuilder(kc: any, token: number): Promise<void> {
-  if (candleBuilder.isSeeded(token)) return
-
-  console.log(`📊 Seeding CandleBuilder for token ${token}...`)
-  try {
-    const [c1m, c3m, c15m, c30m] = await Promise.all([
-      getIntradayBaseline(kc, token, "minute", 2),
-      getIntradayBaseline(kc, token, "3minute", 5),
-      getIntradayBaseline(kc, token, "15minute", 5),
-      getIntradayBaseline(kc, token, "30minute", 5),
-    ])
-    candleBuilder.seed(token, 1, c1m)
-    candleBuilder.seed(token, 3, c3m)
-    candleBuilder.seed(token, 15, c15m)
-    candleBuilder.seed(token, 30, c30m)
-    console.log(`✅ CandleBuilder seeded for token ${token}.`)
-  } catch (err) {
-    console.error(`❌ Failed to seed CandleBuilder for token ${token}:`, err)
-  }
-}
