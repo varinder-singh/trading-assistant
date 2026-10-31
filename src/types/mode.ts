@@ -1,1 +1,1 @@
-export type MarketMode = "intraday" | "swing"
+export type MarketMode = 'intraday' | 'swing'

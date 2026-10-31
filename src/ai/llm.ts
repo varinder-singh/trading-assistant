@@ -1,4 +1,4 @@
-import { getLLMProvider } from "./factory.js"
+import { getLLMProvider } from './factory.js'
 import {
   SCALPER_RULES,
   TREND_RULES,
@@ -7,205 +7,305 @@ import {
   TECHNICAL_AGENT_PROMPT,
   OPTIONS_AGENT_PROMPT,
   CONSENSUS_AGENT_PROMPT,
-} from "./prompts.js"
+} from './prompts.js'
 import type {
   TradingAgentType,
   OrchestratorResponse,
   AgentUpdate,
   AISuccessResponse,
   AISentimentResponse,
-} from "./types.js"
-import { eventHub } from "../utils/event-hub.js"
-import { memoryService } from "./memory.js"
-import { extractJsonFromText } from "../utils/json-extractor.js"
+} from './types.js'
+import { eventHub } from '../utils/event-hub.js'
+import { memoryService } from './memory.js'
 
-function pruneMarketData(input: any): any {
-  if (!input) return input
-  const pruned = { ...input }
-  if (pruned.optionsAnalysisZerodha && Array.isArray(pruned.optionsAnalysisZerodha.rows)) {
-    pruned.optionsAnalysisZerodha = {
-      ...pruned.optionsAnalysisZerodha,
-      rows: "[OMITTED TO SAVE CONTEXT - Use aggregated metrics and windowStats]",
-    }
-  }
-  if (pruned.marketData?.optionsAnalysisZerodha && Array.isArray(pruned.marketData.optionsAnalysisZerodha.rows)) {
-    pruned.marketData = {
-      ...pruned.marketData,
-      optionsAnalysisZerodha: {
-        ...pruned.marketData.optionsAnalysisZerodha,
-        rows: "[OMITTED TO SAVE CONTEXT - Use aggregated metrics and windowStats]",
-      },
-    }
-  }
-  return pruned
+export function cleanJson(text: string): string {
+  return text
+    .replace(/^```(?:json)?\n?/, '')
+    .replace(/\n?```$/, '')
+    .trim()
+    .replace(/"(?:[^"\\]|\\.)*"/g, (match) => match.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t'))
 }
 
-export class LLMService {
-  private emitUpdate(update: AgentUpdate) {
-    eventHub.emit("agent_update", update)
+function sanitizeStopLoss(result: AISuccessResponse, indexPrice: number, isBearish: boolean): void {
+  const isDirectionInvalid = isBearish ? result.stopLoss <= indexPrice : result.stopLoss >= indexPrice
+  const distPct = Math.abs(result.stopLoss - indexPrice) / indexPrice
+  const isDistanceInvalid = distPct < 0.001 || distPct > 0.02
+  const isMacroOutOfRange = result.stopLoss < indexPrice * 0.9 || result.stopLoss > indexPrice * 1.1
+
+  if (isDirectionInvalid || isDistanceInvalid || isMacroOutOfRange || !result.stopLoss) {
+    console.warn(
+      `[AI Validation] Invalid Stop Loss (${result.stopLoss}) for indexPrice ${indexPrice} (${(distPct * 100).toFixed(2)}% distance, direction=${isBearish ? 'PE' : 'CE'}). AI Hallucination detected, overriding.`
+    )
+    result.stopLoss = isBearish ? indexPrice * 1.005 : indexPrice * 0.995
+  }
+}
+
+function sanitizeTargets(result: AISuccessResponse, indexPrice: number, isBearish: boolean): void {
+  const firstTarget = result.targets?.[0]
+  const hasInvalidTarget = isBearish
+    ? firstTarget !== undefined && firstTarget >= indexPrice
+    : firstTarget !== undefined && firstTarget <= indexPrice
+  const isTargetDistanceInvalid = firstTarget !== undefined && Math.abs(firstTarget - indexPrice) / indexPrice > 0.05
+
+  if (!firstTarget || hasInvalidTarget || isTargetDistanceInvalid) {
+    console.warn(
+      `[AI Validation] Invalid Target (${firstTarget}) for direction ${isBearish ? 'PE' : 'CE'} (indexPrice ${indexPrice}). AI Hallucination detected, overriding.`
+    )
+    result.targets = [isBearish ? indexPrice * 0.995 : indexPrice * 1.005]
+  }
+}
+
+export function sanitizeAiDecision(
+  result: AISuccessResponse,
+  input: any,
+  _agentType: TradingAgentType = 'SCALPER'
+): AISuccessResponse {
+  if (result.decision !== 'BUY') return result
+
+  if (result.confidence < 0 || result.confidence > 100) {
+    result.confidence = Math.min(Math.max(result.confidence || 0, 0), 100)
   }
 
-  public async evaluateMarketState(input: any): Promise<OrchestratorResponse> {
-    console.log("[AI] Starting evaluateMarketState (Orchestrator)...")
+  const isBearish = result.optionAction === 'BUY_PE'
+  const indexPrice = result.entry || input?.tf15m?.price || input?.price || 0
+  if (indexPrice <= 0) return result
+
+  if (!result.entry) {
+    result.entry = indexPrice
+  }
+
+  sanitizeStopLoss(result, indexPrice, isBearish)
+  sanitizeTargets(result, indexPrice, isBearish)
+
+  return result
+}
+
+import type { LLMProvider } from './types.js'
+import { MemoryService } from './memory.js'
+
+export class LLMService {
+  constructor(
+    private readonly providerFactory: () => LLMProvider = getLLMProvider,
+    private readonly memory: MemoryService = memoryService
+  ) {}
+
+  private emitUpdate(update: AgentUpdate) {
+    eventHub.emit('agent_update', update)
+  }
+
+  private sanitizeForLLM(input: any): any {
+    if (!input) return input
+
+    // Deep clone carefully to avoid modifying the original running context state
+    const cleaned = JSON.parse(JSON.stringify(input))
+
+    // 1. Downsample Ticks (max 15 evenly spaced ticks representing the entire window)
+    const downsampleTicks = (ticks: any[]) => {
+      if (!Array.isArray(ticks) || ticks.length <= 15) return ticks
+      const step = Math.max(1, Math.floor(ticks.length / 15))
+      return ticks.filter((_, i) => i % step === 0 || i === ticks.length - 1)
+    }
+
+    if (cleaned.liveContext && Array.isArray(cleaned.liveContext.recentTicks)) {
+      cleaned.liveContext.recentTicks = downsampleTicks(cleaned.liveContext.recentTicks)
+    }
+
+    if (cleaned.marketData?.liveContext && Array.isArray(cleaned.marketData.liveContext.recentTicks)) {
+      cleaned.marketData.liveContext.recentTicks = downsampleTicks(cleaned.marketData.liveContext.recentTicks)
+    }
+
+    // 2. Truncate Swings (keep only last 10)
+    const truncateSwings = (tf: any) => {
+      if (tf && Array.isArray(tf.swings) && tf.swings.length > 10) {
+        tf.swings = tf.swings.slice(-10)
+      }
+    }
+
+    truncateSwings(cleaned.tf1h)
+    truncateSwings(cleaned.tf15m)
+    truncateSwings(cleaned.tf3m)
+    if (cleaned.marketData) {
+      truncateSwings(cleaned.marketData.tf1h)
+      truncateSwings(cleaned.marketData.tf15m)
+      truncateSwings(cleaned.marketData.tf3m)
+    }
+
+    // 3. Strip Raw Historical Candles (they consume massive tokens)
+    const stripCandles = (obj: any) => {
+      if (!obj) return
+      delete obj.candles1h
+      delete obj.candles15m
+      delete obj.candles30m
+      delete obj.candles3m
+      delete obj.candles1d
+    }
+
+    stripCandles(cleaned)
+    stripCandles(cleaned.marketData)
+
+    // 4. Compress Previous Decision Context
+    if (cleaned.previousDecision) {
+      cleaned.previousDecision = {
+        decision: cleaned.previousDecision.decision,
+        setup: cleaned.previousDecision.setup,
+        reason: cleaned.previousDecision.reason,
+      }
+    }
+
+    return cleaned
+  }
+
+  public async evaluateMarketState(input: any, _userId: string = ''): Promise<OrchestratorResponse> {
+    console.log('[AI] Starting evaluateMarketState (Orchestrator)...')
     this.emitUpdate({
-      agent: "Orchestrator",
-      status: "thinking",
-      message: "Evaluating market regime and selecting active agent...",
+      agent: 'Orchestrator',
+      status: 'thinking',
+      message: 'Evaluating market regime and selecting active agent...',
     })
 
     const systemMessage = ORCHESTRATOR_PROMPT
-    const prunedInput = pruneMarketData(input)
+    const cleanedInput = this.sanitizeForLLM(input)
     const userPrompt = `Evaluate the current macro context to decide the active trading agent:
 ## MARKET DATA
-${JSON.stringify(prunedInput, null, 2)}
+${JSON.stringify(cleanedInput, null, 2)}
 `
     try {
-      const provider = getLLMProvider()
+      const provider = this.providerFactory()
       const text = await provider.chat(
         [
-          { role: "system", content: systemMessage },
-          { role: "user", content: userPrompt },
+          { role: 'system', content: systemMessage },
+          { role: 'user', content: userPrompt },
         ],
         { temperature: 0.2 }
       )
 
-      const cleanedText = extractJsonFromText(text)
-      const result: OrchestratorResponse = JSON.parse(cleanedText)
+      const result: OrchestratorResponse = JSON.parse(cleanJson(text))
 
       this.emitUpdate({
-        agent: "Orchestrator",
-        status: "decided",
+        agent: 'Orchestrator',
+        status: 'decided',
         message: `Selected ${result.activeAgent} agent with ${result.confidence}% confidence.`,
         data: result,
+      })
+      this.emitUpdate({
+        agent: 'Regime Validator',
+        status: 'decided',
+        message: `Regime validated. Passing control to ${result.activeAgent}.`,
+        data: {
+          rationale: `Validated the current market regime based on multi-timeframe structure, momentum, and institutional activity. The environment dictates the ${result.activeAgent} strategy is optimal.`,
+          marketRegimeConfidence: result.confidence,
+        },
       })
 
       return result
     } catch (error: any) {
-      console.error("[AI] Error in evaluateMarketState:", error)
+      console.error('[AI] Error in evaluateMarketState:', error)
       this.emitUpdate({
-        agent: "Orchestrator",
-        status: "error",
-        message: "Failed to evaluate market state. Falling back to SCALPER.",
+        agent: 'Orchestrator',
+        status: 'error',
+        message: 'Failed to evaluate market state. Falling back to SCALPER.',
       })
       return {
-        activeAgent: "SCALPER",
+        activeAgent: 'SCALPER',
         confidence: 0,
-        rationale: "Orchestrator failed, falling back to SCALPER",
+        rationale: 'Orchestrator failed, falling back to SCALPER',
       }
     }
   }
 
-  public async analyzeSentimentWithAI(input: any) {
-    let userPrompt = ""
-    let systemMessage = ""
-    if (input.prompt) {
-      userPrompt = input.prompt
-    }
-    if (input.systemPrompt) {
-      systemMessage = input.systemPrompt
-    }
+  public async analyzeSentimentWithAI(input: { prompt?: string; systemPrompt?: string }) {
+    const userPrompt = input.prompt || ''
+    const systemMessage = input.systemPrompt || ''
 
-    const provider = getLLMProvider()
+    const provider = this.providerFactory()
     const text = await provider.chat([
-      { role: "system", content: systemMessage },
-      { role: "user", content: userPrompt },
+      { role: 'system', content: systemMessage },
+      { role: 'user', content: userPrompt },
     ])
-    const cleanedText = extractJsonFromText(text)
-    const result: AISentimentResponse = JSON.parse(cleanedText)
+    const result: AISentimentResponse = JSON.parse(cleanJson(text))
     return result
   }
 
-  public async analyzeWithSingleAgent(
-    input: any,
-    agentType: TradingAgentType = "SCALPER"
-  ): Promise<AISuccessResponse | undefined> {
-    console.log(`[AI] Starting analyzeWithAI using ${agentType} agent...`)
-    this.emitUpdate({
-      agent: agentType,
-      status: "thinking",
-      message: `Analyzing technicals and order flow for ${agentType} setup...`,
-    })
-
-    let userPrompt = ""
-    let systemMessage =
-      "You are a professional NSE options trader and technical analyst specializing in NIFTY intraday and swing trades. You produce precise, actionable trade plans based on technical indicators, options flow data (OI/COI), and market sentiment. You always respond with valid JSON only."
-
-    if (agentType === "TREND") {
-      systemMessage += TREND_RULES
-    } else {
-      systemMessage += SCALPER_RULES
-    }
-
-    // Programmatic Math Injection: Inject Wave 5 target if available
+  private injectWave5Target(systemMessage: string, input: any): string {
     const wave5Target = input.tf15m?.waveContext?.wave5Target || input.marketData?.tf15m?.waveContext?.wave5Target
-    if (wave5Target) {
-      systemMessage = systemMessage.replace(
-        /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,
-        `- **Wave 5 Target Reached:** The mathematical Wave 5 Exhaustion Target is exactly ${wave5Target.toFixed(2)}. If price enters within 5 points of this level, instantly deactivate the wide 15m trailing filter and **shift the trailing stop tightly to the low/high of the most recent 3-minute candle**.`
-      )
-    } else {
-      systemMessage = systemMessage.replace(
-        /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,
-        `- **Default Wave 5 Target:** Calculate the mathematical target for Wave 5: \`Wave 5 Target = Wave 4 Low + (1.0 * (Wave 1 High - Wave 1 Low))\`. If price enters within 5 points of this level, shift trailing stop tightly.`
-      )
+    if (!wave5Target) return systemMessage
+
+    return systemMessage.replace(
+      /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,
+      `The mathematical Wave 5 Exhaustion Target is exactly ${wave5Target.toFixed(2)}. If price enters within 5 points of this level, shift trailing stop tightly.`
+    )
+  }
+
+  private buildSingleAgentSystemPrompt(input: any, agentType: TradingAgentType): string {
+    if (input.systemPrompt) return input.systemPrompt
+
+    const baseMessage =
+      'You are a professional NSE options trader and technical analyst specializing in NIFTY intraday and swing trades. You produce precise, actionable trade plans based on technical indicators, options flow data (OI/COI), and market sentiment. You always respond with valid JSON only.'
+
+    if (agentType === 'TREND') {
+      return this.injectWave5Target(baseMessage + TREND_RULES, input)
     }
+    return baseMessage + SCALPER_RULES
+  }
 
-    try {
-      if (input.prompt) {
-        userPrompt = input.prompt
-      } else {
-        let liveContextSection = ""
-        if (input.liveContext) {
-          const ws = input.optionsAnalysisZerodha?.windowStats
-          const oiInsights = ws
-            ? `\n- OI Window Insights (${ws.intervalMins}m):` +
-              `\n  CE Short Covering (BULLISH): ${ws.topShortCoveringCE.map((r: any) => `${r.strike}CE (ΔOI:${r.intervalOi})`).join(", ") || "None"}` +
-              `\n  PE Short Covering (BULLISH underlying): ${ws.topShortCoveringPE.map((r: any) => `${r.strike}PE (ΔOI:${r.intervalOi})`).join(", ") || "None"}` +
-              `\n  CE Long Buildup (BEARISH/resistance): ${ws.topLongBuildupCE.map((r: any) => `${r.strike}CE (+${r.intervalOi})`).join(", ") || "None"}` +
-              `\n  PE Long Buildup (BULLISH/support): ${ws.topLongBuildupPE.map((r: any) => `${r.strike}PE (+${r.intervalOi})`).join(", ") || "None"}`
-            : ""
-          const flowInsight = input.optionsAnalysisZerodha?.marketFlow
-            ? `\n- Aggregate Market Flow: ${input.optionsAnalysisZerodha.marketFlow}`
-            : ""
+  private buildLiveContextSection(cleanedInput: any): string {
+    if (!cleanedInput.liveContext) return ''
 
-          liveContextSection = `
+    const oiInsights = cleanedInput.optionsAnalysisZerodha?.windowStats
+      ? `\n- OI Window Insights (${cleanedInput.optionsAnalysisZerodha.windowStats.intervalMins}m): Top Short Covering: ${cleanedInput.optionsAnalysisZerodha.windowStats.topShortCovering.map((r: any) => r.symbol).join(', ')}`
+      : ''
+    const flowInsight = cleanedInput.optionsAnalysisZerodha?.marketFlow
+      ? `\n- Aggregate Market Flow: ${cleanedInput.optionsAnalysisZerodha.marketFlow}`
+      : ''
+
+    return `
 ## REAL-TIME WEBSOCKET CONTEXT (TRULY LIVE)
-- Trigger Reason: ${input.liveContext.reason}
-- Last Price: ${input.liveContext.tick.last_price}${oiInsights}${flowInsight}
-- Momentum: ${input.liveContext.reason.includes("Volatility") ? "High Volatility detected" : "Price Action driven"}
-- Recent Ticks (last 60s): ${JSON.stringify(input.liveContext.recentTicks.map((t: any) => t.last_price))}
+- Trigger Reason: ${cleanedInput.liveContext.reason}
+- Last Price: ${cleanedInput.liveContext.tick.last_price}${oiInsights}${flowInsight}
+- Momentum: ${cleanedInput.liveContext.reason.includes('Volatility') ? 'High Volatility detected' : 'Price Action driven'}
+- Recent Ticks (sampled 60s): ${JSON.stringify(cleanedInput.liveContext.recentTicks.map((t: any) => t.last_price || t))}
 
 NOTE: This real-time data takes PRECEDENCE over historical candles.
 `
-        }
+  }
 
-        let previousDecisionSection = ""
-        if (input.previousDecision) {
-          previousDecisionSection = `
+  private buildPreviousDecisionSection(cleanedInput: any): string {
+    if (!cleanedInput.previousDecision) return ''
+
+    return `
 ## PREVIOUS AI DECISION (FEEDBACK LOOP)
 Your last analysis resulted in:
-- Decision: ${input.previousDecision.decision}
-- Setup: ${input.previousDecision.setup}
-- Reason: ${input.previousDecision.reason}
+- Decision: ${cleanedInput.previousDecision.decision}
+- Setup: ${cleanedInput.previousDecision.setup}
+- Reason: ${cleanedInput.previousDecision.reason}
 
 Use this to decide if the current live breakout confirms your previous bias.
 `
-        }
+  }
 
-        let cleanedInput = pruneMarketData({ ...input })
-        if (cleanedInput.liveContext) {
-          cleanedInput.liveContext = {
-            ...cleanedInput.liveContext,
-            recentTicks: "[OMITTED]",
-          }
-        }
-        if (cleanedInput.previousDecision) {
-          cleanedInput.previousDecision = "[OMITTED]"
-        }
+  private buildReversalScoreSection(cleanedInput: any): string {
+    if (!cleanedInput.reversalScore) return ''
 
-        userPrompt = `Analyze market data and produce a trade decision using DUAL TIMEFRAME analysis with ORDER FLOW focus.
+    return `
+## REVERSAL QUALITY SCORE (0 to 5)
+- Bullish Reversal Score: ${cleanedInput.reversalScore.bullish}/5
+- Bearish Reversal Score: ${cleanedInput.reversalScore.bearish}/5
+NOTE: Do NOT take a reversal trade (Playbook B) if the score is less than 3/5.
+`
+  }
+
+  private buildSingleAgentUserPrompt(input: any): string {
+    if (input.prompt) return input.prompt
+
+    const cleanedInput = this.sanitizeForLLM(input)
+    const liveContextSection = this.buildLiveContextSection(cleanedInput)
+    const previousDecisionSection = this.buildPreviousDecisionSection(cleanedInput)
+    const reversalScoreSection = this.buildReversalScoreSection(cleanedInput)
+
+    return `Analyze market data and produce a trade decision using DUAL TIMEFRAME analysis with ORDER FLOW focus.
 ${liveContextSection}
 ${previousDecisionSection}
+${reversalScoreSection}
 ## Market Data
 ${JSON.stringify(cleanedInput, null, 2)}
 
@@ -220,51 +320,62 @@ ${JSON.stringify(cleanedInput, null, 2)}
   "reason": "<2-3 sentences citing technicals AND specific OI/buildup signals>",
   "confidence": <0-100>,
   "entry": <number - Current Index Price or Breakout Level>,
-  "stopLoss": <number - MUST BE THE UNDERLYING NIFTY/BANKNIFTY INDEX LEVEL (e.g. 23500), NEVER THE OPTION PREMIUM PRICE. IF YOU RETURN A PREMIUM LIKE 150 IT WILL BREAK THE SYSTEM!>,
+  "stopLoss": <number - ACTUAL INDEX LEVEL FOR INVALIDATION>,
   "targets": [<number>, <number>],
   "riskRewardRatio": <number - e.g. 1.5 or 2.0>
 }
 
 IMPORTANT: Do NOT attempt to guess the option premium price. Identify the structural support/resistance on the INDEX chart (Tier 1/Tier 2) and use that as the stopLoss.
 `
-      }
+  }
 
-      if (input.systemPrompt) {
-        systemMessage = input.systemPrompt
-      }
+  public async analyzeWithAI(
+    input: any,
+    agentType: TradingAgentType = 'SCALPER'
+  ): Promise<AISuccessResponse | undefined> {
+    console.log(`[AI] Starting analyzeWithAI using ${agentType} agent...`)
+    this.emitUpdate({
+      agent: agentType,
+      status: 'thinking',
+      message: `Analyzing technicals and order flow for ${agentType} setup...`,
+    })
 
-      const provider = getLLMProvider()
+    const systemMessage = this.buildSingleAgentSystemPrompt(input, agentType)
+
+    try {
+      const userPrompt = this.buildSingleAgentUserPrompt(input)
+      const provider = this.providerFactory()
       const text = await provider.chat([
-        { role: "system", content: systemMessage },
-        { role: "user", content: userPrompt },
+        { role: 'system', content: systemMessage },
+        { role: 'user', content: userPrompt },
       ])
 
-      const cleanedText = extractJsonFromText(text)
-
       try {
-        const result: AISuccessResponse = JSON.parse(cleanedText)
+        const result: AISuccessResponse = JSON.parse(cleanJson(text))
+        sanitizeAiDecision(result, input, agentType)
+
         this.emitUpdate({
           agent: agentType,
-          status: "decided",
+          status: 'decided',
           message: `${result.decision} signal with ${result.confidence}% confidence.`,
           data: result,
         })
         return result
       } catch (_parseError) {
-        console.error("[AI] Failed to parse JSON response:", cleanedText)
+        console.error('[AI] Failed to parse JSON response:', text)
         this.emitUpdate({
           agent: agentType,
-          status: "error",
-          message: "Failed to parse AI response.",
+          status: 'error',
+          message: 'Failed to parse AI response.',
         })
         return
       }
     } catch (error: any) {
-      console.error("[AI] Critical Error in analyzeWithAI:", error)
+      console.error('[AI] Critical Error in analyzeWithAI:', error)
       this.emitUpdate({
         agent: agentType,
-        status: "error",
-        message: "Internal AI error during analysis.",
+        status: 'error',
+        message: 'Internal AI error during analysis.',
       })
       return
     }
@@ -272,55 +383,52 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
 
   public async analyzeWithEnsemble(
     input: any,
-    agentType: TradingAgentType = "SCALPER"
+    agentType: TradingAgentType = 'SCALPER',
+    userId: string = ''
   ): Promise<AISuccessResponse | undefined> {
     console.log(`[AI] Starting Ensemble Analysis (${agentType} regime)...`)
 
     try {
-      const provider = getLLMProvider()
-      
-      // Fetch Memory
-      const trend = input.tf15m?.trend || "sideways"
+      const provider = this.providerFactory()
+
+      const symbol = input.symbol || 'NIFTY'
+      const trend = input.tf15m?.trend || 'SIDEWAYS'
       const vix = input.vix?.current || 15
-      const regimeStats = await memoryService.getRegimeStats(trend, vix)
-      const memoryPrompt = memoryService.formatForPrompt(regimeStats)
+      const pastTrades = await this.memory.getRegimeStats(userId, symbol, trend, vix)
+      const memoryPrompt = this.memory.formatForPrompt(pastTrades)
 
-      const prunedInput = pruneMarketData(input)
-      const marketDataStr = JSON.stringify(prunedInput, null, 2)
+      const cleanedInput = this.sanitizeForLLM(input)
+      const marketDataStr = JSON.stringify(cleanedInput, null, 2)
 
-      // 1. Run Technical and Options agents in parallel
       this.emitUpdate({
         agent: agentType,
-        status: "thinking",
-        message: "Ensemble: Technical and Options agents analyzing in parallel...",
+        status: 'thinking',
+        message: 'Ensemble: Technical & Options agents are analyzing in parallel...',
       })
 
       const [techRes, optRes] = await Promise.all([
         provider.chat([
-          { role: "system", content: TECHNICAL_AGENT_PROMPT + (agentType === "TREND" ? TREND_RULES : SCALPER_RULES) },
-          { role: "user", content: `${memoryPrompt}\n\nAnalyze this market state:\n${marketDataStr}` },
+          { role: 'system', content: TECHNICAL_AGENT_PROMPT + (agentType === 'TREND' ? TREND_RULES : SCALPER_RULES) },
+          { role: 'user', content: `${memoryPrompt}\n\nAnalyze this market state:\n${marketDataStr}` },
         ]),
         provider.chat([
-          { role: "system", content: OPTIONS_AGENT_PROMPT },
-          { role: "user", content: `${memoryPrompt}\n\nAnalyze this options flow:\n${marketDataStr}` },
+          { role: 'system', content: OPTIONS_AGENT_PROMPT },
+          { role: 'user', content: `${memoryPrompt}\n\nAnalyze this options flow:\n${marketDataStr}` },
         ]),
       ])
-
-      const cleanJson = (text: string) => extractJsonFromText(text)
 
       const technical = JSON.parse(cleanJson(techRes))
       const options = JSON.parse(cleanJson(optRes))
 
-      console.log("[AI] Technical Agent Bias:", technical.bias)
-      console.log("[AI] Options Agent Bias:", options.bias)
+      console.log('[AI] Technical Agent Bias:', technical.bias)
+      console.log('[AI] Options Agent Bias:', options.bias)
 
       this.emitUpdate({
         agent: agentType,
-        status: "thinking",
-        message: `Ensemble Consensus | Tech: ${technical.bias}, Opt: ${options.bias}. Finalizing...`,
+        status: 'thinking',
+        message: `Ensemble: Technical: ${technical.bias}, Options: ${options.bias}. Determining consensus...`,
       })
 
-      // 2. Run Consensus Agent
       const consensusPrompt = `
 Assess the following inputs and provide a final trade decision.
 ## TECHNICAL ASSESSMENT
@@ -333,66 +441,53 @@ ${JSON.stringify(options, null, 2)}
 ${marketDataStr}
 `
       const consensusRes = await provider.chat([
-        { role: "system", content: CONSENSUS_AGENT_PROMPT },
-        { role: "user", content: consensusPrompt },
+        { role: 'system', content: CONSENSUS_AGENT_PROMPT },
+        { role: 'user', content: consensusPrompt },
       ])
 
       const result: AISuccessResponse = JSON.parse(cleanJson(consensusRes))
+      sanitizeAiDecision(result, input, agentType)
 
       this.emitUpdate({
         agent: agentType,
-        status: "decided",
-        message: `Ensemble Consensus: ${result.decision} signal confirmed.`,
+        status: 'decided',
+        message: `${result.decision} signal confirmed by ensemble.`,
         data: { result, technical, options },
       })
 
       return result
     } catch (error: any) {
-      console.error("[AI] Ensemble Analysis Error:", error)
+      console.error('[AI] Ensemble Analysis Error:', error)
       this.emitUpdate({
         agent: agentType,
-        status: "error",
-        message: "Ensemble analysis failed. Falling back to single-agent mode.",
+        status: 'error',
+        message: 'Ensemble analysis failed. Falling back to single-agent mode.',
       })
-      return this.analyzeWithSingleAgent(input, agentType)
+      return this.analyzeWithAI(input, agentType)
     }
   }
 
-  public async managePositionWithAI(input: any, agentType: TradingAgentType = "SCALPER") {
+  public async managePositionWithAI(input: any, agentType: TradingAgentType = 'SCALPER', userId: string = '') {
     console.log(`[AI] Starting managePositionWithAI using ${agentType} agent...`)
     this.emitUpdate({
-      agent: "Risk Manager",
-      status: "thinking",
+      agent: 'Risk Manager',
+      status: 'thinking',
       message: `Evaluating risk for ${input.openPosition.symbol}...`,
     })
 
-    let systemMessage =
-      `You are a professional NSE Risk Manager. Your sole task is to manage an OPEN options position based on live technicals and OI flow.
+    const rawSystemMessage = `You are a professional NSE Risk Manager. Your sole task is to manage an OPEN options position based on live technicals and OI flow.
 The position was originally opened by a ${agentType} agent. You must decide whether to HOLD, EXIT, or UPDATE_SL. Respond with valid JSON only.
 
-`
-    systemMessage += POSITION_MANAGEMENT_RULES
+${POSITION_MANAGEMENT_RULES}`
+    const systemMessage = this.injectWave5Target(rawSystemMessage, input)
 
-    // Programmatic Math Injection: Inject Wave 5 target if available
-    const wave5Target = input.tf15m?.waveContext?.wave5Target || input.marketData?.tf15m?.waveContext?.wave5Target
-    if (wave5Target) {
-      systemMessage = systemMessage.replace(
-        /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,
-        `- **Wave 5 Target Reached:** The mathematical Wave 5 Exhaustion Target is exactly ${wave5Target.toFixed(2)}. If price enters within 5 points of this level, instantly deactivate the wide 15m trailing filter and **shift the trailing stop tightly to the low/high of the most recent 3-minute candle**.`
-      )
-    } else {
-      systemMessage = systemMessage.replace(
-        /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,
-        `- **Default Wave 5 Target:** Calculate the mathematical target for Wave 5: \`Wave 5 Target = Wave 4 Low + (1.0 * (Wave 1 High - Wave 1 Low))\`. If price enters within 5 points of this level, shift trailing stop tightly.`
-      )
-    }
-
-    // Fetch Memory for Risk Context
-    const trend = input.marketData?.tf15m?.trend || "sideways"
+    const symbol = input.openPosition?.symbol || 'NIFTY'
+    const trend = input.marketData?.tf15m?.trend || 'SIDEWAYS'
     const vix = input.marketData?.vix?.current || 15
-    const regimeStats = await memoryService.getRegimeStats(trend, vix)
-    const memoryPrompt = memoryService.formatForPrompt(regimeStats)
+    const pastTrades = await this.memory.getRegimeStats(userId, symbol, trend, vix)
+    const memoryPrompt = this.memory.formatForPrompt(pastTrades)
 
+    const cleanedMarketData = this.sanitizeForLLM({ marketData: input.marketData }).marketData
     const userPrompt = `Evaluate the following open position against current market data:
 
 ${memoryPrompt}
@@ -401,45 +496,44 @@ ${memoryPrompt}
 ${JSON.stringify(input.openPosition, null, 2)}
 
 ## CURRENT MARKET DATA
-${JSON.stringify(pruneMarketData(input).marketData, null, 2)}
+${JSON.stringify(cleanedMarketData, null, 2)}
 
 ## Required Output (JSON only)
 {
   "decision": "HOLD" | "EXIT" | "UPDATE_SL",
   "reason": "<1-2 sentences explaining the risk/momentum shift>",
-  "newIndexStopLoss": <number or null - MUST BE THE UNDERLYING NIFTY/BANKNIFTY INDEX LEVEL (e.g. 23500), NEVER THE OPTION PREMIUM PRICE. DO NOT OUTPUT SMALL NUMBERS LIKE 100-300!>,
+  "newIndexStopLoss": <number or null>,
   "riskRewardRatio": <number or null>,
   "confidence": <0-100>
 }
 `
     try {
-      const provider = getLLMProvider()
+      const provider = this.providerFactory()
       const text = await provider.chat([
-        { role: "system", content: systemMessage },
-        { role: "user", content: userPrompt },
+        { role: 'system', content: systemMessage },
+        { role: 'user', content: userPrompt },
       ])
 
-      const cleanedText = extractJsonFromText(text)
-      const result = JSON.parse(cleanedText)
+      const result = JSON.parse(cleanJson(text))
 
       this.emitUpdate({
-        agent: "Risk Manager",
-        status: "decided",
+        agent: 'Risk Manager',
+        status: 'decided',
         message: `${result.decision}: ${result.reason}`,
         data: result,
       })
 
       return result
     } catch (error: any) {
-      console.error("[AI] Error in managePositionWithAI:", error)
+      console.error('[AI] Error in managePositionWithAI:', error)
       this.emitUpdate({
-        agent: "Risk Manager",
-        status: "error",
-        message: "Risk evaluation failed. Holding for safety.",
+        agent: 'Risk Manager',
+        status: 'error',
+        message: 'Risk evaluation failed. Holding for safety.',
       })
       return {
-        decision: "HOLD",
-        reason: "AI re-evaluation failed, holding as safety fallback",
+        decision: 'HOLD',
+        reason: 'AI re-evaluation failed, holding as safety fallback',
         confidence: 0,
       }
     }

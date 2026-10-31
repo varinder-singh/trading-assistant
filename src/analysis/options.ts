@@ -1,47 +1,53 @@
 export function calculatePCR(data: any) {
-  const records = data.records.data
+  const records = data?.records?.data ?? []
 
-  let totalCE = 0
-  let totalPE = 0
+  const { totalCE, totalPE } = records.reduce(
+    (acc: { totalCE: number; totalPE: number }, item: any) => {
+      if (item.CE && item.PE) {
+        return {
+          totalCE: acc.totalCE + (item.CE.openInterest || 0),
+          totalPE: acc.totalPE + (item.PE.openInterest || 0),
+        }
+      }
+      return acc
+    },
+    { totalCE: 0, totalPE: 0 }
+  )
 
-  for (const item of records) {
-    if (item.CE && item.PE) {
-      totalCE += item.CE.openInterest || 0
-      totalPE += item.PE.openInterest || 0
-    }
-  }
-
-  const pcr = totalPE / totalCE
+  const pcr = totalCE > 0 ? totalPE / totalCE : 0
 
   return {
     pcr: Number(pcr.toFixed(2)),
-    sentiment: pcr > 1.2 ? "bullish" : pcr < 0.8 ? "bearish" : "neutral",
+    sentiment: pcr > 1.2 ? 'bullish' : pcr < 0.8 ? 'bearish' : 'neutral',
   }
 }
 
 export function findOIZones(data: any) {
-  const records = data.records.data
+  const records = data?.records?.data ?? []
 
-  let maxCallOI = 0
-  let maxPutOI = 0
+  const result = records.reduce(
+    (acc: { maxCallOI: number; maxPutOI: number; resistance: number; support: number }, item: any) => {
+      const callOI = item.CE?.openInterest ?? 0
+      const putOI = item.PE?.openInterest ?? 0
 
-  let callResistance = 0
-  let putSupport = 0
+      const nextMaxCall = callOI > acc.maxCallOI ? callOI : acc.maxCallOI
+      const nextResistance = callOI > acc.maxCallOI ? item.strikePrice : acc.resistance
 
-  for (const item of records) {
-    if (item.CE?.openInterest > maxCallOI) {
-      maxCallOI = item.CE.openInterest
-      callResistance = item.strikePrice
-    }
+      const nextMaxPut = putOI > acc.maxPutOI ? putOI : acc.maxPutOI
+      const nextSupport = putOI > acc.maxPutOI ? item.strikePrice : acc.support
 
-    if (item.PE?.openInterest > maxPutOI) {
-      maxPutOI = item.PE.openInterest
-      putSupport = item.strikePrice
-    }
-  }
+      return {
+        maxCallOI: nextMaxCall,
+        maxPutOI: nextMaxPut,
+        resistance: nextResistance,
+        support: nextSupport,
+      }
+    },
+    { maxCallOI: 0, maxPutOI: 0, resistance: 0, support: 0 }
+  )
 
   return {
-    resistance: callResistance,
-    support: putSupport,
+    resistance: result.resistance,
+    support: result.support,
   }
 }

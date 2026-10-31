@@ -1,10 +1,7 @@
 import axios from "axios"
 
 export async function getOptionChain(index: "NIFTY" | "BANKNIFTY") {
-  const url =
-    index === "NIFTY"
-      ? "https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY"
-      : "https://www.nseindia.com/api/option-chain-indices?symbol=BANKNIFTY"
+  const url = `https://www.nseindia.com/api/option-chain-indices?symbol=${encodeURIComponent(index)}`
 
   const res = await axios.get(url, {
     headers: {

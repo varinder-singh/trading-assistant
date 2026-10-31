@@ -1,116 +1,103 @@
-import { EventEmitter } from "node:events"
-import type { Candle } from "../types/analysis.js"
-import type { LiveTick } from "../analysis/live.js"
+import { EventEmitter } from 'node:events'
+import { getIntradayBaseline } from './kite-historical.js'
 
 export class CandleBuilder extends EventEmitter {
-  private candlesByToken: Map<number, Map<number, Candle[]>> = new Map()
-  private timeframes: number[] = [1, 3, 15, 30] // minutes
-  private lastVolumeByToken: Map<number, Map<number, number>> = new Map()
+  private candles: Map<number, Map<number, any[]>> = new Map()
+  private timeframes = [1, 3, 15, 30]
 
-  constructor() {
-    super()
+  public isSeeded(token: number): boolean {
+    return (this.candles.get(token)?.size ?? 0) > 0
   }
 
-  /**
-   * Seed the builder with historical candles for a specific token.
-   * Expects time to be in seconds.
-   */
-  seed(token: number, timeframe: number, historicalCandles: Candle[]) {
-    if (!this.candlesByToken.has(token)) {
-      this.candlesByToken.set(token, new Map())
-      this.lastVolumeByToken.set(token, new Map())
-      for (const tf of this.timeframes) {
-        this.candlesByToken.get(token)!.set(tf, [])
-      }
-    }
+  public seed(token: number, timeframe: number, historicalCandles: any[]): void {
+    if (!this.candles.has(token)) this.candles.set(token, new Map())
+    const tfMap = this.candles.get(token)!
+    tfMap.set(timeframe, historicalCandles.slice(-500))
+  }
 
-    if (this.timeframes.includes(timeframe)) {
-      // Sort and ensure no duplicates
-      const sorted = [...historicalCandles].sort((a, b) => a.time - b.time)
-      this.candlesByToken.get(token)!.set(timeframe, sorted)
+  public async seedFromKite(kc: any, token: number): Promise<void> {
+    if (this.isSeeded(token)) return
+
+    console.log(`📊 Seeding CandleBuilder for token ${token}...`)
+    try {
+      const [c1m, c3m, c15m, c30m] = await Promise.all([
+        getIntradayBaseline(kc, token, 'minute', 2),
+        getIntradayBaseline(kc, token, '3minute', 5),
+        getIntradayBaseline(kc, token, '15minute', 5),
+        getIntradayBaseline(kc, token, '30minute', 5),
+      ])
+      this.seed(token, 1, c1m)
+      this.seed(token, 3, c3m)
+      this.seed(token, 15, c15m)
+      this.seed(token, 30, c30m)
+      console.log(`✅ CandleBuilder seeded for token ${token}.`)
+    } catch (err) {
+      console.error(`❌ Failed to seed CandleBuilder for token ${token}:`, err)
     }
   }
 
-  /**
-   * Add a new tick to update current candles across all timeframes.
-   */
-  addTick(tick: LiveTick) {
+  public addTick(tick: any): void {
+    if (!tick.instrument_token || !tick.last_price || !tick.exchange_timestamp) return
+
     const token = tick.instrument_token
-    if (!token) return
+    const tfMap = this.candles.get(token)
+    if (!tfMap) return
 
-    if (!this.candlesByToken.has(token)) {
-      this.candlesByToken.set(token, new Map())
-      this.lastVolumeByToken.set(token, new Map())
-      for (const tf of this.timeframes) {
-        this.candlesByToken.get(token)!.set(tf, [])
-      }
+    const price = tick.last_price
+    const timestamp = tick.exchange_timestamp.getTime()
+    const volume = tick.last_traded_quantity || 0
+
+    this.timeframes
+      .filter((tf) => tfMap.has(tf))
+      .forEach((tf) => this.updateTimeframeCandle(token, tf, tfMap.get(tf)!, price, timestamp, volume))
+  }
+
+  private updateTimeframeCandle(
+    token: number,
+    tf: number,
+    candles: any[],
+    price: number,
+    timestamp: number,
+    volume: number
+  ): void {
+    const periodMs = tf * 60 * 1000
+    const currentCandleTime = Math.floor(timestamp / periodMs) * periodMs
+    const lastCandle = candles[candles.length - 1]
+
+    if (!lastCandle) {
+      candles.push(this.createNewCandle(currentCandleTime, price, volume))
+      return
     }
 
-    const timestamp = tick.timestamp ? new Date(tick.timestamp).getTime() : Date.now()
-    const lastPrice = tick.last_price
-    const totalVolume = tick.volume_traded || 0
+    const lastCandleTime = new Date(lastCandle.date).getTime()
 
-    const tokenCandles = this.candlesByToken.get(token)!
-    const tokenVolumes = this.lastVolumeByToken.get(token)!
+    if (currentCandleTime > lastCandleTime) {
+      this.emit('candle_close', { token, timeframe: tf, candle: lastCandle })
+      candles.push(this.createNewCandle(currentCandleTime, price, volume))
+      if (candles.length > 500) candles.shift()
+      return
+    }
 
-    for (const tf of this.timeframes) {
-      const ms = tf * 60 * 1000
-      const periodStartSeconds = Math.floor(timestamp / ms) * (ms / 1000)
-      const candles = tokenCandles.get(tf)!
-      const lastCandle = candles[candles.length - 1]
+    lastCandle.high = Math.max(lastCandle.high, price)
+    lastCandle.low = Math.min(lastCandle.low, price)
+    lastCandle.close = price
+    lastCandle.volume += volume
+  }
 
-      if (!lastCandle || lastCandle.time < periodStartSeconds) {
-        // Emit candle_close for the completed candle before starting a new one
-        if (lastCandle) {
-          this.emit("candle_close", { token, timeframe: tf, candle: lastCandle })
-        }
-
-        // Determine the volume of the NEW candle.
-        let startingVolume = 0
-        if (tokenVolumes.has(tf) && totalVolume > 0) {
-          startingVolume = Math.max(0, totalVolume - tokenVolumes.get(tf)!)
-        }
-
-        const newCandle: Candle = {
-          time: periodStartSeconds,
-          open: lastPrice,
-          high: lastPrice,
-          low: lastPrice,
-          close: lastPrice,
-          volume: startingVolume,
-        }
-        candles.push(newCandle)
-        tokenVolumes.set(tf, totalVolume)
-
-        if (candles.length > 500) candles.shift()
-      } else {
-        // Update current candle
-        lastCandle.high = Math.max(lastCandle.high, lastPrice)
-        lastCandle.low = Math.min(lastCandle.low, lastPrice)
-        lastCandle.close = lastPrice
-
-        if (totalVolume > 0 && tokenVolumes.has(tf)) {
-          const diff = Math.max(0, totalVolume - tokenVolumes.get(tf)!)
-          lastCandle.volume += diff
-          tokenVolumes.set(tf, totalVolume)
-        } else if (totalVolume > 0) {
-          tokenVolumes.set(tf, totalVolume)
-        }
-      }
+  private createNewCandle(currentCandleTime: number, price: number, volume: number) {
+    return {
+      date: new Date(currentCandleTime).toISOString(),
+      timestamp: currentCandleTime,
+      open: price,
+      high: price,
+      low: price,
+      close: price,
+      volume,
     }
   }
 
-  getCandles(token: number, timeframe: number): Candle[] {
-    const tokenMap = this.candlesByToken.get(token)
-    if (!tokenMap) return []
-    return tokenMap.get(timeframe) || []
-  }
-
-  isSeeded(token: number): boolean {
-    const tokenMap = this.candlesByToken.get(token)
-    if (!tokenMap) return false
-    // Consider seeded if at least one major timeframe has candles
-    return (tokenMap.get(15)?.length || 0) > 0
+  public getCandles(token: number, timeframe: number): any[] {
+    return this.candles.get(token)?.get(timeframe) || []
   }
 }
 

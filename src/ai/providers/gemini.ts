@@ -1,35 +1,51 @@
-import { GoogleGenerativeAI } from "@google/generative-ai"
-import type { LLMMessage, LLMOptions, LLMProvider } from "../types.js"
+import { GoogleGenerativeAI, HarmBlockThreshold, HarmCategory } from '@google/generative-ai'
+import type { LLMMessage, LLMOptions, LLMProvider } from '../types.js'
+
+type GeminiModelParams = Parameters<GoogleGenerativeAI['getGenerativeModel']>[0]
 
 export class GeminiProvider implements LLMProvider {
-  name = "gemini"
-  private genAI: GoogleGenerativeAI | null = null
+  name = 'gemini'
 
-  async chat(messages: LLMMessage[], options?: LLMOptions): Promise<string> {
+  constructor(private genAI: GoogleGenerativeAI | null = null) {}
+
+  public async chat(messages: LLMMessage[], options?: LLMOptions): Promise<string> {
     if (!this.genAI) {
       const apiKey = process.env.GEMINI_API_KEY
       if (!apiKey) {
-        throw new Error("GEMINI_API_KEY environment variable is required")
+        throw new Error('GEMINI_API_KEY environment variable is required')
       }
       this.genAI = new GoogleGenerativeAI(apiKey)
     }
 
-    const modelName = options?.model || "gemini-2.5-flash-lite"
+    const modelName = options?.model || 'gemini-2.5-flash-lite'
+    const systemMessage = messages.find((m) => m.role === 'system')
+    const userMessages = messages.filter((m) => m.role !== 'system')
 
-    // Extract system message if present
-    const systemMessage = messages.find((m) => m.role === "system")
-    const userMessages = messages.filter((m) => m.role !== "system")
-
-    const modelParams: any = {
+    const modelParams: GeminiModelParams = {
       model: modelName,
-    }
-
-    if (systemMessage) {
-      modelParams.systemInstruction = systemMessage.content
+      ...(systemMessage ? { systemInstruction: systemMessage.content } : {}),
+      safetySettings: [
+        {
+          category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+        {
+          category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+        {
+          category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+        {
+          category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+      ],
     }
 
     console.log(
-      `[Gemini] Starting chat with model: ${modelName} (System Instruction: ${modelParams.systemInstruction?.length || 0} chars)`
+      `[Gemini] Starting chat with model: ${modelName} (System Instruction: ${systemMessage?.content.length || 0} chars)`
     )
 
     try {
@@ -37,24 +53,25 @@ export class GeminiProvider implements LLMProvider {
 
       const chat = model.startChat({
         history: userMessages.slice(0, -1).map((m) => ({
-          role: m.role === "assistant" ? "model" : "user",
+          role: m.role === 'assistant' ? 'model' : 'user',
           parts: [{ text: m.content }],
         })),
         generationConfig: {
           temperature: options?.temperature ?? 0.7,
+          responseMimeType: 'application/json',
         },
       })
 
       const lastMessage = userMessages[userMessages.length - 1]
       if (!lastMessage) {
-        throw new Error("No user message provided for Gemini chat")
+        throw new Error('No user message provided for Gemini chat')
       }
 
       const result = await chat.sendMessage(lastMessage.content)
       const response = await result.response
       return response.text()
     } catch (error: any) {
-      console.error("[Gemini] API Error:", JSON.stringify(error, null, 2) || error.message || error)
+      console.error('[Gemini] API Error:', JSON.stringify(error, null, 2) || error.message || error)
       throw error
     }
   }

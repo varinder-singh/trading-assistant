@@ -1,17 +1,18 @@
-import { LLMService } from "../ai/llm.js"
-import type { AISentimentResponse } from "../ai/types.js"
+import { LLMService } from '../ai/llm.js'
+import type { AISentimentResponse } from '../ai/types.js'
 
-const llmService = new LLMService()
+export class SentimentAnalyzer {
+  constructor(private readonly llmService: LLMService = new LLMService()) {}
 
-export async function analyzeSentiment(headlines: string[]): Promise<AISentimentResponse> {
-  if (headlines.length === 0) {
-    return { sentiment: "neutral", confidence: 0.5, reason: "No headlines available" }
-  }
+  public async analyzeSentiment(headlines: string[]): Promise<AISentimentResponse> {
+    if (headlines.length === 0) {
+      return { sentiment: 'neutral', confidence: 0.5, reason: 'No headlines available' }
+    }
 
-  const systemPrompt =
-    "You are a financial news sentiment analyst specializing in Indian equity markets (NSE/BSE). You assess the directional market impact of news on index-level sentiment and respond with valid JSON only — no markdown, no prose."
+    const systemPrompt =
+      'You are a financial news sentiment analyst specializing in Indian equity markets (NSE/BSE). You assess the directional market impact of news on index-level sentiment and respond with valid JSON only — no markdown, no prose.'
 
-  const prompt = `Assess the overall market sentiment for Indian equities based on these news headlines.
+    const prompt = `Assess the overall market sentiment for Indian equities based on these news headlines.
 
 Focus on:
 - Macro impact (RBI, Fed, GDP, inflation, geopolitics)
@@ -19,7 +20,7 @@ Focus on:
 - Ignore company-specific news unless it has index-level impact
 
 Headlines:
-${headlines.join("\n")}
+${headlines.join('\n')}
 
 Required Output (JSON only — no code fences):
 {
@@ -29,10 +30,13 @@ Required Output (JSON only — no code fences):
 }
 `
 
-  const result: AISentimentResponse = await llmService.analyzeSentimentWithAI({
-    prompt,
-    systemPrompt,
-  })
-
-  return result
+    return this.llmService.analyzeSentimentWithAI({
+      prompt,
+      systemPrompt,
+    })
+  }
 }
+
+export const sentimentAnalyzer = new SentimentAnalyzer()
+export const analyzeSentiment = (headlines: string[]): Promise<AISentimentResponse> =>
+  sentimentAnalyzer.analyzeSentiment(headlines)

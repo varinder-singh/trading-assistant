@@ -1,7 +1,7 @@
-import type { AISentimentResponse, AISuccessResponse, TradingAgentType } from "../ai/types.js"
-import type { KiteOptionsAnalysis } from "../analysis/kite-options.js"
-import type { VixData } from "../data/vix.js"
-import type { DailyContext } from "./technical-analysis.js"
+import type { AISentimentResponse, AISuccessResponse, TradingAgentType } from '../ai/types.js'
+import type { KiteOptionsAnalysis } from '../analysis/kite-options.js'
+import type { VixData } from '../data/vix.js'
+import type { DailyContext } from './technical-analysis.js'
 
 export type Analysis = {
   trend: string
@@ -13,7 +13,7 @@ export type Analysis = {
 }
 
 export type TradePlan = {
-  decision: "BUY" | "SELL" | "NO_TRADE" | "NEUTRAL"
+  decision: 'BUY' | 'SELL' | 'NO_TRADE' | 'NEUTRAL'
   reason?: string
   entry?: number
   stopLoss?: number
@@ -31,7 +31,7 @@ export interface Candle {
 }
 
 export interface SwingPoint {
-  type: "HIGH" | "LOW"
+  type: 'HIGH' | 'LOW'
   price: number
   time: number
 }
@@ -43,7 +43,7 @@ export interface WaveContext {
   wave3High?: number
   wave4Low?: number
   wave5Target?: number
-  currentPhase: "WAVE_1" | "WAVE_2" | "WAVE_3" | "WAVE_4" | "WAVE_5" | "ABC_CORRECTION" | "CONSOLIDATION"
+  currentPhase: 'WAVE_1' | 'WAVE_2' | 'WAVE_3' | 'WAVE_4' | 'WAVE_5' | 'ABC_CORRECTION' | 'CONSOLIDATION'
   fibZones?: {
     fib382: number
     fib500: number
@@ -51,41 +51,25 @@ export interface WaveContext {
   }
 }
 
-// GTI (Global Trading Intelligence) Types
-export type GTIClassification =
-  | "STRONG_INSTITUTIONAL_BUY"
-  | "INSTITUTIONAL_BUY"
-  | "NEUTRAL"
-  | "INSTITUTIONAL_SELL"
-  | "STRONG_INSTITUTIONAL_SELL"
-
-export interface GTIScore {
-  composite: number // -1.0 (distribution) to +1.0 (accumulation)
-  components: {
-    volumeAnomaly: number // Z-score signed by price direction
-    cvd: number // Cumulative Volume Delta normalized (-1 to +1)
-    vwapDeviation: number // Distance from VWAP as signal (-1 to +1)
-    oiSignal: number // From options buildup states (-1 to +1)
-    smartMoneyFlow: number // Session-timing weighted flow (-1 to +1)
-  }
-  classification: GTIClassification
-  confidence: number // 0-100, reliability of the signal
-}
-
-export interface GTICandleData {
-  time: number
-  open: number
-  high: number
-  low: number
-  close: number
-  volume: number
-  gtiScore: GTIScore
-}
-
 export interface OpeningRange {
   high: number
   low: number
-  broken?: "UP" | "DOWN" | "INSIDE"
+  broken?: 'UP' | 'DOWN' | 'INSIDE'
+}
+
+export interface VolumeNode {
+  price: number
+  volume: number
+}
+
+export type ProfileType = 'D' | 'B' | 'P' | 'I' | 'UNKNOWN'
+
+export interface VolumeProfile {
+  poc: number
+  vah: number
+  val: number
+  profileType: ProfileType
+  nodes: VolumeNode[]
 }
 
 export type TechnicalAnalysis = {
@@ -101,7 +85,10 @@ export type TechnicalAnalysis = {
   swings?: SwingPoint[] | undefined
   waveContext?: WaveContext | undefined
   openingRange?: OpeningRange | undefined
-  gtiScore?: GTIScore | undefined
+  gtiScore?: GTIScore
+  vwapZScore?: number
+  emaSlope?: Record<string, number>
+  adx?: { adx: number; plusDI: number; minusDI: number }
 }
 
 export type TradeTechnicalAnalysis = {
@@ -120,4 +107,21 @@ export type TradeTechnicalAnalysis = {
   candles3m: Candle[]
   agentType: TradingAgentType
   gtiHistory?: GTICandleData[]
+  reversalScore?: {
+    bullish: number
+    bearish: number
+  }
+  lotSize?: number
+}
+
+export interface GTIScore {
+  composite: number
+  classification: string
+  confidence: number
+  components: Record<string, number>
+}
+
+export interface GTICandleData {
+  candle: Candle
+  gtiScore: GTIScore
 }

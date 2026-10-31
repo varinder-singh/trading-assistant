@@ -1,4 +1,4 @@
-import type { Candle } from "../types/analysis.js"
+import type { Candle } from '../types/analysis.js'
 
 export function calculateRSI(candles: Candle[], period = 14): number {
   if (candles.length < period + 1) return 50

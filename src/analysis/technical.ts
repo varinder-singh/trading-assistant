@@ -1,16 +1,25 @@
-import type { Candle, TechnicalAnalysis } from "../types/analysis.js"
-import { detectTrend } from "../indicators/trend.js"
-import { calculateVWAP } from "../indicators/vwap.js"
-import { calculateRSI } from "../indicators/rsi.js"
+import type { Candle, TechnicalAnalysis } from '../types/analysis.js'
+import { detectTrend } from '../indicators/trend.js'
+import { calculateVWAP, calculateVWAPZScore } from '../indicators/vwap.js'
+import { calculateRSI } from '../indicators/rsi.js'
 
-import { calculateATR } from "../indicators/atr.js"
-import { calculateEMA } from "../indicators/ema.js"
-import { calculateORB } from "../indicators/orb.js"
-import { calculateSwings } from "../indicators/swings.js"
-import { detectWaveStructure } from "../indicators/waves.js"
-import type { DailyContext } from "../types/technical-analysis.js"
+import { calculateATR } from '../indicators/atr.js'
+import { calculateEMA, calculateEMASlope } from '../indicators/ema.js'
+import { calculateORB } from '../indicators/orb.js'
+import { calculateSwings } from '../indicators/swings.js'
+import { detectWaveStructure } from '../indicators/waves.js'
+import type { DailyContext } from '../types/technical-analysis.js'
+import { calculateVolumeProfile } from '../indicators/volume-profile.js'
+import { calculateADX } from '../indicators/adx.js'
 
-export function analyzeDailyContext(candles1d: Candle[]): DailyContext | null {
+function resolvePreviousDayVolumeProfile(prevDayStart: number, currentDayStart: number, intradayCandles?: Candle[]) {
+  if (!intradayCandles || intradayCandles.length === 0) return undefined
+  const prevDayIntraday = intradayCandles.filter((c) => c.time >= prevDayStart && c.time < currentDayStart)
+  if (prevDayIntraday.length === 0) return undefined
+  return calculateVolumeProfile(prevDayIntraday, 5) ?? undefined
+}
+
+export function analyzeDailyContext(candles1d: Candle[], intradayCandles?: Candle[]): DailyContext | null {
   if (candles1d.length < 15) return null
 
   const atr14 = calculateATR(candles1d, 14)
@@ -26,6 +35,7 @@ export function analyzeDailyContext(candles1d: Candle[]): DailyContext | null {
 
   const isCompression = pdr < 0.7 * atr14
   const openingRange = calculateORB(candles1d) ?? undefined
+  const previousDayVolumeProfile = resolvePreviousDayVolumeProfile(prevDay.time, currentDay.time, intradayCandles)
 
   return {
     atr14,
@@ -36,16 +46,17 @@ export function analyzeDailyContext(candles1d: Candle[]): DailyContext | null {
     isCompression,
     currentDayOpen: currentDay.open,
     openingRange,
+    previousDayVolumeProfile,
   }
 }
 
 export function analyzeTechnical(
   candles: Candle[],
-  timeframe: string = "15m",
+  timeframe: string = '15m',
   emaPeriods: number[] = []
 ): TechnicalAnalysis {
   if (candles.length === 0) {
-    throw new Error("Cannot analyze technical indicators without candles")
+    throw new Error('Cannot analyze technical indicators without candles')
   }
 
   const trend = detectTrend(candles)
@@ -61,16 +72,21 @@ export function analyzeTechnical(
   const resistance = Math.max(...highs)
   const support = Math.min(...lows)
 
-  const vwapPosition = last > vwap ? "above" : "below"
+  const vwapPosition = last > vwap ? 'above' : 'below'
 
-  const ema: Record<string, number> = {}
-  for (const period of emaPeriods) {
-    ema[period] = calculateEMA(candles, period)
-  }
+  const ema: Record<string, number> = Object.fromEntries(
+    emaPeriods.map((period) => [period, calculateEMA(candles, period)])
+  )
+  const emaSlope: Record<string, number> = Object.fromEntries(
+    emaPeriods.map((period) => [period, calculateEMASlope(candles, period)])
+  )
 
-  const swings = (timeframe === "15m" || timeframe === "30m") ? calculateSwings(candles, 2) : undefined
-  const waveContext = (timeframe === "15m" || timeframe === "30m") && swings ? detectWaveStructure(swings, last) : undefined
-  const openingRange = timeframe === "15m" ? (calculateORB(candles) ?? undefined) : undefined
+  const vwapZScore = calculateVWAPZScore(candles, vwap)
+  const adx = calculateADX(candles, 14)
+
+  const swings = calculateSwings(candles, 2)
+  const waveContext = detectWaveStructure(swings, last)
+  const openingRange = calculateORB(candles) ?? undefined
 
   return {
     trend,
@@ -85,6 +101,9 @@ export function analyzeTechnical(
     swings,
     waveContext,
     openingRange,
+    vwapZScore,
+    emaSlope,
+    adx,
   }
 }
 
@@ -94,10 +113,10 @@ export function analyzeMultiTimeframe(
   candles15m: Candle[],
   candles3m: Candle[]
 ) {
-  const tf1h = analyzeTechnical(candles1h, "1h", [50, 200])
-  const tf30m = analyzeTechnical(candles30m, "30m", [20, 50])
-  const tf15m = analyzeTechnical(candles15m, "15m", [9, 21])
-  const tf3m = analyzeTechnical(candles3m, "3m", [9]) // 9 EMA for trigger momentum
+  const tf1h = analyzeTechnical(candles1h, '1h', [50, 200])
+  const tf30m = analyzeTechnical(candles30m, '30m', [9, 21])
+  const tf15m = analyzeTechnical(candles15m, '15m', [9, 21])
+  const tf3m = analyzeTechnical(candles3m, '3m', [9]) // 9 EMA for trigger momentum
 
   return {
     tf1h,

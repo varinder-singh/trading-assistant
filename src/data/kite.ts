@@ -1,74 +1,37 @@
 import "dotenv/config"
-import { KiteConnect } from "kiteconnect"
-import { existsSync, readFileSync } from "node:fs"
-import { fileURLToPath } from "node:url"
-import { dirname, join, resolve } from "node:path"
+import { KiteConnect, type Connect as KiteConnectInstance } from "kiteconnect"
+import { resolveKiteInstrumentName } from "../utils/symbol.js"
 
-type CachedKiteToken = {
-  accessToken?: string
-}
-
-function readCachedAccessToken() {
-  const pathsToTry = [
-    resolve(process.cwd(), ".kite", "access-token.json"), // CLI
-    resolve(process.cwd(), "..", ".kite", "access-token.json"), // Nuxt dev
-    join(dirname(fileURLToPath(import.meta.url)), "../../.kite", "access-token.json") // Fallback
-  ]
-
-  let foundPath: string | undefined = undefined
-
-  for (const p of pathsToTry) {
-    if (existsSync(p)) {
-      foundPath = p
-      break
-    }
+/**
+ * Creates a new KiteConnect client instance.
+ * For OAuth login, you can create it without an access token.
+ * For making API requests, pass the user's access token.
+ */
+export function createKiteClient(accessToken?: string, apiKey?: string) {
+  const resolvedApiKey = apiKey || process.env.KITE_API_KEY
+  if (!resolvedApiKey) {
+    throw new Error("No Kite API key available. Provide one or set KITE_API_KEY env var.")
   }
 
-  if (!foundPath) {
-    console.error(`[Kite] Could not find access-token.json. Tried: \n${pathsToTry.join("\n")}`)
-    return undefined
+  const kc = new KiteConnect({
+    api_key: resolvedApiKey,
+  })
+
+  if (accessToken) {
+    kc.setAccessToken(accessToken)
   }
 
-  console.log(`[Kite] Found token at: ${foundPath}`)
-  const cachedToken = JSON.parse(readFileSync(foundPath, "utf8")) as CachedKiteToken
-  return cachedToken.accessToken
+  return kc
 }
 
-export function getAccessToken() {
-  const accessToken = readCachedAccessToken() ?? process.env.KITE_ACCESS_TOKEN
-
-  if (!accessToken) {
-    throw new Error("KITE_ACCESS_TOKEN is missing. Run `npm run kite:token` to generate a fresh token.")
-  }
-
-  return accessToken
-}
-
-const apiKey = process.env.KITE_API_KEY
-if (!apiKey) {
-  throw new Error("KITE_API_KEY is missing in environment variables. Check your .env file.")
-}
-
-const kc = new KiteConnect({
-  api_key: apiKey,
-})
-
-kc.setAccessToken(getAccessToken())
-
-export async function getInstrumentToken(symbol: string): Promise<number | undefined> {
+export async function getInstrumentToken(kc: KiteConnectInstance, symbol: string): Promise<number | undefined> {
   const instruments = await kc.getInstruments("NSE")
-  // NIFTY -> NIFTY 50, BANKNIFTY -> NIFTY BANK
-  const nameMap: Record<string, string> = {
-    "NIFTY": "NIFTY 50",
-    "BANKNIFTY": "NIFTY BANK",
-    "FINNIFTY": "NIFTY FIN SERVICE"
-  }
-  const targetName = nameMap[symbol] ?? symbol
+  const targetName = resolveKiteInstrumentName(symbol)
   const instrument = instruments.find(i => i.tradingsymbol === targetName || i.name === targetName)
   return instrument?.instrument_token ? Number(instrument.instrument_token) : undefined
 }
 
-export async function getOptionToken(underlying: string, strike: number, type: "CE" | "PE"): Promise<{ token: number, symbol: string } | undefined> {
+export async function getOptionToken(kc: KiteConnectInstance, underlying: string, strike: number, type: "CE" | "PE"): Promise<{ token: number, symbol: string, expiry: Date } | undefined> {
   const instruments = await kc.getInstruments("NFO")
   
   // Filter for current symbol and strike
@@ -87,9 +50,8 @@ export async function getOptionToken(underlying: string, strike: number, type: "
 
   return {
     token: Number(target.instrument_token),
-    symbol: target.tradingsymbol
+    symbol: target.tradingsymbol,
+    expiry: target.expiry
   }
 }
-
-export default kc
-
+export default createKiteClient(process.env.KITE_ACCESS_TOKEN)
