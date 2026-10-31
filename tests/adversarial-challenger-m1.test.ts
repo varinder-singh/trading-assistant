@@ -35,9 +35,9 @@ describe('Adversarial Stress Test: Fix 1 & Fix 2 Challenger Suite', () => {
       // Test a series of severe spikes: +15%, +20%, +35%, +50%
       const spikes = [
         { pct: 15, cmp: 34.0 * 1.15 }, // 39.10
-        { pct: 20, cmp: 34.0 * 1.20 }, // 40.80
+        { pct: 20, cmp: 34.0 * 1.2 }, // 40.80
         { pct: 35, cmp: 34.0 * 1.35 }, // 45.90
-        { pct: 50, cmp: 34.0 * 1.50 }, // 51.00
+        { pct: 50, cmp: 34.0 * 1.5 }, // 51.00
       ]
 
       for (const spike of spikes) {

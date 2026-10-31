@@ -1,22 +1,32 @@
 import type { Candle } from '../types/analysis.js'
 
+/**
+ * Calculates Wilder's Relative Strength Index (RSI) using Wilder's RMA smoothing:
+ * - First `period` price changes seed the initial simple average gain and loss.
+ * - Subsequent price changes apply Wilder's recursive smoothing:
+ *   avgGain = (prevAvgGain * (period - 1) + currentGain) / period
+ */
 export function calculateRSI(candles: Candle[], period = 14): number {
   if (candles.length < period + 1) return 50
 
-  const recentCandles = candles.slice(candles.length - period - 1)
-  const previousCandles = recentCandles.slice(0, -1)
-  const currentCandles = recentCandles.slice(1)
+  const priceChanges = candles.slice(1).map((candle, index) => candle.close - candles[index]!.close)
+  const seedChanges = priceChanges.slice(0, period)
+  const remainingChanges = priceChanges.slice(period)
 
-  const priceChanges = currentCandles.map((candle, index) => {
-    const previousCandle = previousCandles[index]!
-    return candle.close - previousCandle.close
-  })
+  const initialAvgGain = seedChanges.filter((c) => c > 0).reduce((sum, c) => sum + c, 0) / period
+  const initialAvgLoss = seedChanges.filter((c) => c < 0).reduce((sum, c) => sum + Math.abs(c), 0) / period
 
-  const gains = priceChanges.filter((change) => change > 0).reduce((total, change) => total + change, 0)
-  const losses = priceChanges.filter((change) => change < 0).reduce((total, change) => total + Math.abs(change), 0)
-
-  const avgGain = gains / period
-  const avgLoss = losses / period
+  const { avgGain, avgLoss } = remainingChanges.reduce(
+    (acc, change) => {
+      const gain = change > 0 ? change : 0
+      const loss = change < 0 ? Math.abs(change) : 0
+      return {
+        avgGain: (acc.avgGain * (period - 1) + gain) / period,
+        avgLoss: (acc.avgLoss * (period - 1) + loss) / period,
+      }
+    },
+    { avgGain: initialAvgGain, avgLoss: initialAvgLoss }
+  )
 
   if (avgLoss === 0) return 100
 

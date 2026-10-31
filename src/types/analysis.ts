@@ -89,6 +89,7 @@ export type TechnicalAnalysis = {
   vwapZScore?: number
   emaSlope?: Record<string, number>
   adx?: { adx: number; plusDI: number; minusDI: number }
+  atr14?: number | undefined
 }
 
 export type TradeTechnicalAnalysis = {

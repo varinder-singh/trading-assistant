@@ -34,7 +34,8 @@ export function analyzeDailyContext(candles1d: Candle[], intradayCandles?: Candl
   const pdr = pdh - pdl
 
   const isCompression = pdr < 0.7 * atr14
-  const openingRange = calculateORB(candles1d) ?? undefined
+  const openingRange =
+    calculateORB(intradayCandles && intradayCandles.length > 0 ? intradayCandles : candles1d) ?? undefined
   const previousDayVolumeProfile = resolvePreviousDayVolumeProfile(prevDay.time, currentDay.time, intradayCandles)
 
   return {
@@ -83,6 +84,7 @@ export function analyzeTechnical(
 
   const vwapZScore = calculateVWAPZScore(candles, vwap)
   const adx = calculateADX(candles, 14)
+  const atr14 = calculateATR(candles, 14)
 
   const swings = calculateSwings(candles, 2)
   const waveContext = detectWaveStructure(swings, last)
@@ -104,6 +106,7 @@ export function analyzeTechnical(
     vwapZScore,
     emaSlope,
     adx,
+    atr14,
   }
 }
 

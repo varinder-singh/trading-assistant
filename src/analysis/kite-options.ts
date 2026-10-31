@@ -104,10 +104,24 @@ function getBuildupState(coi: number, priceChange: number): KiteOptionOiRow['bui
   return 'Neutral'
 }
 
-function getMarketFlow(totalCoi: number, weightedPriceChange: number): KiteOptionsAnalysis['marketFlow'] {
-  if (totalCoi > 0) return weightedPriceChange > 0 ? 'LONG_BUILDUP' : 'SHORT_BUILDUP'
-  if (totalCoi < 0) return weightedPriceChange > 0 ? 'SHORT_COVERING' : 'LONG_UNWINDING'
+function getMarketFlow(totalCoi: number, netDirectionalBias: number): KiteOptionsAnalysis['marketFlow'] {
+  if (totalCoi > 0 && netDirectionalBias !== 0) {
+    return netDirectionalBias > 0 ? 'LONG_BUILDUP' : 'SHORT_BUILDUP'
+  }
+  if (totalCoi < 0 && netDirectionalBias !== 0) {
+    return netDirectionalBias > 0 ? 'SHORT_COVERING' : 'LONG_UNWINDING'
+  }
   return 'NEUTRAL'
+}
+
+function getUnderlyingFlowSign(row: KiteOptionOiRow): number {
+  if (!row.buildup || row.buildup === 'Neutral') return 0
+  const isContractBullish = row.buildup === 'Long Buildup' || row.buildup === 'Short Covering'
+  if (row.type === 'CE') {
+    return isContractBullish ? 1 : -1
+  }
+  // For PE: Short Buildup (put writers adding support) or Long Unwinding (put buyers exiting) is bullish on underlying
+  return isContractBullish ? -1 : 1
 }
 
 function getDeltaBounds(daysToExpiry: number): { minDelta: number; maxDelta: number } {
@@ -149,10 +163,10 @@ function buildOptionRow(
   const currentOi = q.oi ?? 0
   const ltp = q.last_price ?? 0
   const snapshot = windowSnapshot?.data.get(key)
-  const coi = snapshot ? currentOi - snapshot.oi : 0
+  const yOi = inst.instrument_token ? yesterdayOiMap?.get(inst.instrument_token) : undefined
+  const coi = snapshot ? currentOi - snapshot.oi : yOi !== undefined ? currentOi - yOi : 0
   const priceChange = snapshot ? ltp - snapshot.ltp : 0
   const buildup = getBuildupState(coi, priceChange)
-  const yOi = inst.instrument_token ? yesterdayOiMap?.get(inst.instrument_token) : undefined
 
   const greeks =
     q.greeks ||
@@ -290,19 +304,19 @@ export function analyzeOptions(
   const pcr = callOI > 0 ? putOI / callOI : 0
   const pcrAtm = atmCallOI > 0 ? atmPutOI / atmCallOI : 0
 
-  const { totalCoi, weightedPriceChange } = rows.reduce(
+  const { totalCoi, netDirectionalBias } = rows.reduce(
     (acc, row) => {
       if (!row.intervalOi) return acc
-      const weight = row.buildup === 'Short Covering' || row.buildup === 'Long Buildup' ? 1 : -1
+      const sign = getUnderlyingFlowSign(row)
       return {
         totalCoi: acc.totalCoi + row.intervalOi,
-        weightedPriceChange: acc.weightedPriceChange + row.intervalOi * weight,
+        netDirectionalBias: acc.netDirectionalBias + Math.abs(row.intervalOi) * sign,
       }
     },
-    { totalCoi: 0, weightedPriceChange: 0 }
+    { totalCoi: 0, netDirectionalBias: 0 }
   )
 
-  const marketFlow = getMarketFlow(totalCoi, weightedPriceChange)
+  const marketFlow = getMarketFlow(totalCoi, netDirectionalBias)
   const sentiment = pcr > 1.2 ? 'bullish' : pcr < 0.8 ? 'bearish' : 'neutral'
   const atmSentiment = pcrAtm > 1.2 ? 'bullish' : pcrAtm < 0.8 ? 'bearish' : 'neutral'
   const greeksContext = buildGreeksContext(rows, atmStrike, globalDaysToExpiry)

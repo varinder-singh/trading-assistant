@@ -71,6 +71,8 @@ export function getExpiryRiskProfile(daysToExpiry: number | undefined): ExpiryRi
   return daysToExpiry <= 2 ? PROFILES.NEAR_DTE : PROFILES.FAR_DTE
 }
 
+const RETRACT_EPSILON = 1e-6
+
 export function isRetractGuardTriggered(
   entryPrice: number,
   peakPrice: number,
@@ -78,11 +80,21 @@ export function isRetractGuardTriggered(
   profile: ExpiryRiskProfile
 ): boolean {
   const peakGain = peakPrice - entryPrice
-  if (entryPrice <= 0 || peakGain / entryPrice < profile.retractActivationPct || price >= peakPrice) return false
+  const peakGainPct = entryPrice > 0 ? peakGain / entryPrice : 0
+  if (entryPrice <= 0 || peakGainPct + RETRACT_EPSILON < profile.retractActivationPct || price >= peakPrice) {
+    return false
+  }
 
   const dropFromPeakPct = (peakPrice - price) / peakPrice
   const lostGainRatio = (peakPrice - price) / peakGain
-  return dropFromPeakPct >= profile.maxDropFromPeakPct || lostGainRatio >= profile.maxLostGainRatio
+  const dropTriggered = dropFromPeakPct + RETRACT_EPSILON >= profile.maxDropFromPeakPct
+  const lostGainTriggered = lostGainRatio + RETRACT_EPSILON >= profile.maxLostGainRatio
+
+  if (profile.bucket !== 'ZERO_DTE' && peakGainPct + RETRACT_EPSILON < 0.2) {
+    return dropTriggered && lostGainTriggered
+  }
+
+  return dropTriggered || lostGainTriggered
 }
 
 /** Lowest premium stop allowed for a long option, bounding worst-case loss per trade. */
