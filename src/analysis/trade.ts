@@ -93,12 +93,15 @@ export class TradeAnalysisService {
 
     const sentiment = await analyzeSentiment(headlines)
     const underlyingToken = await getInstrumentToken(kc, symbol)
-    if (underlyingToken) {
-      gtiTracker.setMarketContext(underlyingToken, tf15m.vwap, dailyContext?.atr14 || 1, {
-        sentiment: optionsAnalysisZerodha.sentiment,
-      })
-    }
-    const gtiScore = gtiTracker.getCurrentScore(underlyingToken || 0)
+    const effectiveToken = underlyingToken || 1
+    const effectiveAtr15m = tf15m.atr14 || dailyContext?.atr14 || 20
+    const gtiScore = gtiTracker.computeFromCandles(effectiveToken, candles.candles15m, tf15m.vwap, effectiveAtr15m, {
+      sentiment: optionsAnalysisZerodha.sentiment,
+      marketFlow: optionsAnalysisZerodha.marketFlow,
+      pcr: optionsAnalysisZerodha.pcr,
+    })
+    tf15m.gtiScore = gtiScore
+    tf3m.gtiScore = gtiScore
 
     const marketContext: MarketContext = {
       tf1h,
@@ -167,7 +170,7 @@ export class TradeAnalysisService {
       }
     }
 
-    this.processAiDecisionFilters(aiDecision, tf15m, gtiScore)
+    this.processAiDecisionFilters(aiDecision, tf15m, gtiScore, activeAgent, reversalScore)
     this.logAnalysisSummary(liveContext, vix, sentiment, aiDecision, tf15m, tf1h, dailyContext, gtiScore)
 
     return {
@@ -207,12 +210,11 @@ export class TradeAnalysisService {
     const intervalMins = Number(process.env.OI_SHIFT_INTERVAL_MINS || 5)
     const optionsAnalysisZerodha = analyzeOptions(quotes, finalOptions, spotPrice, yesterdayOiCache, intervalMins)
 
-    const { ivHistoryRepo } = await import('../db/repositories/iv-history.js')
     const atmRow = optionsAnalysisZerodha.rows.find(
       (r) => r.strike === optionsAnalysisZerodha.atmStrike && r.type === 'CE'
     )
     const currentIv = atmRow?.greeks?.iv || 0.15
-    const ivStats = await ivHistoryRepo.getIvStats(symbol, currentIv, 30)
+    const ivStats = await this.resolveIvStatsSafely(symbol, currentIv)
     optionsAnalysisZerodha.ivRank = ivStats.ivRank
     optionsAnalysisZerodha.ivPercentile = ivStats.ivPercentile
 
@@ -226,6 +228,18 @@ export class TradeAnalysisService {
     }
 
     return optionsAnalysisZerodha
+  }
+
+  private async resolveIvStatsSafely(
+    symbol: string,
+    currentIv: number
+  ): Promise<{ ivRank: number; ivPercentile: number }> {
+    try {
+      const { ivHistoryRepo } = await import('../db/repositories/iv-history.js')
+      return await ivHistoryRepo.getIvStats(symbol, currentIv, 30)
+    } catch {
+      return { ivRank: 0, ivPercentile: 0 }
+    }
   }
 
   private buildNoTradeResult(params: {
@@ -523,7 +537,13 @@ export class TradeAnalysisService {
     return [candles, vix, kiteData] as const
   }
 
-  private processAiDecisionFilters(aiDecision: any, tf15m: any, gtiScore: any): void {
+  private processAiDecisionFilters(
+    aiDecision: any,
+    tf15m: any,
+    gtiScore: any,
+    activeAgent: TradingAgentType = 'SCALPER',
+    reversalScore?: { bullish: number; bearish: number }
+  ): void {
     if (!aiDecision.optionAction || aiDecision.optionAction === 'NONE') return
 
     const normalizedConfidence = aiDecision.confidence <= 1.0 ? aiDecision.confidence * 100 : aiDecision.confidence
@@ -542,10 +562,26 @@ export class TradeAnalysisService {
       aiDecision.reducedPosition = true
     }
 
+    if (aiDecision.setup === 'INSTITUTIONAL_TRAP' && reversalScore) {
+      const requiredScore = aiDecision.optionAction === 'BUY_CE' ? reversalScore.bullish : reversalScore.bearish
+      if (requiredScore < 3) {
+        console.warn(
+          `[Reversal Score Filter] 🛑 BLOCKED: ${aiDecision.optionAction} rejected — Playbook B INSTITUTIONAL_TRAP requires Reversal Score >= 3/5 (actual: ${requiredScore}/5).`
+        )
+        aiDecision.decision = 'HOLD'
+        aiDecision.optionAction = 'NONE'
+        aiDecision.reason = `[REVERSAL SCORE BLOCKED] ${aiDecision.reason} | Playbook B requires Reversal Score >= 3/5 (got ${requiredScore}/5).`
+        return
+      }
+    }
+
     const zScore15m = tf15m.vwapZScore || 0
-    if (aiDecision.optionAction === 'BUY_CE' && zScore15m > 2.0) {
+    const isWave3Expansion =
+      activeAgent === 'TREND' || aiDecision.setup === 'TRUE_BREAKOUT' || tf15m.waveContext?.currentPhase === 'WAVE_3'
+
+    if (!isWave3Expansion && aiDecision.optionAction === 'BUY_CE' && zScore15m > 2.0) {
       console.warn(
-        `[VWAP Z-Score Filter] 🛑 BLOCKED: BUY_CE rejected — 15m VWAP Z-Score (${zScore15m.toFixed(2)}) > +2.0 (overbought top).`
+        `[VWAP Z-Score Filter] 🛑 BLOCKED: BUY_CE rejected — 15m VWAP Z-Score (${zScore15m.toFixed(2)}) > +2.0 (overbought mean-reversion boundary).`
       )
       aiDecision.decision = 'HOLD'
       aiDecision.optionAction = 'NONE'
@@ -553,9 +589,9 @@ export class TradeAnalysisService {
       return
     }
 
-    if (aiDecision.optionAction === 'BUY_PE' && zScore15m < -2.0) {
+    if (!isWave3Expansion && aiDecision.optionAction === 'BUY_PE' && zScore15m < -2.0) {
       console.warn(
-        `[VWAP Z-Score Filter] 🛑 BLOCKED: BUY_PE rejected — 15m VWAP Z-Score (${zScore15m.toFixed(2)}) < -2.0 (oversold bottom).`
+        `[VWAP Z-Score Filter] 🛑 BLOCKED: BUY_PE rejected — 15m VWAP Z-Score (${zScore15m.toFixed(2)}) < -2.0 (oversold mean-reversion boundary).`
       )
       aiDecision.decision = 'HOLD'
       aiDecision.optionAction = 'NONE'

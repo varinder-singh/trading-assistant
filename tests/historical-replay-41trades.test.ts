@@ -114,8 +114,8 @@ describe('Deterministic 41-Trade Replay Suite against Real Production Dataset', 
       const expectedExits = [
         { idPrefix: '316d6721', symbol: 'NIFTY26O1922950PE', exitPrice: 76.15, expectedPnl: 191.75 },
         { idPrefix: 'd66870cf', symbol: 'NIFTY26O1922900PE', exitPrice: 50.39, expectedPnl: 239.85 },
-        { idPrefix: '7111a21b', symbol: 'NIFTY26O1922900CE', exitPrice: 38.37, expectedPnl: 105.30 },
-        { idPrefix: '000a9acf', symbol: 'NIFTY26O1922850PE', exitPrice: 41.80, expectedPnl: 195.00 },
+        { idPrefix: '7111a21b', symbol: 'NIFTY26O1922900CE', exitPrice: 38.37, expectedPnl: 105.3 },
+        { idPrefix: '000a9acf', symbol: 'NIFTY26O1922850PE', exitPrice: 41.8, expectedPnl: 195.0 },
         { idPrefix: '2f15ca1b', symbol: 'NIFTY26O1922900PE', exitPrice: 36.82, expectedPnl: 225.55 },
       ]
 
@@ -145,7 +145,7 @@ describe('Deterministic 41-Trade Replay Suite against Real Production Dataset', 
 
       expect(totalExitFixPnl).toBeCloseTo(957.45, 2)
       const improvement = totalExitFixPnl - -1537.25
-      expect(improvement).toBeCloseTo(2494.70, 2)
+      expect(improvement).toBeCloseTo(2494.7, 2)
     })
 
     it('should verify Full Fix (with Trade #2 trigger entry @ ₹34.00 -> ₹50.50) reaches +₹1,790.10 (+₹3,327.35 improvement)', () => {
@@ -154,16 +154,16 @@ describe('Deterministic 41-Trade Replay Suite against Real Production Dataset', 
 
       // With Fix 1: Trade #2 is not chased at ₹46.70; instead a pending trigger order executes @ ₹34.00,
       // and exits at target ₹50.50 (+₹1,072.50 profit) matching manual benchmark
-      const trade2Pnl = (50.50 - 34.00) * 65 // +₹1,072.50
-      expect(trade2Pnl).toBe(1072.50)
+      const trade2Pnl = (50.5 - 34.0) * 65 // +₹1,072.50
+      expect(trade2Pnl).toBe(1072.5)
 
       const trade1Pnl = 191.75
-      const trade3Pnl = 105.30
-      const trade4Pnl = 195.00
+      const trade3Pnl = 105.3
+      const trade4Pnl = 195.0
       const trade5Pnl = 225.55
 
       const totalFullFixPnl = trade1Pnl + trade2Pnl + trade3Pnl + trade4Pnl + trade5Pnl
-      expect(totalFullFixPnl).toBeCloseTo(1790.10, 2)
+      expect(totalFullFixPnl).toBeCloseTo(1790.1, 2)
 
       const fullImprovement = totalFullFixPnl - -1537.25
       expect(fullImprovement).toBeCloseTo(3327.35, 2)
@@ -184,7 +184,7 @@ describe('Deterministic 41-Trade Replay Suite against Real Production Dataset', 
         }
       }
 
-      expect(totalBasePnl).toBeCloseTo(1228.50, 2)
+      expect(totalBasePnl).toBeCloseTo(1228.5, 2)
       expect(slCount).toBe(6)
     })
 
@@ -218,13 +218,13 @@ describe('Deterministic 41-Trade Replay Suite against Real Production Dataset', 
       expect(r2!.targetSl).toBeCloseTo(57.58, 2)
       const postExit2 = parseFloat(r2!.targetSl.toFixed(2)) // ₹57.58
       const postPnl2 = parseFloat(((postExit2 - entry2) * (t2.quantity || 65)).toFixed(2))
-      expect(postPnl2).toBeCloseTo(109.20, 2)
+      expect(postPnl2).toBeCloseTo(109.2, 2)
 
       const combinedPostPnl = postPnl1 + postPnl2
       expect(combinedPostPnl).toBeCloseTo(224.25, 2)
 
       const netSwing = combinedPostPnl - baseLoss
-      expect(netSwing).toBeCloseTo(1651.00, 2)
+      expect(netSwing).toBeCloseTo(1651.0, 2)
     })
 
     it('should verify big winners lock higher profits via +20% and +35% tiers before FAR_DTE retract decay', () => {
@@ -244,15 +244,15 @@ describe('Deterministic 41-Trade Replay Suite against Real Production Dataset', 
       expect(r4!.tier.minPeakGainPct).toBe(0.35)
       expect(r4!.targetSl).toBeCloseTo(71.76, 2)
       const exit4 = parseFloat(r4!.targetSl.toFixed(2))
-      expect((exit4 - parseFloat(t4.entryPrice)) * 65).toBeCloseTo(1069.90, 1)
+      expect((exit4 - parseFloat(t4.entryPrice)) * 65).toBeCloseTo(1069.9, 1)
 
       // Trade #5: 54.35 -> 68.75 (+26.50%) -> +20% tier locks 65% MFE @ 63.71
       const t5 = oct22Trades[4]!
       const r5 = getRatchetedStopLoss(parseFloat(t5.entryPrice), t5.exitMetadata!.peakPrice!)
-      expect(r5!.tier.minPeakGainPct).toBe(0.20)
+      expect(r5!.tier.minPeakGainPct).toBe(0.2)
       expect(r5!.targetSl).toBeCloseTo(63.71, 2)
       const exit5 = parseFloat(r5!.targetSl.toFixed(2))
-      expect((exit5 - parseFloat(t5.entryPrice)) * 65).toBeCloseTo(608.40, 1)
+      expect((exit5 - parseFloat(t5.entryPrice)) * 65).toBeCloseTo(608.4, 1)
     })
 
     it('should verify total Post-Fix Net P&L on October 22 reaches +₹3,480.10 (+183.3% improvement)', () => {
@@ -260,17 +260,17 @@ describe('Deterministic 41-Trade Replay Suite against Real Production Dataset', 
       expect(oct22Trades).toHaveLength(11)
 
       const expectedPostPnls = [
-        115.05,  // Trade #1 (Ratchet +8% tier: ₹54.02)
-        109.20,  // Trade #2 (Ratchet +8% tier: ₹57.58)
+        115.05, // Trade #1 (Ratchet +8% tier: ₹54.02)
+        109.2, // Trade #2 (Ratchet +8% tier: ₹57.58)
         1789.45, // Trade #3 (Ratchet +35% tier: ₹82.13)
-        1069.90, // Trade #4 (Ratchet +35% tier: ₹71.76)
-        608.40,  // Trade #5 (Ratchet +20% tier: ₹63.71)
-        -604.50, // Trade #6 (Stop-Loss: ₹37.15)
+        1069.9, // Trade #4 (Ratchet +35% tier: ₹71.76)
+        608.4, // Trade #5 (Ratchet +20% tier: ₹63.71)
+        -604.5, // Trade #6 (Stop-Loss: ₹37.15)
         -620.75, // Trade #7 (Stop-Loss: ₹38.00)
-        449.80,  // Trade #8 (Ratchet +20% tier: ₹59.42)
-        488.15,  // Trade #9 (Ratchet +20% tier: ₹54.36)
-        -630.50, // Trade #10 (Stop-Loss: ₹37.10)
-        705.90,  // Trade #11 (Ratchet +20% tier: ₹61.31)
+        449.8, // Trade #8 (Ratchet +20% tier: ₹59.42)
+        488.15, // Trade #9 (Ratchet +20% tier: ₹54.36)
+        -630.5, // Trade #10 (Stop-Loss: ₹37.10)
+        705.9, // Trade #11 (Ratchet +20% tier: ₹61.31)
       ]
 
       let totalPostPnl = 0
@@ -279,10 +279,10 @@ describe('Deterministic 41-Trade Replay Suite against Real Production Dataset', 
         totalPostPnl += expectedPnl
       })
 
-      expect(totalPostPnl).toBeCloseTo(3480.10, 2)
-      const improvement = totalPostPnl - 1228.50
-      expect(improvement).toBeCloseTo(2251.60, 2)
-      const improvementPct = (improvement / 1228.50) * 100
+      expect(totalPostPnl).toBeCloseTo(3480.1, 2)
+      const improvement = totalPostPnl - 1228.5
+      expect(improvement).toBeCloseTo(2251.6, 2)
+      const improvementPct = (improvement / 1228.5) * 100
       expect(improvementPct).toBeGreaterThan(183.0)
     })
 
@@ -346,7 +346,7 @@ describe('Deterministic 41-Trade Replay Suite against Real Production Dataset', 
       for (const t of trades) {
         baselineTotal += parseFloat(t.pnl)
       }
-      expect(baselineTotal).toBeCloseTo(-7228.00, 2)
+      expect(baselineTotal).toBeCloseTo(-7228.0, 2)
     })
 
     it('should confirm 100% preservation of prior winning sessions (Oct 15 runner +₹3,064.75 untouched)', () => {
@@ -366,7 +366,7 @@ describe('Deterministic 41-Trade Replay Suite against Real Production Dataset', 
       expect(ratchet!.targetSl).toBeCloseTo(86.59, 2)
 
       // The actual DB exit was 86.75 — the ratcheted SL preserves the winning exit seamlessly
-      expect(parseFloat(runner!.exitPrice)).toBeGreaterThanOrEqual(ratchet!.targetSl - 0.20)
+      expect(parseFloat(runner!.exitPrice)).toBeGreaterThanOrEqual(ratchet!.targetSl - 0.2)
     })
 
     it('should verify that all trades with >= +8% peak gain achieve superior profit locking across all sessions', () => {
@@ -415,7 +415,7 @@ describe('Deterministic 41-Trade Replay Suite against Real Production Dataset', 
         token: 1001,
         side: 'BUY',
         quantity: 65,
-        price: 73.20,
+        price: 73.2,
         context: {
           lotSize: 65,
           aiStopLoss: 59.04,
@@ -424,7 +424,7 @@ describe('Deterministic 41-Trade Replay Suite against Real Production Dataset', 
       })
 
       const pos = trader.getAllPositions()[0]!
-      pos.t1Target = 79.70 // T1 target
+      pos.t1Target = 79.7 // T1 target
 
       // Price rallies to peak ₹79.75 (touches T1)
       await trader.updatePrice(1001, 79.75)
@@ -438,11 +438,11 @@ describe('Deterministic 41-Trade Replay Suite against Real Production Dataset', 
       trader.on('order_update', (order) => {
         if (order.side === 'SELL') {
           exitCaptured = true
-          expect(order.price).toBeCloseTo(76.10, 1)
+          expect(order.price).toBeCloseTo(76.1, 1)
         }
       })
 
-      await trader.updatePrice(1001, 76.10)
+      await trader.updatePrice(1001, 76.1)
       expect(exitCaptured).toBe(true)
       expect(trader.getAllPositions()).toHaveLength(0) // Position fully closed
     })
@@ -479,34 +479,34 @@ describe('Deterministic 41-Trade Replay Suite against Real Production Dataset', 
       expect(trader.getPendingOrders()).toHaveLength(1)
 
       // Ticks arrive at inflated prices: 46.70, 42.00, 38.00 (order stays pending)
-      await trader.updatePrice(1002, 46.70)
-      await trader.updatePrice(1002, 42.00)
+      await trader.updatePrice(1002, 46.7)
+      await trader.updatePrice(1002, 42.0)
       expect(trader.getPendingOrders()).toHaveLength(1)
       expect(trader.getAllPositions()).toHaveLength(0)
 
       // Pullback tick reaches ₹34.00 -> Order automatically fills as BUY @ ₹34.00!
-      await trader.updatePrice(1002, 34.00)
+      await trader.updatePrice(1002, 34.0)
       expect(trader.getPendingOrders()).toHaveLength(0)
       expect(trader.getAllPositions()).toHaveLength(1)
 
       const pos = trader.getAllPositions()[0]!
-      expect(pos.avgEntryPrice).toBe(34.00)
-      pos.t2Target = 50.50 // Target booked
+      expect(pos.avgEntryPrice).toBe(34.0)
+      pos.t2Target = 50.5 // Target booked
 
       let bookedProfit = 0
       trader.on('order_update', (order) => {
         if (order.side === 'SELL') {
-          bookedProfit = (order.price - 34.00) * order.quantity
+          bookedProfit = (order.price - 34.0) * order.quantity
         }
       })
 
       // Price rallies to T1 first (touches 42.00)
-      await trader.updatePrice(1002, 42.00)
+      await trader.updatePrice(1002, 42.0)
       expect(pos.t1Hit).toBe(true)
 
       // Price rallies to T2 target ₹50.50 -> Sells 65 qty @ 50.50, banking +₹1,072.50
-      await trader.updatePrice(1002, 50.50)
-      expect(bookedProfit).toBe(1072.50)
+      await trader.updatePrice(1002, 50.5)
+      expect(bookedProfit).toBe(1072.5)
       expect(trader.getAllPositions()).toHaveLength(0) // Position fully closed at target
     })
   })

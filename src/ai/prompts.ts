@@ -15,7 +15,7 @@ Your mandate is precision execution: capturing fast, asymmetric 15-40 index poin
 Determine macro bias, volatility compression, and structural wave environment:
 - **Volatility Compression State:** If (Previous Day Range < 70% of 14-day ATR), market is accumulating; expect explosive breakout/expansion.
 - **30-Minute Wave Track:** Use 30m timeframe to identify intermediate compression and clean wave structures.
-- **Macro Trend:** Bullish/Bearish based on Price vs 50/200 EMA (1h) and 20/50 EMA (30m).
+- **Macro Trend:** Bullish/Bearish based on Price vs 50/200 EMA (1h) and 9/21 EMA (30m & 15m).
 - **Market Structure & Wave Context:** Distinguish Impulsive (5-wave structures moving with trend) vs Corrective (3-wave overlapping structures).
 - **Key Reference Zones:** Previous Day High (PDH), Previous Day Low (PDL), Daily Supply/Demand zones, and 50%–61.8% Fibonacci retracement levels.
 
@@ -44,7 +44,7 @@ Exact entry/exit criteria for options scalps:
 - **RSI OVERBOUGHT / OVERSOLD GUARDRAIL:**
   - DO NOT buy Calls (BUY_CE) if 15m RSI > 70 AND price is near 1h resistance.
   - DO NOT buy Puts (BUY_PE) if 15m RSI < 30 AND price is near 1h support.
-- **I-COI Triggers:** Short Covering (Price ↑, OI ↓) or Long Unwinding (Price ↓, OI ↓) accelerates entry.
+- **I-COI Triggers (Intraday Change in Open Interest / intervalOi):** Short Covering (Price ↑, OI ↓) or Long Unwinding (Price ↓, OI ↓) accelerates entry.
 - **Risk Management:** Set \`indexStopLoss\` strictly on Index structural invalidation (beyond Trap wick or consolidation boundary).
 
 ---
@@ -55,9 +55,9 @@ Exact entry/exit criteria for options scalps:
 ---
 
 ## DECISION MATRIX
-- **BUY (BUY_CE):** Macro bias Bullish/Neutral/Compressed + 15m structure holding OR BZ or trapping below PDL at 50-61.8% Fib + 3m confirms Breakout/Trap + CE Short Covering or PE Short Buildup.
-- **SELL (BUY_PE):** Macro bias Bearish/Neutral/Compressed + 15m structure rejecting OR SZ or trapping above PDH + 3m confirms Breakout/Trap + PE Short Covering or CE Short Buildup.
-- **NO_TRADE:** Choppy price action inside OR without testing boundaries, mixed timeframe signals, active Wave B corrective dead-zones, Reversal Quality Score < 3/5, or VIX > 25 without clear setup.
+- **BUY (optionAction: BUY_CE):** Macro bias Bullish/Neutral/Compressed + 15m structure holding OR BZ or trapping below PDL at 50-61.8% Fib + 3m confirms Breakout/Trap + CE Short Covering or PE Short Buildup.
+- **BUY (optionAction: BUY_PE):** Macro bias Bearish/Neutral/Compressed + 15m structure rejecting OR SZ or trapping above PDH + 3m confirms Breakout/Trap + PE Short Covering or CE Short Buildup.
+- **NO_TRADE (optionAction: NONE):** Choppy price action inside OR without testing boundaries, mixed timeframe signals, active Wave B corrective dead-zones, Reversal Quality Score < 3/5, or VIX > 25 without clear setup.
 
 ---
 
@@ -90,7 +90,7 @@ You are a technical analyst expert in Indian Markets (NIFTY/BANKNIFTY). Your foc
    - 'P' Profile (Top-Heavy): Look for buy signals at the POC (support). Bias is bullish unless price breaks below the belly.
    - 'B' Profile (Bottom-Heavy): Look for sell signals at the POC (resistance). Bias is bearish unless price breaks above the belly.
    - 'I' Profile (Trend): Value areas are weak. Focus on momentum continuation.
-5. **Precision Setup (3m):** Identify NCLS Playbooks:
+5. **Precision Setup (3m):** Identify Intraday Execution Playbooks:
    - Playbook A: True Breakout (Wave 3 Launch).
    - Playbook B: Institutional Trap (Wave 2/4 Reversal). MUST have a Reversal Quality Score of >= 3/5.
    - **RSI RULE**: Reject any setup that requires buying Calls into 15m overbought (>70) resistance, or buying Puts into 15m oversold (<30) support.
@@ -173,16 +173,16 @@ You are the final decision maker. You receive assessments from a Technical Analy
      - **ITM strikes (delta >= 0.60):** BUY trades ARE permitted because their premium is mostly intrinsic value and theta decay is negligible. However, prefer the shallowest ITM strike available to retain some gamma benefit.
      - **Exception:** If an explosive Wave 3 squeeze is actively underway, ANY strike may be authorized regardless of theta concerns.
 10. **STRIKE SELECTION:**
-    - **Default:** Use the strike recommended by the Options Specialist or \`greeksContext.recommendedBuyStrike\`. This strike is mathematically optimized for the best Gamma/Premium ratio.
+    - **Default:** Use the strike recommended by the Options Specialist or \`greeksContext.recommendedBuyStrikeCE\` / \`greeksContext.recommendedBuyStrikePE\`. This strike is mathematically optimized for the best Gamma/Premium ratio.
     - **Override Allowed:** You MAY select a different strike within ±2 strikes of ATM if the current setup strongly justifies it. For example:
       - A confirmed Wave 3 breakout favors an ATM strike for maximum gamma acceleration.
       - A high-conviction Playbook B trap reversal may favor a slightly ITM strike for higher delta and directional certainty.
     - If you override the recommended strike, you MUST state the reason in your \`reason\` field (e.g., "Overrode recommended strike 24200 → ATM 24050 for peak gamma on Wave 3 launch").
 
 ### OUTPUT FORMAT:
-You must respond ONLY with a JSON object:
+You must respond ONLY with a JSON object (note: all directional option entries use "decision": "BUY" with direction set via "optionAction": "BUY_CE" | "BUY_PE"):
 {
-  "decision": "BUY" | "SELL" | "NO_TRADE",
+  "decision": "BUY" | "NO_TRADE",
   "setup": "TRUE_BREAKOUT" | "INSTITUTIONAL_TRAP" | "TREND_CONTINUATION" | "NONE",
   "macroTrend": "BULLISH" | "BEARISH" | "SIDEWAYS",
   "instrument": "OPTIONS",
@@ -223,9 +223,9 @@ export const TREND_RULES = `
   - EXIT if institutional flow (COI) turns aggressively against the trend (e.g., Short Buildup during a rally).
 
 ## DECISION LOGIC
-- BUY (Action: BUY_CE): Orchestrator signals TREND + 15m breakout confirmed / Wave 3 launchpad active + CE Short Covering or PE Short Buildup.
-- SELL (Action: BUY_PE): Orchestrator signals TREND + 15m breakdown confirmed / Wave 3 breakdown active + PE Short Covering or CE Short Buildup.
-- HOLD: As long as 15m structure and 21 EMA remain intact, and the mathematical Wave 5 target has not been breached.
+- BUY (optionAction: BUY_CE): Orchestrator signals TREND + 15m breakout confirmed / Wave 3 launchpad active + CE Short Covering or PE Short Buildup.
+- BUY (optionAction: BUY_PE): Orchestrator signals TREND + 15m breakdown confirmed / Wave 3 breakdown active + PE Short Covering or CE Short Buildup.
+- HOLD / NO_TRADE: As long as 15m structure and 21 EMA remain intact, and the mathematical Wave 5 target has not been breached.
 `
 
 export const POSITION_MANAGEMENT_RULES = `
@@ -281,7 +281,6 @@ You are the master traffic controller of a multi-agent trading system. Your role
 #### 4. Wave Theory Structural Filters
 - **FORCE_TREND:** If 15m chart confirms a CHoCH followed by a standard Wave 2 deep retracement (50%-78.6%), authorize TREND. This is the launchpad of an Intraday Wave 3. Bypass 'Dead Zone' time-of-day restrictions. (Note: Wave 4 is the shallow 23.6-38.2% retracement, do not confuse them).
 - **FORCE_SCALPER:** If 15m chart indicates a completed 5-wave sequence, or if the market is recovering via a low-volume Wave B corrective bounce, force SCALPER. Breakouts in this environment are structural traps.
-- **Component Alignment:** Authorization for TREND requires at least 2 of the top 3 heavyweights to be trending in the same direction as the index.
 
 ### OUTPUT FORMAT
 You must respond ONLY with a JSON object in this format:

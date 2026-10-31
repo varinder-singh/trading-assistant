@@ -19,6 +19,16 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['dist/', 'coverage/', 'data/', '.kite/', 'node_modules/', 'web/.nuxt/', 'web/.output/', '.output/'],
+    ignores: [
+      'dist/',
+      'coverage/',
+      'data/',
+      '.kite/',
+      'node_modules/',
+      'web/.nuxt/',
+      'web/.output/',
+      '.output/',
+      '.agents/',
+    ],
   }
 )

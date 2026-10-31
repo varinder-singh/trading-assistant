@@ -307,7 +307,7 @@ export class UserSession extends EventEmitter {
       triggerIndexPrice,
     })
 
-    const atr14 = analysisResult.dailyContext?.atr14 || 20
+    const atr14 = tf.atr14 || analysisResult.dailyContext?.atr14 || 20
     const { optionRiskPoints, calculatedSl, calculatedTarget } = calculateBoundedRiskAndTarget({
       spotPrice: tf.price,
       stopLoss: decision.stopLoss,

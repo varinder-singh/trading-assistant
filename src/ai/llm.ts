@@ -26,13 +26,24 @@ export function cleanJson(text: string): string {
     .replace(/"(?:[^"\\]|\\.)*"/g, (match) => match.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t'))
 }
 
-function sanitizeStopLoss(result: AISuccessResponse, indexPrice: number, isBearish: boolean): void {
+function sanitizeStopLoss(
+  result: AISuccessResponse,
+  indexPrice: number,
+  isBearish: boolean,
+  _agentType: TradingAgentType = 'SCALPER'
+): void {
   const isDirectionInvalid = isBearish ? result.stopLoss <= indexPrice : result.stopLoss >= indexPrice
   const distPct = Math.abs(result.stopLoss - indexPrice) / indexPrice
   const isDistanceInvalid = distPct < 0.001 || distPct > 0.02
   const isMacroOutOfRange = result.stopLoss < indexPrice * 0.9 || result.stopLoss > indexPrice * 1.1
 
-  if (isDirectionInvalid || isDistanceInvalid || isMacroOutOfRange || !result.stopLoss) {
+  if (
+    isDirectionInvalid ||
+    isDistanceInvalid ||
+    isMacroOutOfRange ||
+    !result.stopLoss ||
+    Number.isNaN(result.stopLoss)
+  ) {
     console.warn(
       `[AI Validation] Invalid Stop Loss (${result.stopLoss}) for indexPrice ${indexPrice} (${(distPct * 100).toFixed(2)}% distance, direction=${isBearish ? 'PE' : 'CE'}). AI Hallucination detected, overriding.`
     )
@@ -40,29 +51,46 @@ function sanitizeStopLoss(result: AISuccessResponse, indexPrice: number, isBeari
   }
 }
 
-function sanitizeTargets(result: AISuccessResponse, indexPrice: number, isBearish: boolean): void {
-  const firstTarget = result.targets?.[0]
-  const hasInvalidTarget = isBearish
-    ? firstTarget !== undefined && firstTarget >= indexPrice
-    : firstTarget !== undefined && firstTarget <= indexPrice
-  const isTargetDistanceInvalid = firstTarget !== undefined && Math.abs(firstTarget - indexPrice) / indexPrice > 0.05
+function isSingleTargetValid(target: number, indexPrice: number, isBearish: boolean): boolean {
+  if (!target || Number.isNaN(target)) return false
+  const isRightSide = isBearish ? target < indexPrice : target > indexPrice
+  const isWithinBounds = Math.abs(target - indexPrice) / indexPrice <= 0.05
+  return isRightSide && isWithinBounds
+}
 
-  if (!firstTarget || hasInvalidTarget || isTargetDistanceInvalid) {
+function sanitizeTargets(result: AISuccessResponse, indexPrice: number, isBearish: boolean): void {
+  const rawTargets = Array.isArray(result.targets) ? result.targets : []
+  const validTargets = rawTargets.filter((t) => isSingleTargetValid(t, indexPrice, isBearish))
+
+  if (validTargets.length === 0) {
     console.warn(
-      `[AI Validation] Invalid Target (${firstTarget}) for direction ${isBearish ? 'PE' : 'CE'} (indexPrice ${indexPrice}). AI Hallucination detected, overriding.`
+      `[AI Validation] Invalid Target (${rawTargets[0]}) for direction ${isBearish ? 'PE' : 'CE'} (indexPrice ${indexPrice}). AI Hallucination detected, overriding.`
     )
     result.targets = [isBearish ? indexPrice * 0.995 : indexPrice * 1.005]
+    return
   }
+
+  // Enforce monotonic target progression (ascending for CE, descending for PE)
+  const sortedTargets = [...validTargets].sort((a, b) => (isBearish ? b - a : a - b))
+  result.targets = sortedTargets
 }
 
 export function sanitizeAiDecision(
   result: AISuccessResponse,
   input: any,
-  _agentType: TradingAgentType = 'SCALPER'
+  agentType: TradingAgentType = 'SCALPER'
 ): AISuccessResponse {
+  // Normalize "SELL" with BUY_PE / BUY_CE into "BUY" so bearish option entries are never bypassed
+  if (
+    (result.decision as string) === 'SELL' &&
+    (result.optionAction === 'BUY_PE' || result.optionAction === 'BUY_CE')
+  ) {
+    result.decision = 'BUY'
+  }
+
   if (result.decision !== 'BUY') return result
 
-  if (result.confidence < 0 || result.confidence > 100) {
+  if (result.confidence < 0 || result.confidence > 100 || Number.isNaN(result.confidence)) {
     result.confidence = Math.min(Math.max(result.confidence || 0, 0), 100)
   }
 
@@ -74,7 +102,7 @@ export function sanitizeAiDecision(
     result.entry = indexPrice
   }
 
-  sanitizeStopLoss(result, indexPrice, isBearish)
+  sanitizeStopLoss(result, indexPrice, isBearish, agentType)
   sanitizeTargets(result, indexPrice, isBearish)
 
   return result
@@ -122,10 +150,12 @@ export class LLMService {
     }
 
     truncateSwings(cleaned.tf1h)
+    truncateSwings(cleaned.tf30m)
     truncateSwings(cleaned.tf15m)
     truncateSwings(cleaned.tf3m)
     if (cleaned.marketData) {
       truncateSwings(cleaned.marketData.tf1h)
+      truncateSwings(cleaned.marketData.tf30m)
       truncateSwings(cleaned.marketData.tf15m)
       truncateSwings(cleaned.marketData.tf3m)
     }
@@ -228,7 +258,9 @@ ${JSON.stringify(cleanedInput, null, 2)}
 
   private injectWave5Target(systemMessage: string, input: any): string {
     const wave5Target = input.tf15m?.waveContext?.wave5Target || input.marketData?.tf15m?.waveContext?.wave5Target
-    if (!wave5Target) return systemMessage
+    if (!wave5Target) {
+      return systemMessage.replace(/\{\{WAVE5_TARGET_INSTRUCTION\}\}\n?/g, '')
+    }
 
     return systemMessage.replace(
       /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,

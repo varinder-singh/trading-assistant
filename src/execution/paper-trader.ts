@@ -284,11 +284,18 @@ export class PaperTrader extends EventEmitter {
     pos.strategyContext = { ...(pos.strategyContext ?? ({} as StrategyContext)), agentType }
   }
 
+  private resolveExpiryCloseTimeMs(expiry: string | Date): number {
+    const expiryDate = new Date(expiry)
+    if (Number.isNaN(expiryDate.getTime())) return Date.now()
+    const istDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(expiryDate)
+    return new Date(`${istDateStr}T15:30:00+05:30`).getTime()
+  }
+
   private updatePositionGreeks(pos: PaperPosition, spotPrice: number): void {
     if (!pos.optionExpiry || !pos.strike || (!pos.symbol.endsWith('CE') && !pos.symbol.endsWith('PE'))) return
 
-    const expiryTime = new Date(pos.optionExpiry).getTime()
-    const daysToExpiry = Math.max(0, (expiryTime - Date.now()) / (1000 * 60 * 60 * 24))
+    const expiryTime = this.resolveExpiryCloseTimeMs(pos.optionExpiry)
+    const daysToExpiry = Math.max(0.001, (expiryTime - Date.now()) / (1000 * 60 * 60 * 24))
     const type = pos.symbol.endsWith('CE') ? 'CE' : 'PE'
 
     const greeks = getGreeksFromPrice(pos.currentPrice, spotPrice, pos.strike, daysToExpiry, 0.07, type)
@@ -311,22 +318,27 @@ export class PaperTrader extends EventEmitter {
     newIndexStopLoss: number,
     spotPrice: number,
     agentType: TradingAgentType
-  ): { rawPremiumSl: number; optionRiskPoints: number } {
-    if (newIndexStopLoss < 1000) {
+  ): { rawPremiumSl: number; optionRiskPoints: number; isIndexScale: boolean } {
+    const isIndexScale = spotPrice > 0 && newIndexStopLoss > spotPrice * 0.7 && newIndexStopLoss < spotPrice * 1.3
+    if (!isIndexScale) {
       console.warn(
         `[Risk Manager] AI returned a premium SL instead of an Index SL: ${newIndexStopLoss}. Using it directly.`
       )
       return {
         rawPremiumSl: newIndexStopLoss,
         optionRiskPoints: Math.abs(pos.currentPrice - newIndexStopLoss),
+        isIndexScale: false,
       }
     }
 
-    const indexRiskPoints = Math.abs(spotPrice - newIndexStopLoss)
+    const optionType = getOptionType(pos.symbol)
+    const isProtectiveIndexSl =
+      !optionType || (optionType === 'CE' ? newIndexStopLoss < spotPrice : newIndexStopLoss > spotPrice)
+    const indexRiskPoints = isProtectiveIndexSl ? Math.abs(spotPrice - newIndexStopLoss) : spotPrice * 0.003
     const effectiveDelta = this.resolveEffectiveDelta(pos, agentType)
     const optionRiskPoints = indexRiskPoints * effectiveDelta
     const rawPremiumSl = Math.max(pos.aiStopLoss ?? 0, pos.currentPrice - optionRiskPoints)
-    return { rawPremiumSl, optionRiskPoints }
+    return { rawPremiumSl, optionRiskPoints, isIndexScale: isProtectiveIndexSl }
   }
 
   private calculateTrailingTarget(
@@ -359,14 +371,27 @@ export class PaperTrader extends EventEmitter {
     spotPrice: number,
     agentType: TradingAgentType
   ): void {
-    const { rawPremiumSl, optionRiskPoints } = this.calculateTrailingStopLevels(
+    const { rawPremiumSl, optionRiskPoints, isIndexScale } = this.calculateTrailingStopLevels(
       pos,
       decision.newIndexStopLoss,
       spotPrice,
       agentType
     )
-    const newPremiumSl = this.capStopLossAtSafetyFloor(pos, rawPremiumSl, agentType)
+    const flooredSl = this.capStopLossAtSafetyFloor(pos, rawPremiumSl, agentType)
+    const newPremiumSl = Math.min(flooredSl, pos.currentPrice * 0.98)
     pos.aiTarget = this.calculateTrailingTarget(pos, optionRiskPoints, decision.riskRewardRatio, agentType)
+
+    if (isIndexScale) {
+      const optionType = getOptionType(pos.symbol)
+      const isTighterIndexStop =
+        pos.indexInvalidation === undefined ||
+        (optionType === 'CE'
+          ? decision.newIndexStopLoss > pos.indexInvalidation
+          : decision.newIndexStopLoss < pos.indexInvalidation)
+      if (isTighterIndexStop) {
+        pos.indexInvalidation = decision.newIndexStopLoss
+      }
+    }
 
     if (pos.aiStopLoss !== undefined && newPremiumSl <= pos.aiStopLoss) {
       console.log(
@@ -848,7 +873,7 @@ export class PaperTrader extends EventEmitter {
     if (!context) return
 
     const daysToExpiry = pos.optionExpiry
-      ? Math.max(0, (new Date(pos.optionExpiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+      ? Math.max(0.001, (this.resolveExpiryCloseTimeMs(pos.optionExpiry) - Date.now()) / (1000 * 60 * 60 * 24))
       : 2
 
     const tiers = computeTieredTargets({
