@@ -1,13 +1,6 @@
 import { getLLMProvider } from './factory.js'
-import {
-  SCALPER_RULES,
-  TREND_RULES,
-  POSITION_MANAGEMENT_RULES,
-  ORCHESTRATOR_PROMPT,
-  TECHNICAL_AGENT_PROMPT,
-  OPTIONS_AGENT_PROMPT,
-  CONSENSUS_AGENT_PROMPT,
-} from './prompts.js'
+import { SCALPER_RULES, TREND_RULES, POSITION_MANAGEMENT_RULES, ORCHESTRATOR_PROMPT } from './prompts.js'
+import { TradingMASOrchestrator } from './mas/agents.js'
 import type {
   TradingAgentType,
   OrchestratorResponse,
@@ -112,10 +105,14 @@ import type { LLMProvider } from './types.js'
 import { MemoryService } from './memory.js'
 
 export class LLMService {
+  public readonly masOrchestrator: TradingMASOrchestrator
+
   constructor(
     private readonly providerFactory: () => LLMProvider = getLLMProvider,
     private readonly memory: MemoryService = memoryService
-  ) {}
+  ) {
+    this.masOrchestrator = new TradingMASOrchestrator(this.providerFactory, this.memory)
+  }
 
   private emitUpdate(update: AgentUpdate) {
     eventHub.emit('agent_update', update)
@@ -418,146 +415,70 @@ IMPORTANT: Do NOT attempt to guess the option premium price. Identify the struct
     agentType: TradingAgentType = 'SCALPER',
     userId: string = ''
   ): Promise<AISuccessResponse | undefined> {
-    console.log(`[AI] Starting Ensemble Analysis (${agentType} regime)...`)
+    console.log(`[AI] Starting 3-Stage Hybrid MAS Graph Analysis (${agentType} regime)...`)
+    this.emitUpdate({
+      agent: agentType,
+      status: 'thinking',
+      message: 'MAS Graph: Structure, Options & Macro specialists analyzing in parallel...',
+    })
 
     try {
-      const provider = this.providerFactory()
-
-      const symbol = input.symbol || 'NIFTY'
-      const trend = input.tf15m?.trend || 'SIDEWAYS'
-      const vix = input.vix?.current || 15
-      const pastTrades = await this.memory.getRegimeStats(userId, symbol, trend, vix)
-      const memoryPrompt = this.memory.formatForPrompt(pastTrades)
-
-      const cleanedInput = this.sanitizeForLLM(input)
-      const marketDataStr = JSON.stringify(cleanedInput, null, 2)
-
-      this.emitUpdate({
-        agent: agentType,
-        status: 'thinking',
-        message: 'Ensemble: Technical & Options agents are analyzing in parallel...',
-      })
-
-      const [techRes, optRes] = await Promise.all([
-        provider.chat([
-          { role: 'system', content: TECHNICAL_AGENT_PROMPT + (agentType === 'TREND' ? TREND_RULES : SCALPER_RULES) },
-          { role: 'user', content: `${memoryPrompt}\n\nAnalyze this market state:\n${marketDataStr}` },
-        ]),
-        provider.chat([
-          { role: 'system', content: OPTIONS_AGENT_PROMPT },
-          { role: 'user', content: `${memoryPrompt}\n\nAnalyze this options flow:\n${marketDataStr}` },
-        ]),
-      ])
-
-      const technical = JSON.parse(cleanJson(techRes))
-      const options = JSON.parse(cleanJson(optRes))
-
-      console.log('[AI] Technical Agent Bias:', technical.bias)
-      console.log('[AI] Options Agent Bias:', options.bias)
-
-      this.emitUpdate({
-        agent: agentType,
-        status: 'thinking',
-        message: `Ensemble: Technical: ${technical.bias}, Options: ${options.bias}. Determining consensus...`,
-      })
-
-      const consensusPrompt = `
-Assess the following inputs and provide a final trade decision.
-## TECHNICAL ASSESSMENT
-${JSON.stringify(technical, null, 2)}
-
-## OPTIONS ASSESSMENT
-${JSON.stringify(options, null, 2)}
-
-## RAW MARKET DATA (CONTEXT)
-${marketDataStr}
-`
-      const consensusRes = await provider.chat([
-        { role: 'system', content: CONSENSUS_AGENT_PROMPT },
-        { role: 'user', content: consensusPrompt },
-      ])
-
-      const result: AISuccessResponse = JSON.parse(cleanJson(consensusRes))
-      sanitizeAiDecision(result, input, agentType)
-
-      this.emitUpdate({
-        agent: agentType,
-        status: 'decided',
-        message: `${result.decision} signal confirmed by ensemble.`,
-        data: { result, technical, options },
-      })
-
+      const result = await this.masOrchestrator.executeEnsembleGraph(input, agentType, userId, sanitizeAiDecision)
       return result
     } catch (error: any) {
-      console.error('[AI] Ensemble Analysis Error:', error)
+      console.error('[AI] MAS Ensemble Analysis Error:', error)
       this.emitUpdate({
         agent: agentType,
         status: 'error',
-        message: 'Ensemble analysis failed. Falling back to single-agent mode.',
+        message: 'MAS ensemble analysis failed. Falling back to single-agent mode.',
       })
       return this.analyzeWithAI(input, agentType)
     }
   }
 
-  public async managePositionWithAI(input: any, agentType: TradingAgentType = 'SCALPER', userId: string = '') {
-    console.log(`[AI] Starting managePositionWithAI using ${agentType} agent...`)
+  public async managePositionWithAI(
+    input: any,
+    agentType: TradingAgentType = 'SCALPER',
+    userId: string = ''
+  ): Promise<any> {
+    console.log(`[AI] Starting managePositionWithAI (PositionGuardianAgent) using ${agentType} agent...`)
     this.emitUpdate({
       agent: 'Risk Manager',
       status: 'thinking',
-      message: `Evaluating risk for ${input.openPosition.symbol}...`,
+      message: `Evaluating risk & clean-slate counterfactual for ${input.openPosition?.symbol || 'NIFTY'}...`,
     })
 
-    const rawSystemMessage = `You are a professional NSE Risk Manager. Your sole task is to manage an OPEN options position based on live technicals and OI flow.
-The position was originally opened by a ${agentType} agent. You must decide whether to HOLD, EXIT, or UPDATE_SL. Respond with valid JSON only.
-
-${POSITION_MANAGEMENT_RULES}`
-    const systemMessage = this.injectWave5Target(rawSystemMessage, input)
-
-    const symbol = input.openPosition?.symbol || 'NIFTY'
-    const trend = input.marketData?.tf15m?.trend || 'SIDEWAYS'
-    const vix = input.marketData?.vix?.current || 15
-    const pastTrades = await this.memory.getRegimeStats(userId, symbol, trend, vix)
-    const memoryPrompt = this.memory.formatForPrompt(pastTrades)
-
-    const cleanedMarketData = this.sanitizeForLLM({ marketData: input.marketData }).marketData
-    const userPrompt = `Evaluate the following open position against current market data:
-
-${memoryPrompt}
-
-## OPEN POSITION
-${JSON.stringify(input.openPosition, null, 2)}
-
-## CURRENT MARKET DATA
-${JSON.stringify(cleanedMarketData, null, 2)}
-
-## Required Output (JSON only)
-{
-  "decision": "HOLD" | "EXIT" | "UPDATE_SL",
-  "reason": "<1-2 sentences explaining the risk/momentum shift>",
-  "newIndexStopLoss": <number or null>,
-  "riskRewardRatio": <number or null>,
-  "confidence": <0-100>
-}
-`
     try {
+      const symbol = input.openPosition?.symbol || 'NIFTY'
+      const trend = input.marketData?.tf15m?.trend || 'SIDEWAYS'
+      const vix = input.marketData?.vix?.current || 15
+      const pastTrades = await this.memory.getRegimeStats(userId, symbol, trend, vix)
+      const memoryPrompt = this.memory.formatForPrompt(pastTrades, agentType, symbol, vix)
+      const cleanedMarketData = this.sanitizeForLLM({ marketData: input.marketData }).marketData
       const provider = this.providerFactory()
-      const text = await provider.chat([
-        { role: 'system', content: systemMessage },
-        { role: 'user', content: userPrompt },
-      ])
 
-      const result = JSON.parse(cleanJson(text))
+      const result = await this.masOrchestrator.guardianAgent.evaluateOpenPosition(
+        {
+          ...input,
+          marketData: cleanedMarketData,
+        },
+        agentType,
+        provider,
+        memoryPrompt
+      )
 
       this.emitUpdate({
         agent: 'Risk Manager',
         status: 'decided',
-        message: `${result.decision}: ${result.reason}`,
+        message: `${result.decision} (${result.cleanSlateCounterfactual}): ${result.reason}`,
         data: result,
       })
 
       return result
     } catch (error: any) {
       console.error('[AI] Error in managePositionWithAI:', error)
+      const rawSystemMessage = `You are a professional NSE Risk Manager. Your sole task is to manage an OPEN options position based on live technicals and OI flow.\n${POSITION_MANAGEMENT_RULES}`
+      void this.injectWave5Target(rawSystemMessage, input)
       this.emitUpdate({
         agent: 'Risk Manager',
         status: 'error',
