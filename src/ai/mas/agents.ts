@@ -43,13 +43,56 @@ import { BlackboardContextScoper } from './blackboard.js'
 import { MASToolRegistry, ToolCallMediator, TradePlanMathValidator } from './tools.js'
 import type { MemoryService } from '../memory.js'
 import { eventHub } from '../../utils/event-hub.js'
+import {
+  CONSENSUS_AGENT_PROMPT,
+  OPTIONS_AGENT_PROMPT,
+  POSITION_MANAGEMENT_RULES,
+  SCALPER_RULES,
+  TECHNICAL_AGENT_PROMPT,
+  TREND_RULES,
+} from '../prompts.js'
+
+function formatWave5Instruction(wave5Target?: number): string {
+  if (!wave5Target) return ''
+  return `The mathematical Wave 5 Exhaustion Target is exactly ${Number(wave5Target).toFixed(2)}. If price enters within 5 points of this level, shift trailing stop tightly.`
+}
+
+function extractJsonBlock(raw: string): string {
+  const text = String(raw || '').trim()
+  if (!text) return ''
+  // 1. Try stripping markdown fence blocks
+  const fenced = text
+    .replace(/^```(?:json)?\s*\n?/, '')
+    .replace(/\n?```\s*$/, '')
+    .trim()
+  if (fenced.startsWith('{') && fenced.endsWith('}')) {
+    return fenced
+  }
+  // 2. Fallback: extract substring between first '{' and last '}'
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start !== -1 && end > start) {
+    return text.substring(start, end + 1).trim()
+  }
+  return text
+}
 
 function cleanAgentJson(raw: string): string {
-  return String(raw || '')
-    .replace(/^```(?:json)?\n?/, '')
-    .replace(/\n?```$/, '')
-    .trim()
-    .replace(/"(?:[^"\\]|\\.)*"/g, (match) => match.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t'))
+  const extracted = extractJsonBlock(raw)
+  return extracted.replace(/"(?:[^"\\]|\\.)*"/g, (match) =>
+    match.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t')
+  )
+}
+
+function safeParseAgentJson<T extends Record<string, any>>(raw: string, agentName: string, fallback: T = {} as T): T {
+  const cleaned = cleanAgentJson(raw)
+  if (!cleaned) return fallback
+  try {
+    return JSON.parse(cleaned) as T
+  } catch (parseError) {
+    console.warn(`[${agentName}] JSON parse error: ${(parseError as Error).message}. Raw response was:`, raw)
+    return fallback
+  }
 }
 
 async function invokeProviderWithTools(
@@ -99,11 +142,22 @@ export class RegimeAndStructureAgent {
     const mediator = new ToolCallMediator(grant)
     const tools = mediator.wrapTools(MASToolRegistry.buildStructureTools(blackboard), blackboard.claimVersion)
 
+    const regimePlaybook =
+      blackboard.activeAgent === 'TREND'
+        ? TREND_RULES.replace(
+            /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,
+            formatWave5Instruction(blackboard.structureSlice.tf15m.wave5Target)
+          )
+        : SCALPER_RULES
+
     const systemPrompt = `You are the RegimeAndStructureAgent in an institutional NSE NIFTY Options Multi-Agent System.
 Your bounded context is strictly multi-timeframe price action (1h, 30m, 15m, 3m), Elliott Wave structure, VWAP Z-Score, ORB, and Volume Profile.
 You have tools \`inspectWaveAndSwings\` and \`getReversalQualityBreakdown\` if you need deeper swing/wave or Playbook B reversal verification.
 
-## MANDATORY QUANTITATIVE RULES
+${TECHNICAL_AGENT_PROMPT}
+${regimePlaybook}
+
+## MANDATORY MAS OUTPUT SCHEMA (OVERRIDE OUTPUT FORMAT ABOVE)
 1. Cite exact ground-truth indicator values in \`citedIndicators\` (\`rsi14\`, \`vwap\`, \`support\`, \`resistance\`).
 2. \`candidateIndexStopLoss\` and \`candidateIndexTargets\` MUST be on the underlying NIFTY INDEX scale (near ${blackboard.structureSlice.tf15m.price}).
 3. Playbook B (\`INSTITUTIONAL_TRAP\`) is ONLY permitted if the directional Reversal Quality Score >= ${blackboard.policy.minTrapReversalScore}/5.
@@ -207,7 +261,8 @@ ${JSON.stringify(blackboard.structureSlice, null, 2)}`
 
   private parseReport(raw: string, blackboard: TradingBlackboard): StructureSpecialistReport {
     const spot = blackboard.structureSlice.tf15m.price || 24000
-    const parsed = JSON.parse(cleanAgentJson(raw))
+    const parsed = safeParseAgentJson<Record<string, any>>(raw, 'RegimeAndStructureAgent')
+
     const bias =
       parsed.bias === 'BULLISH' || parsed.bias === 'BEARISH' || parsed.bias === 'NEUTRAL' ? parsed.bias : 'NEUTRAL'
     const isBear = bias === 'BEARISH'
@@ -261,7 +316,9 @@ export class OptionsFlowAgent {
 Your bounded context is strictly NSE Options Chain OI/COI buildup, PCR, IV Rank (${blackboard.optionsSlice.ivRank}), and Option Greeks (Delta, Gamma, Theta).
 You have tools \`inspectOptionStrikeChain\` and \`simulateStrikePayoff\` (2nd-order Taylor payoff).
 
-## MANDATORY OPTIONS & GREEKS RULES
+${OPTIONS_AGENT_PROMPT}
+
+## MANDATORY MAS OUTPUT SCHEMA (OVERRIDE OUTPUT FORMAT ABOVE)
 1. Short Covering on Calls (CE OI falling + CE price rising) is BULLISH for the underlying index.
 2. Long Buildup on Puts (PE OI rising + PE price rising) is BEARISH for the underlying index.
 3. If IV Rank > ${blackboard.policy.maxIvrForAtmBuy}, prefer ITM strikes (\`|delta| >= ${blackboard.policy.minItmDeltaForHighIvr}\`) to mitigate Vega/IV crush risk.
@@ -363,7 +420,7 @@ ${JSON.stringify(blackboard.optionsSlice, null, 2)}`
   }
 
   private parseReport(raw: string, blackboard: TradingBlackboard): OptionsSpecialistReport {
-    const parsed = JSON.parse(cleanAgentJson(raw))
+    const parsed = safeParseAgentJson<Record<string, any>>(raw, 'OptionsFlowAgent')
     const bias =
       parsed.bias === 'BULLISH' || parsed.bias === 'BEARISH' || parsed.bias === 'NEUTRAL' ? parsed.bias : 'NEUTRAL'
     const fallbackAction: AIOptionAction = bias === 'BULLISH' ? 'BUY_CE' : bias === 'BEARISH' ? 'BUY_PE' : 'NONE'
@@ -496,7 +553,7 @@ ${JSON.stringify(blackboard.macroSlice, null, 2)}`
   }
 
   private parseReport(raw: string, blackboard: TradingBlackboard): MacroSpecialistReport {
-    const parsed = JSON.parse(cleanAgentJson(raw))
+    const parsed = safeParseAgentJson<Record<string, any>>(raw, 'MacroSentimentAgent')
     const vix = blackboard.macroSlice.vix.current
     const fallbackVixRegime = vix > 22 ? 'EXTREME' : vix > 16 ? 'ELEVATED' : 'CALM'
     const bias =
@@ -635,23 +692,29 @@ ${blackboard.memoryContextTagged.value}`
   }
 
   private parseReport(raw: string, blackboard: TradingBlackboard): AdversarialCriticReport {
-    const parsed = JSON.parse(cleanAgentJson(raw))
+    const parsed = safeParseAgentJson<Record<string, any>>(raw, 'AdversarialCriticAgent')
+
+    const fallbackVerdict: AdversarialCriticReport['verdict'] = blackboard.conflictMatrix?.hasDirectConflict
+      ? 'CHALLENGE_REDUCE_SIZE'
+      : 'APPROVE'
+
     const verdict =
       parsed.verdict === 'HARD_VETO' || parsed.verdict === 'CHALLENGE_REDUCE_SIZE' || parsed.verdict === 'APPROVE'
         ? parsed.verdict
-        : blackboard.conflictMatrix?.hasDirectConflict
-          ? 'CHALLENGE_REDUCE_SIZE'
-          : 'APPROVE'
+        : fallbackVerdict
+
     return {
       verdict,
-      preMortemFailureScenario: String(parsed.preMortemFailureScenario || 'Potential false breakout reversal.'),
+      preMortemFailureScenario: String(
+        parsed.preMortemFailureScenario || 'Potential false breakout reversal or trend exhaustion.'
+      ),
       counterEvidence: Array.isArray(parsed.counterEvidence) ? parsed.counterEvidence.map(String) : [],
       flowContradictionDetected: Boolean(
         parsed.flowContradictionDetected ?? blackboard.conflictMatrix?.hasDirectConflict
       ),
       recommendedConfidenceAdjustment: Math.max(-50, Math.min(10, Number(parsed.recommendedConfidenceAdjustment ?? 0))),
       mandatoryConditions: Array.isArray(parsed.mandatoryConditions) ? parsed.mandatoryConditions.map(String) : [],
-      reason: String(parsed.reason || 'Adversarial critique completed.'),
+      reason: String(parsed.reason || 'Adversarial critique completed with fallback due to unparseable response.'),
     }
   }
 }
@@ -672,6 +735,8 @@ export class ConsensusJudgeAgent {
     const isRepair = Boolean(repairHint)
     const systemPrompt = `You are the ConsensusJudgeAgent in an institutional NSE NIFTY Options Multi-Agent System.
 Synthesize the verified Specialist Envelopes, Conflict Matrix, Pre-Flight Gates, and Adversarial Critic verdict into a final JSON trade plan.
+
+${CONSENSUS_AGENT_PROMPT}
 
 ## NON-NEGOTIABLE INSTITUTIONAL SYNTHESIS RULES
 1. Direction Mapping:
@@ -756,7 +821,7 @@ ${JSON.stringify(blackboard.criticEnvelope?.handoff.claim ?? null, null, 2)}`
   }
 
   private parseDecision(raw: string, blackboard: TradingBlackboard): AISuccessResponse {
-    const parsed = JSON.parse(cleanAgentJson(raw))
+    const parsed = safeParseAgentJson<Record<string, any>>(raw, 'ConsensusJudgeAgent')
     const spot = blackboard.structureSlice.tf15m.price || 24000
     const normalizedDecision =
       parsed.decision === 'SELL' && (parsed.optionAction === 'BUY_PE' || parsed.optionAction === 'BUY_CE')
@@ -810,12 +875,15 @@ export class PositionGuardianAgent {
     const history = this.historyByPosition.get(posKey) ?? []
 
     const wave5Target = input?.marketData?.tf15m?.waveContext?.wave5Target
-    const wave5Instruction = wave5Target
-      ? `The mathematical Wave 5 Exhaustion Target is ${Number(wave5Target).toFixed(2)}. If price is within 5 points, tighten stop aggressively.`
-      : ''
+    const baseGuardianRules = POSITION_MANAGEMENT_RULES.replace(
+      /\{\{WAVE5_TARGET_INSTRUCTION\}\}/g,
+      formatWave5Instruction(wave5Target)
+    )
 
     const systemPrompt =
       `You are the PositionGuardianAgent in an institutional NSE Options Multi-Agent System.
+${baseGuardianRules}
+
 Manage the open ${agentType} position using:
 1. Clean-Slate Counterfactual Check: Ask yourself whether you would enter this trade fresh (` +
       `"WOULD_ENTER_FRESH"` +
@@ -825,7 +893,6 @@ Manage the open ${agentType} position using:
       `"THESIS_BROKEN"` +
       ` -> EXIT immediately).
 2. Monotonic Ratcheting: \`UPDATE_SL\` may ONLY tighten the index stop-loss toward profit (higher for BUY_CE, lower for BUY_PE), never widen it.
-${wave5Instruction}
 Respond with valid JSON only matching PositionGuardianReport:
 {
   "decision": "HOLD" | "EXIT" | "UPDATE_SL",
@@ -855,7 +922,7 @@ ${JSON.stringify(input.marketData, null, 2)}`
       ],
       { temperature: 0.1 }
     )
-    const parsed = JSON.parse(cleanAgentJson(raw))
+    const parsed = safeParseAgentJson<Record<string, any>>(raw, 'PositionGuardianAgent')
     const decision: PositionGuardianReport['decision'] =
       parsed.cleanSlateCounterfactual === 'THESIS_BROKEN'
         ? 'EXIT'
