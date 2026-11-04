@@ -66,6 +66,11 @@ const agents = ref<Record<string, any>>({
   'Regime Validator': { status: 'idle', message: 'Awaiting orchestrator...', lastUpdate: Date.now() },
   SCALPER: { status: 'idle', message: 'Awaiting signal...', lastUpdate: Date.now() },
   TREND: { status: 'idle', message: 'Awaiting trend...', lastUpdate: Date.now() },
+  'Structure Specialist': { status: 'idle', message: 'Awaiting MTF structure slice...', lastUpdate: Date.now() },
+  'Options Specialist': { status: 'idle', message: 'Awaiting OI/Greeks slice...', lastUpdate: Date.now() },
+  'Macro & GTI': { status: 'idle', message: 'Awaiting VIX & GTI slice...', lastUpdate: Date.now() },
+  'Adversarial Critic': { status: 'idle', message: 'Standby for pre-mortem check...', lastUpdate: Date.now() },
+  'Consensus Judge': { status: 'idle', message: 'Awaiting specialist envelopes...', lastUpdate: Date.now() },
   'Risk Manager': { status: 'idle', message: 'No active positions.', lastUpdate: Date.now() },
 })
 
@@ -990,6 +995,60 @@ onUnmounted(() => {
                   :isActive="true"
                   @click="selectedAgentForDetail = 'Risk Manager'"
                 />
+              </div>
+
+              <!-- 3-Stage Hybrid Multi-Agent Graph (Specialists -> Critic -> Consensus Judge) -->
+              <div class="mt-4 pt-4 border-t border-gray-200/70">
+                <div class="text-[10px] font-black uppercase tracking-widest text-indigo-500 mb-3 flex items-center gap-1.5">
+                  <Zap class="w-3 h-3" />
+                  3-Stage Hybrid MAS Graph (Parallel Specialists → Red-Team Critic → Consensus Judge)
+                </div>
+                <div class="flex items-center min-w-max justify-center gap-2">
+                  <div class="flex flex-col gap-2 shrink-0">
+                    <AgentCard
+                      name="Structure Specialist"
+                      :agent="agents['Structure Specialist']"
+                      :isActive="true"
+                      @click="selectedAgentForDetail = 'Structure Specialist'"
+                    />
+                    <AgentCard
+                      name="Options Specialist"
+                      :agent="agents['Options Specialist']"
+                      :isActive="true"
+                      @click="selectedAgentForDetail = 'Options Specialist'"
+                    />
+                    <AgentCard
+                      name="Macro & GTI"
+                      :agent="agents['Macro & GTI']"
+                      :isActive="true"
+                      @click="selectedAgentForDetail = 'Macro & GTI'"
+                    />
+                  </div>
+
+                  <div class="flex items-center justify-center shrink-0 w-6 relative">
+                    <div class="h-[2px] w-full bg-indigo-200"></div>
+                    <ChevronRight class="absolute -right-2 w-3 h-3 text-indigo-300" />
+                  </div>
+
+                  <AgentCard
+                    name="Adversarial Critic"
+                    :agent="agents['Adversarial Critic']"
+                    :isActive="true"
+                    @click="selectedAgentForDetail = 'Adversarial Critic'"
+                  />
+
+                  <div class="flex items-center justify-center shrink-0 w-6 relative">
+                    <div class="h-[2px] w-full bg-indigo-200"></div>
+                    <ChevronRight class="absolute -right-2 w-3 h-3 text-indigo-300" />
+                  </div>
+
+                  <AgentCard
+                    name="Consensus Judge"
+                    :agent="agents['Consensus Judge']"
+                    :isActive="true"
+                    @click="selectedAgentForDetail = 'Consensus Judge'"
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -1917,6 +1976,34 @@ onUnmounted(() => {
               <p class="text-sm text-gray-700 leading-relaxed italic border-l-4 border-indigo-500 pl-4 py-1">
                 "{{ agents[selectedAgentForDetail].data.reason }}"
               </p>
+            </div>
+
+            <!-- MAS Coordination Metrics & OTel Spans -->
+            <div v-if="agents[selectedAgentForDetail].data.coordinationMetrics" class="space-y-3">
+              <h3 class="text-[10px] font-black text-indigo-500 uppercase tracking-widest flex items-center gap-2">
+                <Activity class="w-3 h-3" />
+                MAS Coordination & Reliability Metrics
+              </h3>
+              <div class="grid grid-cols-3 gap-3">
+                <div class="p-3 bg-indigo-50/60 rounded-xl border border-indigo-100">
+                  <div class="text-[9px] text-gray-400 font-bold uppercase">pass^3 Reliability</div>
+                  <div class="text-sm font-black text-indigo-900">
+                    {{ (agents[selectedAgentForDetail].data.coordinationMetrics.passPowerK * 100).toFixed(1) }}%
+                  </div>
+                </div>
+                <div class="p-3 bg-indigo-50/60 rounded-xl border border-indigo-100">
+                  <div class="text-[9px] text-gray-400 font-bold uppercase">Gini Workload</div>
+                  <div class="text-sm font-black text-indigo-900">
+                    {{ agents[selectedAgentForDetail].data.coordinationMetrics.workloadConcentration }}
+                  </div>
+                </div>
+                <div class="p-3 bg-indigo-50/60 rounded-xl border border-indigo-100">
+                  <div class="text-[9px] text-gray-400 font-bold uppercase">Tokens Used</div>
+                  <div class="text-sm font-black text-indigo-900">
+                    {{ agents[selectedAgentForDetail].data.coordinationMetrics.costPerSuccessfulOutcomeTokens }}
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- Full JSON Explorer -->

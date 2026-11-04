@@ -14,9 +14,51 @@ export interface LLMOptions {
   temperature?: number
 }
 
+export interface LLMToolParameterProperty {
+  type: 'string' | 'number' | 'boolean' | 'object' | 'array'
+  description: string
+  enum?: string[]
+}
+
+export interface LLMToolDefinition {
+  name: string
+  description: string
+  parameters: {
+    type: 'object'
+    properties: Record<string, LLMToolParameterProperty>
+    required?: string[]
+  }
+  execute: (args: Record<string, unknown>) => Promise<unknown> | unknown
+}
+
+export interface LLMToolCallRecord {
+  toolName: string
+  args: Record<string, unknown>
+  result: unknown
+  durationMs: number
+}
+
+export interface LLMChatWithToolsResult {
+  text: string
+  toolCalls: LLMToolCallRecord[]
+  estimatedInputTokens: number
+  estimatedOutputTokens: number
+  stepsUsed: number
+}
+
+export interface LLMToolOptions extends LLMOptions {
+  maxToolRoundtrips?: number
+  maxWallTimeMs?: number
+}
+
 export interface LLMProvider {
   name: string
   chat(messages: LLMMessage[], options?: LLMOptions): Promise<string>
+  chatWithTools?(
+    messages: LLMMessage[],
+    tools: LLMToolDefinition[],
+    options?: LLMToolOptions
+  ): Promise<LLMChatWithToolsResult>
 }
 
 export type TradingAgentType = 'SCALPER' | 'TREND'
