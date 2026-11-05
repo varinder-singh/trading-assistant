@@ -281,6 +281,10 @@ export interface OptionsBlackboardSlice {
   readonly atmStrike: number
   readonly pcr: number
   readonly pcrAtm: number
+  readonly pcrChange?: number | undefined
+  readonly atmNetFlow?: number | undefined
+  readonly flowSentiment?: string | undefined
+  readonly shortCoveringStrikes?: readonly number[] | undefined
   readonly sentiment: string
   readonly atmSentiment: string
   readonly marketFlow: string

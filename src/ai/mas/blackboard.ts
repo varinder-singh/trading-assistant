@@ -55,7 +55,47 @@ export class BlackboardContextScoper {
    * - Reversal Quality Score < 3 restricts Playbook B (INSTITUTIONAL_TRAP) setups.
    */
   public computePreFlightGates(input: any, activeAgent: TradingAgentType): PreFlightGateSummary {
-    const vixCurrent = Number(input?.vix?.current ?? 15)
+    const vixCheck = this.checkVixCircuitBreaker(Number(input?.vix?.current ?? 15))
+    if (vixCheck) return vixCheck
+
+    const metrics = this.extractGateMetrics(input)
+    const perm = this.evaluateGatePermissions(metrics)
+
+    const scalperAllowedActions = this.toActionList(perm.scalperAllowsCe, perm.scalperAllowsPe)
+    const trendAllowedActions = this.toActionList(perm.trendAllowsCe, perm.trendAllowsPe)
+    const trapAllowedActions = this.toActionList(perm.trapAllowsCe, perm.trapAllowsPe)
+
+    const isWave3 = input?.tf15m?.waveContext?.currentPhase === 'WAVE_3'
+    const effectiveActions = activeAgent === 'TREND' || isWave3 ? trendAllowedActions : scalperAllowedActions
+
+    return Object.freeze({
+      isBlocked: effectiveActions.length === 1 && effectiveActions[0] === 'NONE',
+      blockReasons: this.buildBlockReasons(metrics, perm),
+      allowedActions: effectiveActions,
+      scalperAllowedActions,
+      trendAllowedActions,
+      trapAllowedActions,
+      reducedSizingMandatory: false,
+      cautionNotes: this.buildCautionNotes(metrics.gtiConf, metrics.gtiComposite),
+    })
+  }
+
+  private checkVixCircuitBreaker(vixCurrent: number): PreFlightGateSummary | null {
+    if (vixCurrent <= this.policy.maxVixAllowed) return null
+    const noneOnly: readonly AIOptionAction[] = Object.freeze(['NONE'])
+    return Object.freeze({
+      isBlocked: true,
+      blockReasons: [`VIX (${vixCurrent.toFixed(2)}) exceeds circuit breaker (${this.policy.maxVixAllowed})`],
+      allowedActions: noneOnly,
+      scalperAllowedActions: noneOnly,
+      trendAllowedActions: noneOnly,
+      trapAllowedActions: noneOnly,
+      reducedSizingMandatory: true,
+      cautionNotes: [],
+    })
+  }
+
+  private extractGateMetrics(input: any) {
     const zScore15m = Number(input?.tf15m?.vwapZScore ?? 0)
     const rsi15m = Number(input?.tf15m?.rsi ?? 50)
     const gtiScore = input?.tf15m?.gtiScore || input?.gtiScore
@@ -63,68 +103,84 @@ export class BlackboardContextScoper {
     const gtiComposite = Number(gtiScore?.composite ?? 0)
     const revBull = Number(input?.reversalScore?.bullish ?? 3)
     const revBear = Number(input?.reversalScore?.bearish ?? 3)
+    const rsi3m = Number(input?.tf3m?.rsi ?? 50)
+    const isWave5 = input?.tf15m?.waveContext?.currentPhase === 'WAVE_5'
 
-    if (vixCurrent > this.policy.maxVixAllowed) {
-      const noneOnly: readonly AIOptionAction[] = Object.freeze(['NONE'])
-      return Object.freeze({
-        isBlocked: true,
-        blockReasons: [`VIX (${vixCurrent.toFixed(2)}) exceeds circuit breaker (${this.policy.maxVixAllowed})`],
-        allowedActions: noneOnly,
-        scalperAllowedActions: noneOnly,
-        trendAllowedActions: noneOnly,
-        trapAllowedActions: noneOnly,
-        reducedSizingMandatory: true,
-        cautionNotes: [],
-      })
-    }
+    return { zScore15m, rsi15m, gtiConf, gtiComposite, revBull, revBear, rsi3m, isWave5 }
+  }
 
-    const gtiBlocksCe = gtiConf > 30 && gtiComposite < -this.policy.gtiSevereOppositionThreshold
-    const gtiBlocksPe = gtiConf > 30 && gtiComposite > this.policy.gtiSevereOppositionThreshold
+  private evaluateGatePermissions(metrics: ReturnType<typeof this.extractGateMetrics>) {
+    const gtiBlocksCe = metrics.gtiConf > 30 && metrics.gtiComposite < -this.policy.gtiSevereOppositionThreshold
+    const gtiBlocksPe = metrics.gtiConf > 30 && metrics.gtiComposite > this.policy.gtiSevereOppositionThreshold
 
-    const scalperAllowsCe = !gtiBlocksCe && zScore15m <= this.policy.maxScalperVwapZScore
-    const scalperAllowsPe = !gtiBlocksPe && zScore15m >= -this.policy.maxScalperVwapZScore
+    const scalperAllowsCe = !gtiBlocksCe && metrics.zScore15m <= this.policy.maxScalperVwapZScore
+    const scalperAllowsPe = !gtiBlocksPe && metrics.zScore15m >= -this.policy.maxScalperVwapZScore
 
-    const trendBlowoffCe = zScore15m > this.policy.maxTrendBlowoffVwapZScore && rsi15m > 80
-    const trendBlowoffPe = zScore15m < -this.policy.maxTrendBlowoffVwapZScore && rsi15m < 20
+    const trendBlowoffCe =
+      (metrics.zScore15m > this.policy.maxTrendBlowoffVwapZScore && metrics.rsi15m > 80) ||
+      metrics.rsi3m > 80 ||
+      (metrics.isWave5 && metrics.rsi3m > 70)
+    const trendBlowoffPe =
+      (metrics.zScore15m < -this.policy.maxTrendBlowoffVwapZScore && metrics.rsi15m < 20) ||
+      metrics.rsi3m < 20 ||
+      (metrics.isWave5 && metrics.rsi3m < 30)
+
     const trendAllowsCe = !gtiBlocksCe && !trendBlowoffCe
     const trendAllowsPe = !gtiBlocksPe && !trendBlowoffPe
+    const trapAllowsCe =
+      metrics.revBull >= this.policy.minTrapReversalScore && metrics.zScore15m <= this.policy.maxScalperVwapZScore
+    const trapAllowsPe =
+      metrics.revBear >= this.policy.minTrapReversalScore && metrics.zScore15m >= -this.policy.maxScalperVwapZScore
 
-    const trapAllowsCe = scalperAllowsCe && revBull >= this.policy.minTrapReversalScore
-    const trapAllowsPe = scalperAllowsPe && revBear >= this.policy.minTrapReversalScore
+    return {
+      gtiBlocksCe,
+      gtiBlocksPe,
+      scalperAllowsCe,
+      scalperAllowsPe,
+      trendBlowoffCe,
+      trendBlowoffPe,
+      trendAllowsCe,
+      trendAllowsPe,
+      trapAllowsCe,
+      trapAllowsPe,
+    }
+  }
 
-    const scalperAllowedActions = this.toActionList(scalperAllowsCe, scalperAllowsPe)
-    const trendAllowedActions = this.toActionList(trendAllowsCe, trendAllowsPe)
-    const trapAllowedActions = this.toActionList(trapAllowsCe, trapAllowsPe)
-
-    const isWave3 = input?.tf15m?.waveContext?.currentPhase === 'WAVE_3'
-    const effectiveActions = activeAgent === 'TREND' || isWave3 ? trendAllowedActions : scalperAllowedActions
-
-    const blockReasons = [
-      ...(gtiBlocksCe ? [`GTI composite (${gtiComposite.toFixed(2)}) severely opposes BUY_CE`] : []),
-      ...(gtiBlocksPe ? [`GTI composite (${gtiComposite.toFixed(2)}) severely opposes BUY_PE`] : []),
-      ...(!scalperAllowsCe && trendAllowsCe
-        ? [`15m VWAP Z-Score (${zScore15m.toFixed(2)}) > +2.0 blocks SCALPER BUY_CE (allowed only for TREND/Breakout)`]
+  private buildBlockReasons(
+    metrics: ReturnType<typeof this.extractGateMetrics>,
+    perm: ReturnType<typeof this.evaluateGatePermissions>
+  ): readonly string[] {
+    return Object.freeze([
+      ...(perm.gtiBlocksCe ? [`GTI composite (${metrics.gtiComposite.toFixed(2)}) severely opposes BUY_CE`] : []),
+      ...(perm.gtiBlocksPe ? [`GTI composite (${metrics.gtiComposite.toFixed(2)}) severely opposes BUY_PE`] : []),
+      ...(perm.trendBlowoffCe && !perm.gtiBlocksCe
+        ? [
+            `Trend momentum overheated (3m RSI: ${metrics.rsi3m.toFixed(1)}${metrics.isWave5 ? ', Wave 5' : ''}) blocks BUY_CE until pullback to 3m EMA9/VWAP`,
+          ]
         : []),
-      ...(!scalperAllowsPe && trendAllowsPe
-        ? [`15m VWAP Z-Score (${zScore15m.toFixed(2)}) < -2.0 blocks SCALPER BUY_PE (allowed only for TREND/Breakout)`]
+      ...(perm.trendBlowoffPe && !perm.gtiBlocksPe
+        ? [
+            `Trend momentum oversold (3m RSI: ${metrics.rsi3m.toFixed(1)}${metrics.isWave5 ? ', Wave 5' : ''}) blocks BUY_PE until bounce to 3m EMA9/VWAP`,
+          ]
         : []),
-    ]
+      ...(!perm.scalperAllowsCe && perm.trendAllowsCe
+        ? [
+            `15m VWAP Z-Score (${metrics.zScore15m.toFixed(2)}) > +2.0 blocks SCALPER BUY_CE (allowed only for TREND/Breakout)`,
+          ]
+        : []),
+      ...(!perm.scalperAllowsPe && perm.trendAllowsPe
+        ? [
+            `15m VWAP Z-Score (${metrics.zScore15m.toFixed(2)}) < -2.0 blocks SCALPER BUY_PE (allowed only for TREND/Breakout)`,
+          ]
+        : []),
+    ])
+  }
 
-    const gtiMildCaution = gtiConf > 30 && Math.abs(gtiComposite) >= this.policy.gtiMildOppositionThreshold
-    const cautionNotes = gtiMildCaution
-      ? [`GTI composite (${gtiComposite.toFixed(2)}) requires directional confirmation`]
-      : []
-
-    return Object.freeze({
-      isBlocked: effectiveActions.length === 1 && effectiveActions[0] === 'NONE',
-      blockReasons,
-      allowedActions: effectiveActions,
-      scalperAllowedActions,
-      trendAllowedActions,
-      trapAllowedActions,
-      reducedSizingMandatory: false,
-      cautionNotes,
-    })
+  private buildCautionNotes(gtiConf: number, gtiComposite: number): readonly string[] {
+    const isMild = gtiConf > 30 && Math.abs(gtiComposite) >= this.policy.gtiMildOppositionThreshold
+    return isMild
+      ? Object.freeze([`GTI composite (${gtiComposite.toFixed(2)}) requires directional confirmation`])
+      : Object.freeze([])
   }
 
   private toActionList(allowCe: boolean, allowPe: boolean): readonly AIOptionAction[] {
@@ -221,12 +277,20 @@ export class BlackboardContextScoper {
     const focusedRows =
       atmStrike > 0 ? compactRows.filter((r) => Math.abs(r.strike - atmStrike) <= 200) : compactRows.slice(0, 10)
 
+    const shortCoveringStrikes = (opt.windowStats?.topShortCovering || [])
+      .filter((r: any) => r.type === 'CE')
+      .map((r: any) => Number(r.strike))
+
     const slice: OptionsBlackboardSlice = Object.freeze({
       symbol: String(input?.symbol || 'NIFTY'),
       spotPrice: Number(input?.tf15m?.price || 0),
       atmStrike,
       pcr: Number(opt.pcr ?? 1),
       pcrAtm: Number(opt.pcrAtm ?? 1),
+      pcrChange: opt.pcrChange !== undefined ? Number(opt.pcrChange) : undefined,
+      atmNetFlow: opt.atmNetFlow !== undefined ? Number(opt.atmNetFlow) : undefined,
+      flowSentiment: opt.flowSentiment ? String(opt.flowSentiment) : undefined,
+      shortCoveringStrikes: Object.freeze(shortCoveringStrikes),
       sentiment: String(opt.sentiment || 'neutral'),
       atmSentiment: String(opt.atmSentiment || 'neutral'),
       marketFlow: String(opt.marketFlow || 'NEUTRAL'),

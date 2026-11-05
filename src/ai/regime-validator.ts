@@ -16,7 +16,11 @@ export class RegimeValidator {
     const trendCheck = this.evaluateTrendAlignment(marketContext.tf15m, marketContext.tf1h)
     const adxCheck = this.evaluateAdxStrength(marketContext.tf15m, marketContext.dailyContext)
     const rsiCheck = this.evaluateRsiExhaustion(marketContext.tf15m)
-    const deadZoneCheck = this.evaluateDeadZone(marketContext.time, marketContext.tf15m)
+    const deadZoneCheck = this.evaluateDeadZone(
+      marketContext.time,
+      marketContext.tf15m,
+      marketContext.optionsAnalysisZerodha || marketContext.optionsAnalysis
+    )
     const waveCheck = this.evaluateCorrectiveWave(marketContext.tf15m)
 
     const checks = [vixCheck, trendCheck, adxCheck, rsiCheck, deadZoneCheck, waveCheck].filter(
@@ -83,18 +87,25 @@ export class RegimeValidator {
     }
   }
 
-  private evaluateDeadZone(timeStr: string | undefined, tf15m: any): ValidationCheck | null {
+  private evaluateDeadZone(timeStr: string | undefined, tf15m: any, optionsAnalysis?: any): ValidationCheck | null {
     if (!timeStr) return null
 
     const hhmm = timeStr.slice(0, 5)
     const isInDeadZone = hhmm >= '11:30' && hhmm <= '13:00'
     const isWave3 = tf15m?.waveContext?.currentPhase === 'WAVE_3'
-    const passed = !isInDeadZone || isWave3
+    const hasOptionsFlowConfirmation =
+      optionsAnalysis &&
+      (optionsAnalysis.marketFlow === 'BEARISH_PUT_ACCUMULATION' ||
+        optionsAnalysis.marketFlow === 'BULLISH_CALL_ACCUMULATION' ||
+        Math.abs(Number(optionsAnalysis.pcrRatio ?? 1.0) - 1.0) >= 0.3)
+    const passed = !isInDeadZone || isWave3 || Boolean(hasOptionsFlowConfirmation)
 
     return {
       name: 'IST Dead-Zone Filter',
       passed,
-      reason: passed ? '' : `IST time ${hhmm} is inside 11:30-13:00 dead zone without active Wave 3`,
+      reason: passed
+        ? ''
+        : `IST time ${hhmm} is inside 11:30-13:00 dead zone without active Wave 3 or institutional options flow`,
     }
   }
 
