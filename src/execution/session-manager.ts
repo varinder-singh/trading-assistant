@@ -161,8 +161,13 @@ export class UserSession extends EventEmitter {
     // Cleanup previous analyzer listeners
     this.analyzer.off('breakout', this.onBreakout)
 
+    const prevAnalysisPrice = this.analyzer?.getLastAnalysisPrice() || 0
+
     // Reset analyzer with fresh state
     this.analyzer = new LiveAnalyzer()
+    if (prevAnalysisPrice > 0) {
+      this.analyzer.setLastAnalysisPrice(prevAnalysisPrice)
+    }
     this.watchedSymbol = symbol
     this.watchedToken = token
     this.watchMode = mode || 'intraday'
@@ -249,6 +254,20 @@ export class UserSession extends EventEmitter {
       )
       this.lastDecision = analysisResult.aiDecision
       this.emit('analysis', analysisResult)
+
+      // Dynamically update analyzer levels and last analysis price
+      if (this.analyzer) {
+        if (analysisResult?.tf15m) {
+          this.analyzer.setLevels({
+            resistance: analysisResult.tf15m.resistance,
+            support: analysisResult.tf15m.support,
+            vwap: analysisResult.tf15m.vwap,
+          })
+        }
+        if (context?.tick?.last_price) {
+          this.analyzer.setLastAnalysisPrice(context.tick.last_price)
+        }
+      }
 
       await this.executeOptionSignal(analysisResult, context)
     } catch (err: any) {
@@ -512,9 +531,13 @@ export class UserSession extends EventEmitter {
 
       const gtiScore = gtiTracker.onCandleClose(token, candle)
 
-      // Update LiveAnalyzer with fresh GTI score
+      // Update LiveAnalyzer with fresh GTI score and structural candle events
       if (this.analyzer) {
         this.analyzer.updateGTI(gtiScore)
+        if (timeframe === 3 || timeframe === 5) {
+          const recentCandles = candleBuilder.getCandles(token, timeframe).slice(-6)
+          this.analyzer.checkCandleClose(candle, timeframe, recentCandles)
+        }
       }
 
       // Persist GTI score to DB

@@ -16,6 +16,14 @@ export interface AnalysisLevels {
   vwap: number
 }
 
+export interface CandleData {
+  open: number
+  high: number
+  low: number
+  close: number
+  timestamp?: number
+}
+
 export class LiveAnalyzer extends EventEmitter {
   private ticks: LiveTick[] = []
   private levels: AnalysisLevels | null = null
@@ -25,6 +33,8 @@ export class LiveAnalyzer extends EventEmitter {
   private lastGTIScore?: GTIScore
   private gtiSurgeThreshold = 1.5
   private priceAtLastGTICheck = 0
+  private lastAnalysisPrice = 0
+  private readonly minDriftPoints = 35 // ~0.15% on NIFTY for price drift trigger
 
   constructor() {
     super()
@@ -32,6 +42,14 @@ export class LiveAnalyzer extends EventEmitter {
 
   public setLevels(levels: AnalysisLevels): void {
     this.levels = levels
+  }
+
+  public setLastAnalysisPrice(price: number): void {
+    this.lastAnalysisPrice = price
+  }
+
+  public getLastAnalysisPrice(): number {
+    return this.lastAnalysisPrice
   }
 
   public addTick(tick: LiveTick): void {
@@ -109,20 +127,39 @@ export class LiveAnalyzer extends EventEmitter {
   }
 
   private checkTriggers(tick: LiveTick): void {
-    if (!this.levels || !isMarketOpen()) return
+    if (!isMarketOpen()) return
 
     const now = Date.now()
     if (now - this.lastTriggerTime < this.triggerCooldownMs) return
 
     const { last_price } = tick
-    const { resistance, support } = this.levels
 
-    if (last_price > resistance) {
-      this.trigger('Price broke Resistance', tick)
-    } else if (last_price < support) {
-      this.trigger('Price broke Support', tick)
+    // 1. Static or dynamic support/resistance level breaks
+    if (this.levels) {
+      if (last_price > this.levels.resistance) {
+        this.trigger('Price broke Resistance', tick)
+        return
+      }
+      if (last_price < this.levels.support) {
+        this.trigger('Price broke Support', tick)
+        return
+      }
     }
 
+    // 2. Price drift threshold (>= 35 pts from last analysis)
+    if (this.lastAnalysisPrice > 0) {
+      const drift = Math.abs(last_price - this.lastAnalysisPrice)
+      if (drift >= this.minDriftPoints) {
+        const direction = last_price > this.lastAnalysisPrice ? 'UP' : 'DOWN'
+        this.trigger(
+          `Price Drift (${direction}): ${drift.toFixed(1)} pts from last analysis (${this.lastAnalysisPrice})`,
+          tick
+        )
+        return
+      }
+    }
+
+    // 3. Volatility Spike (> 0.10% move in 1m)
     if (this.ticks.length <= 1) return
     const firstTick = this.ticks[0]
     if (!firstTick) return
@@ -130,6 +167,53 @@ export class LiveAnalyzer extends EventEmitter {
     const priceChange = Math.abs((last_price - firstTick.last_price) / firstTick.last_price)
     if (priceChange > 0.001) {
       this.trigger(`Volatility Spike: ${(priceChange * 100).toFixed(2)}% move in 1m`, tick)
+    }
+  }
+
+  public checkCandleClose(
+    candle: CandleData,
+    timeframe: number,
+    recentCandles: Array<{ high: number; low: number; close: number }> = []
+  ): void {
+    if (!isMarketOpen()) return
+
+    const now = Date.now()
+    if (now - this.lastTriggerTime < this.triggerCooldownMs) return
+
+    // 1. Break of Structure (BOS) on lower-timeframe swing pivots
+    if (recentCandles.length >= 3) {
+      const priorCandles = recentCandles.slice(0, -1)
+      const swingHigh = Math.max(...priorCandles.map((c) => c.high))
+      const swingLow = Math.min(...priorCandles.map((c) => c.low))
+
+      if (candle.close > swingHigh) {
+        this.trigger(`Break of ${timeframe}m Swing High: ${candle.close.toFixed(2)} > ${swingHigh.toFixed(2)}`, {
+          last_price: candle.close,
+          instrument_token: 0,
+          received_at: now,
+        })
+        return
+      }
+
+      if (candle.close < swingLow) {
+        this.trigger(`Break of ${timeframe}m Swing Low: ${candle.close.toFixed(2)} < ${swingLow.toFixed(2)}`, {
+          last_price: candle.close,
+          instrument_token: 0,
+          received_at: now,
+        })
+        return
+      }
+    }
+
+    // 2. Significant Candle Displacement (range >= 25 pts and body >= 18 pts)
+    const candleBody = Math.abs(candle.close - candle.open)
+    const candleRange = candle.high - candle.low
+    if (candleRange >= 25 && candleBody >= 18) {
+      const direction = candle.close > candle.open ? 'BULLISH' : 'BEARISH'
+      this.trigger(
+        `Candle Displacement (${timeframe}m ${direction}): Range ${candleRange.toFixed(1)} pts, Body ${candleBody.toFixed(1)} pts`,
+        { last_price: candle.close, instrument_token: 0, received_at: now }
+      )
     }
   }
 

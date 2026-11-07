@@ -37,6 +37,8 @@ export type KiteOptionOiRow = {
 export type KiteOptionsAnalysis = {
   pcr: number
   pcrAtm: number
+  pcrChange?: number
+  atmNetFlow?: number
   atmStrike: number
   callOI: number
   putOI: number
@@ -46,6 +48,7 @@ export type KiteOptionsAnalysis = {
   maxPutOI: number
   sentiment: 'bullish' | 'bearish' | 'neutral'
   atmSentiment: 'bullish' | 'bearish' | 'neutral'
+  flowSentiment?: 'bullish' | 'bearish' | 'neutral'
   support: number
   resistance: number
   marketFlow: 'SHORT_COVERING' | 'LONG_BUILDUP' | 'SHORT_BUILDUP' | 'LONG_UNWINDING' | 'NEUTRAL'
@@ -279,6 +282,42 @@ function buildGreeksContext(rows: KiteOptionOiRow[], atmStrike: number, globalDa
   }
 }
 
+function resolvePcrChange(peCoi: number, ceCoi: number): number {
+  if (ceCoi > 0) return Number((Math.max(0, peCoi) / ceCoi).toFixed(2))
+  if (ceCoi < 0 && peCoi >= 0) return 2.5
+  return ceCoi <= 0 && peCoi < 0 ? 1.0 : 0.1
+}
+
+function resolveFlowSentiment(
+  atmNetFlow: number,
+  hasBullishBuildup: boolean,
+  hasBearishBuildup: boolean
+): 'bullish' | 'bearish' | 'neutral' {
+  return atmNetFlow > 0 && hasBullishBuildup ? 'bullish' : atmNetFlow < 0 && hasBearishBuildup ? 'bearish' : 'neutral'
+}
+
+function computeAtmFlowMetrics(rows: KiteOptionOiRow[], atmStrike: number) {
+  const atmRows = rows.filter((r) => Math.abs(r.strike - atmStrike) <= 100 && r.intervalOi !== undefined)
+  const targetRows = atmRows.length > 0 ? atmRows : rows.filter((r) => r.intervalOi !== undefined)
+
+  const ceCoi = targetRows.filter((r) => r.type === 'CE').reduce((sum, r) => sum + (r.intervalOi ?? 0), 0)
+  const peCoi = targetRows.filter((r) => r.type === 'PE').reduce((sum, r) => sum + (r.intervalOi ?? 0), 0)
+  const atmNetFlow = peCoi - ceCoi
+
+  const hasBullishBuildup = targetRows.some(
+    (r) => (r.type === 'CE' && r.buildup === 'Short Covering') || (r.type === 'PE' && r.buildup === 'Long Buildup')
+  )
+  const hasBearishBuildup = targetRows.some(
+    (r) => (r.type === 'CE' && r.buildup === 'Short Buildup') || (r.type === 'PE' && r.buildup === 'Long Unwinding')
+  )
+
+  return {
+    pcrChange: resolvePcrChange(peCoi, ceCoi),
+    atmNetFlow,
+    flowSentiment: resolveFlowSentiment(atmNetFlow, hasBullishBuildup, hasBearishBuildup),
+  }
+}
+
 export function analyzeOptions(
   quotes: Record<string, KiteOptionQuote>,
   instruments: KiteOptionInstrumentForAnalysis[],
@@ -320,10 +359,14 @@ export function analyzeOptions(
   const sentiment = pcr > 1.2 ? 'bullish' : pcr < 0.8 ? 'bearish' : 'neutral'
   const atmSentiment = pcrAtm > 1.2 ? 'bullish' : pcrAtm < 0.8 ? 'bearish' : 'neutral'
   const greeksContext = buildGreeksContext(rows, atmStrike, globalDaysToExpiry)
+  const { pcrChange, atmNetFlow, flowSentiment } = computeAtmFlowMetrics(rows, atmStrike)
 
   return {
     pcr: Number(pcr.toFixed(2)),
     pcrAtm: Number(pcrAtm.toFixed(2)),
+    pcrChange,
+    atmNetFlow,
+    flowSentiment,
     atmStrike,
     callOI,
     putOI,
