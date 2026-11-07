@@ -114,17 +114,17 @@ export function analyzeMultiTimeframe(
   candles1h: Candle[],
   candles30m: Candle[],
   candles15m: Candle[],
-  candles3m: Candle[]
+  candles5m: Candle[]
 ) {
   const tf1h = analyzeTechnical(candles1h, '1h', [50, 200])
   const tf30m = analyzeTechnical(candles30m, '30m', [9, 21])
   const tf15m = analyzeTechnical(candles15m, '15m', [9, 21])
-  const tf3m = analyzeTechnical(candles3m, '3m', [9]) // 9 EMA for trigger momentum
+  const tf5m = analyzeTechnical(candles5m, '5m', [9, 21])
 
   return {
     tf1h,
     tf30m,
     tf15m,
-    tf3m,
+    tf5m,
   }
 }

@@ -15,6 +15,7 @@ export class KiteOrderService {
     quantity: number
     type: OrderType
     price?: number
+    product?: 'MIS' | 'CNC'
   }): Promise<TradeResponse> {
     const lockKey = `${params.side}_${params.symbol}`
     if (this.inFlightOrders.has(lockKey)) {
@@ -48,6 +49,46 @@ export class KiteOrderService {
     }
   }
 
+  public async placeGTTOrder(params: {
+    symbol: string
+    quantity: number
+    targetPrice: number
+    stopLossPrice: number
+    lastPrice: number
+  }): Promise<{ success: boolean; triggerId?: number; error?: string }> {
+    try {
+      const isOption = params.symbol.endsWith('CE') || params.symbol.endsWith('PE')
+      const exchange = isOption ? 'NFO' : 'NSE'
+      const response = await (this.kc as any).placeGTT({
+        trigger_type: (this.kc as any).GTT_TYPE_OCO || 'two-leg',
+        tradingsymbol: params.symbol,
+        exchange,
+        trigger_values: [params.stopLossPrice, params.targetPrice],
+        last_price: params.lastPrice,
+        orders: [
+          {
+            transaction_type: 'SELL',
+            quantity: params.quantity,
+            order_type: 'LIMIT',
+            product: 'CNC',
+            price: params.stopLossPrice,
+          },
+          {
+            transaction_type: 'SELL',
+            quantity: params.quantity,
+            order_type: 'LIMIT',
+            product: 'CNC',
+            price: params.targetPrice,
+          },
+        ],
+      })
+      return { success: true, triggerId: response?.trigger_id }
+    } catch (err: any) {
+      console.error(`❌ [GTT Placement Failed] for ${params.symbol}:`, err.message || err)
+      return { success: false, error: err.message || 'GTT placement failed' }
+    }
+  }
+
   public async getOrderStatus(orderId: string): Promise<any> {
     return this.kc.getOrderHistory(orderId)
   }
@@ -58,14 +99,21 @@ export class KiteOrderService {
     quantity: number
     type: OrderType
     price?: number
+    product?: 'MIS' | 'CNC'
   }): KiteOrderParams {
+    const isOptionOrFuture =
+      params.symbol.endsWith('CE') ||
+      params.symbol.endsWith('PE') ||
+      params.symbol.includes('FUT') ||
+      params.symbol.includes('-')
+
     return {
-      exchange: params.symbol.includes('-') ? 'NFO' : 'NSE',
+      exchange: isOptionOrFuture ? 'NFO' : 'NSE',
       tradingsymbol: params.symbol,
       transaction_type: params.side,
       quantity: params.quantity,
       order_type: params.type,
-      product: 'MIS',
+      product: params.product || 'MIS',
       ...(params.price ? { price: params.price } : {}),
     }
   }

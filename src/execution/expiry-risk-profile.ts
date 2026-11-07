@@ -121,6 +121,16 @@ export const PEAK_PROFIT_RATCHET_TIERS: readonly PeakRatchetTier[] = [
 ]
 
 /**
+ * Equity Profit Ratchet Tiers:
+ * Calibrated for unleveraged cash equities (SEBI 20% max daily price band, typical intraday range 0.8% - 3.5%).
+ */
+export const EQUITY_PROFIT_RATCHET_TIERS: readonly PeakRatchetTier[] = [
+  { minPeakGainPct: 0.028, lockPeakGainRatio: 0.70 }, // +2.8%+ peak gain -> lock 70% of peak gain
+  { minPeakGainPct: 0.018, lockPeakGainRatio: 0.50 }, // +1.8%+ peak gain -> lock 50% of peak gain
+  { minPeakGainPct: 0.010, lockPeakGainRatio: 0.10 }, // +1.0%+ peak gain -> lock breakeven (entry + 10% of gain to cover costs)
+]
+
+/**
  * Computes the ratcheted stop-loss price from the matching PeakRatchetTier,
  * or undefined when the peak gain has not yet reached the lowest tier.
  */

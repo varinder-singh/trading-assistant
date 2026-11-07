@@ -20,6 +20,13 @@ const email = ref('')
 const tradeMode = ref<'PAPER' | 'REAL'>('PAPER')
 const changingTradeMode = ref(false)
 
+const allowIndexOptions = ref(true)
+const allowEquity = ref(true)
+const allowStockOptions = ref(true)
+const stockOptionPreference = ref('PREFER_OPTIONS_IF_LISTED')
+const equityHoldingMode = ref<'MIS' | 'CNC'>('MIS')
+const equityRiskPerTrade = ref(1500)
+
 const kiteApiKey = ref('')
 const kiteApiSecret = ref('')
 const hasSavedApiSecret = ref(false)
@@ -38,6 +45,15 @@ const fetchProfile = async () => {
       fullName.value = data.value.fullName || ''
       email.value = data.value.email || user.value?.email || ''
       tradeMode.value = data.value.tradeMode || 'PAPER'
+
+      if (data.value.allowedUniverses) {
+        allowIndexOptions.value = data.value.allowedUniverses.includes('INDEX_OPTIONS')
+        allowEquity.value = data.value.allowedUniverses.includes('EQUITY')
+        allowStockOptions.value = data.value.allowedUniverses.includes('STOCK_OPTIONS')
+      }
+      if (data.value.stockOptionPreference) stockOptionPreference.value = data.value.stockOptionPreference
+      if (data.value.equityHoldingMode) equityHoldingMode.value = data.value.equityHoldingMode
+      if (data.value.equityRiskPerTrade) equityRiskPerTrade.value = Number(data.value.equityRiskPerTrade) || 1500
     }
   } catch (err: any) {
     console.error('Failed to load profile:', err)
@@ -75,7 +91,18 @@ const saveProfile = async () => {
     profileError.value = ''
     profileSuccess.value = ''
 
-    const payload: any = { fullName: fullName.value }
+    const universes: string[] = []
+    if (allowIndexOptions.value) universes.push('INDEX_OPTIONS')
+    if (allowEquity.value) universes.push('EQUITY')
+    if (allowStockOptions.value) universes.push('STOCK_OPTIONS')
+
+    const payload: any = {
+      fullName: fullName.value,
+      allowedUniverses: universes.join(','),
+      stockOptionPreference: stockOptionPreference.value,
+      equityHoldingMode: equityHoldingMode.value,
+      equityRiskPerTrade: Number(equityRiskPerTrade.value) || 1500,
+    }
 
     if (kiteApiKey.value && kiteApiSecret.value) {
       payload.kiteApiKey = kiteApiKey.value
@@ -303,6 +330,82 @@ onMounted(() => {
                     type="password"
                     placeholder="Enter to update (encrypted at rest)"
                     class="w-full px-4 py-2 bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- Multi-Asset Universe & Execution Settings -->
+            <div class="pt-6 border-t border-gray-100 space-y-6">
+              <div>
+                <h3 class="text-base font-semibold text-gray-900">Trading Universe & Execution Preferences</h3>
+                <p class="text-xs text-gray-500">Configure which asset classes the assistant monitors and how stock trades execute.</p>
+              </div>
+
+              <!-- Allowed Universes -->
+              <div class="space-y-3">
+                <label class="text-sm font-medium text-gray-700">Active Asset Classes</label>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <label class="flex items-center gap-3 p-3.5 border rounded-xl cursor-pointer hover:bg-gray-50 transition-colors" :class="allowIndexOptions ? 'border-indigo-500 bg-indigo-50/30' : 'border-gray-200'">
+                    <input type="checkbox" v-model="allowIndexOptions" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4" />
+                    <div>
+                      <span class="text-sm font-medium text-gray-900 block">NIFTY Options</span>
+                      <span class="text-xs text-gray-500">Intraday Index Scalping</span>
+                    </div>
+                  </label>
+
+                  <label class="flex items-center gap-3 p-3.5 border rounded-xl cursor-pointer hover:bg-gray-50 transition-colors" :class="allowEquity ? 'border-indigo-500 bg-indigo-50/30' : 'border-gray-200'">
+                    <input type="checkbox" v-model="allowEquity" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4" />
+                    <div>
+                      <span class="text-sm font-medium text-gray-900 block">NSE Cash Equities</span>
+                      <span class="text-xs text-gray-500">Top 200 Liquid Stocks</span>
+                    </div>
+                  </label>
+
+                  <label class="flex items-center gap-3 p-3.5 border rounded-xl cursor-pointer hover:bg-gray-50 transition-colors" :class="allowStockOptions ? 'border-indigo-500 bg-indigo-50/30' : 'border-gray-200'">
+                    <input type="checkbox" v-model="allowStockOptions" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4" />
+                    <div>
+                      <span class="text-sm font-medium text-gray-900 block">Stock Options</span>
+                      <span class="text-xs text-gray-500">NSE F&O Listed Stocks</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Holding Mode (Scenario A vs B) & Sizing -->
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div class="space-y-2">
+                  <label class="text-sm font-medium text-gray-700">Stock Holding Mode</label>
+                  <select
+                    v-model="equityHoldingMode"
+                    class="w-full px-4 py-2 bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-sm"
+                  >
+                    <option value="MIS">Scenario A: Intraday (MIS - 3:15 PM Square-Off)</option>
+                    <option value="CNC">Scenario B: Swing Carrying (CNC - Multi-Day)</option>
+                  </select>
+                </div>
+
+                <div class="space-y-2">
+                  <label class="text-sm font-medium text-gray-700">F&O Stock Preference</label>
+                  <select
+                    v-model="stockOptionPreference"
+                    class="w-full px-4 py-2 bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-sm"
+                  >
+                    <option value="PREFER_OPTIONS_IF_LISTED">Trade Options if Listed, else Equity</option>
+                    <option value="EQUITY_ONLY">Equity Cash Only</option>
+                    <option value="OPTIONS_ONLY">Options Only</option>
+                  </select>
+                </div>
+
+                <div class="space-y-2">
+                  <label class="text-sm font-medium text-gray-700">Max Risk per Stock Trade (₹)</label>
+                  <input
+                    v-model.number="equityRiskPerTrade"
+                    type="number"
+                    min="500"
+                    step="500"
+                    placeholder="1500"
+                    class="w-full px-4 py-2 bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-sm"
                   />
                 </div>
               </div>

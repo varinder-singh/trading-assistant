@@ -39,7 +39,7 @@ describe('Dual-Cadence Trigger Engine (Fast-Path Anomaly + Structural Cadence)',
     expect(breakoutEvent.tick.last_price).toBe(23260)
   })
 
-  it('triggers on 3m/5m Candle Close Break of Structure (BOS) when closing below prior swing low', () => {
+  it('triggers on 5m Candle Close Break of Structure (BOS) when closing below prior swing low', () => {
     let breakoutEvent: any = null
     analyzer.on('breakout', (event) => {
       breakoutEvent = event
@@ -61,14 +61,14 @@ describe('Dual-Cadence Trigger Engine (Fast-Path Anomaly + Structural Cadence)',
       timestamp: Date.now(),
     }
 
-    analyzer.checkCandleClose(closingCandle, 3, recentCandles)
+    analyzer.checkCandleClose(closingCandle, 5, recentCandles)
 
     expect(breakoutEvent).not.toBeNull()
-    expect(breakoutEvent.reason).toContain('Break of 3m Swing Low: 23288.00 < 23315.00')
+    expect(breakoutEvent.reason).toContain('Break of 5m Swing Low: 23288.00 < 23315.00')
     expect(breakoutEvent.tick.last_price).toBe(23288)
   })
 
-  it('triggers on 3m/5m Candle Close Break of Structure (BOS) when closing above prior swing high (Reversal)', () => {
+  it('triggers on 5m Candle Close Break of Structure (BOS) when closing above prior swing high (Reversal)', () => {
     let breakoutEvent: any = null
     analyzer.on('breakout', (event) => {
       breakoutEvent = event
@@ -90,10 +90,10 @@ describe('Dual-Cadence Trigger Engine (Fast-Path Anomaly + Structural Cadence)',
       timestamp: Date.now(),
     }
 
-    analyzer.checkCandleClose(closingCandle, 3, recentCandles)
+    analyzer.checkCandleClose(closingCandle, 5, recentCandles)
 
     expect(breakoutEvent).not.toBeNull()
-    expect(breakoutEvent.reason).toContain('Break of 3m Swing High: 23245.00 > 23225.00')
+    expect(breakoutEvent.reason).toContain('Break of 5m Swing High: 23245.00 > 23225.00')
     expect(breakoutEvent.tick.last_price).toBe(23245)
   })
 

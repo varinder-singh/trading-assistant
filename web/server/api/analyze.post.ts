@@ -1,5 +1,7 @@
 import { runAnalysis } from '@core/analysis/trade.js'
 import { getOptionToken } from '@core/data/kite.js'
+import { classifyInstrument } from '@core/data/instrument-classifier.js'
+import { equityAnalysisService } from '@core/analysis/equity-analysis.js'
 import { serverSupabaseUser } from '#supabase/server'
 import { userRepo } from '@core/db/repositories/container.js'
 import { sessionManager } from '@core/execution/session-manager.js'
@@ -55,6 +57,40 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
+    const classification = await classifyInstrument(kc, symbol)
+
+    if (classification.assetClass === 'EQUITY') {
+      const equityResult = await equityAnalysisService.analyzeCandidate(kc, symbol, {
+        stockOptionPreference: profile?.stockOptionPreference || 'PREFER_OPTIONS_IF_LISTED',
+        equityHoldingMode: (profile?.equityHoldingMode as 'MIS' | 'CNC') || 'MIS',
+        equityRiskPerTrade: Number(profile?.equityRiskPerTrade) || 1500,
+      })
+
+      const { decision } = equityResult
+      if (decision && decision.decision === 'BUY' && decision.action === 'BUY_EQUITY') {
+        console.log(`[API ${user.id}] Executing Equity Trade for ${decision.symbol} (${decision.holdingMode})...`)
+        await paperTrader.placeOrder({
+          symbol: decision.symbol,
+          token: classification.token || 0,
+          side: 'BUY',
+          quantity: 1,
+          price: decision.entryPrice,
+          context: {
+            assetClass: 'EQUITY',
+            product: decision.holdingMode,
+            aiReasoning: decision.reason,
+            aiConfidence: decision.confidence,
+            aiStopLoss: decision.stopLoss,
+            aiTarget: decision.targets[0],
+            aiIndexTargets: decision.targets,
+          },
+        })
+      }
+
+      return equityResult
+    }
+
+    // Default: Existing NIFTY/BANKNIFTY Index Options Pipeline
     const result = await runAnalysis(kc, symbol, mode || 'intraday', undefined, undefined, undefined, userId)
     const { tf15m: tf, aiDecision: decision, vix, agentType } = result
 

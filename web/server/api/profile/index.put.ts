@@ -15,7 +15,15 @@ export default defineEventHandler(async (event) => {
   }
 
   const body = await readBody(event)
-  const { fullName, kiteApiKey, kiteApiSecret } = body
+  const {
+    fullName,
+    kiteApiKey,
+    kiteApiSecret,
+    allowedUniverses,
+    stockOptionPreference,
+    equityHoldingMode,
+    equityRiskPerTrade,
+  } = body
 
   if (fullName !== undefined && (typeof fullName !== 'string' || fullName.trim() === '')) {
     throw createError({ statusCode: 400, statusMessage: 'Invalid full name' })
@@ -27,14 +35,21 @@ export default defineEventHandler(async (event) => {
 
   try {
     // Upsert logic for profile
-    if (fullName !== undefined) {
+    const profileUpdates: any = {}
+    if (fullName !== undefined) profileUpdates.fullName = fullName.trim()
+    if (allowedUniverses !== undefined) profileUpdates.allowedUniverses = allowedUniverses
+    if (stockOptionPreference !== undefined) profileUpdates.stockOptionPreference = stockOptionPreference
+    if (equityHoldingMode !== undefined) profileUpdates.equityHoldingMode = equityHoldingMode
+    if (equityRiskPerTrade !== undefined) profileUpdates.equityRiskPerTrade = String(equityRiskPerTrade)
+
+    if (Object.keys(profileUpdates).length > 0) {
       const existing = await db.selectFrom('profiles').select('id').where('id', '=', userId).executeTakeFirst()
 
       if (existing) {
         await db
           .updateTable('profiles')
           .set({
-            fullName: fullName.trim(),
+            ...profileUpdates,
             updatedAt: new Date().toISOString(),
           })
           .where('id', '=', userId)
@@ -44,7 +59,8 @@ export default defineEventHandler(async (event) => {
           .insertInto('profiles')
           .values({
             id: userId,
-            fullName: fullName.trim(),
+            fullName: fullName ? fullName.trim() : 'Trader',
+            ...profileUpdates,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           })

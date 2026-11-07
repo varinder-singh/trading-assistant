@@ -47,7 +47,7 @@ export default defineEventHandler(async (event) => {
       candles1h: data.candles1h.slice(-100),
       candles30m: data.candles30m ? data.candles30m.slice(-100) : data.candles15m.slice(-100),
       candles15m: data.candles15m.slice(-100),
-      candles3m: data.candles3m.slice(-100),
+      candles5m: data.candles5m ? data.candles5m.slice(-100) : data.candles15m.slice(-100),
     }
   } catch (error: any) {
     throw createError({

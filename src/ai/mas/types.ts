@@ -239,7 +239,7 @@ export interface StructureBlackboardSlice {
   readonly tf1h: TimeframeSummarySlice
   readonly tf30m: TimeframeSummarySlice
   readonly tf15m: TimeframeSummarySlice
-  readonly tf3m: TimeframeSummarySlice
+  readonly tf5m: TimeframeSummarySlice
   readonly dailyContext: {
     readonly atr14: number
     readonly pdh: number

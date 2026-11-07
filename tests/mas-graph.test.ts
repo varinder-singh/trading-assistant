@@ -83,8 +83,8 @@ function createSampleMarketInput(overrides: Record<string, any> = {}): any {
         },
       },
     },
-    tf3m: {
-      timeframe: '3m',
+    tf5m: {
+      timeframe: '5m',
       price: 24500,
       vwap: 24485,
       vwapPosition: 'above',

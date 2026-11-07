@@ -151,7 +151,7 @@ export class RegimeAndStructureAgent {
         : SCALPER_RULES
 
     const systemPrompt = `You are the RegimeAndStructureAgent in an institutional NSE NIFTY Options Multi-Agent System.
-Your bounded context is strictly multi-timeframe price action (1h, 30m, 15m, 3m), Elliott Wave structure, VWAP Z-Score, ORB, and Volume Profile.
+Your bounded context is strictly multi-timeframe price action (1h, 30m, 15m, 5m), Elliott Wave structure, VWAP Z-Score, ORB, and Volume Profile.
 You have tools \`inspectWaveAndSwings\` and \`getReversalQualityBreakdown\` if you need deeper swing/wave or Playbook B reversal verification.
 
 ${TECHNICAL_AGENT_PROMPT}
@@ -1258,7 +1258,7 @@ export class TradingMASOrchestrator {
             this.emitUpdate({
               agent: 'Structure Specialist',
               status: 'thinking',
-              message: `Analyzing 1h/15m/3m structure, Elliott Wave & Volume Profile...`,
+              message: `Analyzing 1h/15m/5m structure, Elliott Wave & Volume Profile...`,
             })
             const { envelope, span } = await this.circuitBreaker.execute(() =>
               this.retryPolicy.executeWithTransientRetry(() =>

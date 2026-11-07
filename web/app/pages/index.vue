@@ -23,6 +23,8 @@ import {
   BarChart2,
   ChevronRight,
   RefreshCcw,
+  Radar,
+  Flame,
 } from '@lucide/vue'
 import { createChart, CandlestickSeries, CrosshairMode } from 'lightweight-charts'
 import type { IChartApi, ISeriesApi } from 'lightweight-charts'
@@ -60,6 +62,16 @@ const logsContainer = ref<HTMLElement | null>(null)
 const lastInstitutionalAlertAt = ref(0)
 const isMarketOpen = ref<boolean>(true)
 const marketStatusMessage = ref<string>('Checking market status...')
+
+const screenerData = ref<any>({ topGainers: [], topSurges: [], activeCandidates: [] })
+const candidateAlerts = ref<any[]>([])
+const showScreener = ref(false)
+
+function focusStock(sym: string) {
+  symbol.value = sym.toUpperCase()
+  startWatching()
+  runAnalysis()
+}
 
 const agents = ref<Record<string, any>>({
   Orchestrator: { status: 'idle', message: 'Awaiting market data...', lastUpdate: Date.now() },
@@ -197,7 +209,7 @@ let supportLine: any = null
 
 // Current candle state for tick updates
 const currentCandle = ref<any>(null)
-const chartTimeframeStr = ref<string>('15m') // 3m, 15m, 30m, 1h
+const chartTimeframeStr = ref<string>('15m') // 5m, 15m, 30m, 1h
 
 const activeTfStats = computed(() => {
   if (!analysisResult.value) return null
@@ -248,6 +260,11 @@ function connectWebSocket() {
       const price = msg.data.last_price
       livePrice.value = price
       updateChartFromTick(price, msg.data.gtiScore, msg.data.exchange_timestamp)
+    } else if (msg.type === 'screener_update') {
+      screenerData.value = msg.data
+    } else if (msg.type === 'candidate_alert') {
+      candidateAlerts.value.unshift(msg.data)
+      if (candidateAlerts.value.length > 10) candidateAlerts.value.pop()
     } else if (msg.type === 'log') {
       serverLogs.value.push(msg.data)
       if (serverLogs.value.length > 1000) serverLogs.value.shift()
@@ -403,7 +420,7 @@ async function fetchInitialData() {
       candles1h: data.candles1h,
       candles30m: data.candles30m,
       candles15m: data.candles15m,
-      candles3m: data.candles3m,
+      candles5m: data.candles5m || data.candles15m,
     }
 
     if (!chart) initChart()
@@ -597,7 +614,7 @@ function updateChartFromTick(price: number, gtiScore?: any, tickTimestamp?: stri
   const tickTimeMs = tickTimestamp ? new Date(tickTimestamp).getTime() : Date.now()
   const now = Math.floor(tickTimeMs / 1000)
 
-  const tfMap: Record<string, number> = { '3m': 180, '15m': 900, '30m': 1800, '1h': 3600 }
+  const tfMap: Record<string, number> = { '5m': 300, '15m': 900, '30m': 1800, '1h': 3600 }
   const bucketSecs = tfMap[chartTimeframeStr.value] || 900
 
   if (!currentCandle.value) {
@@ -652,7 +669,7 @@ function changeTimeframe(tf: string) {
   // Update WS subscription for timeframe
   if (ws && ws.readyState === WebSocket.OPEN) {
     // Re-send watch command with new timeframe
-    const tfMap: Record<string, number> = { '3m': 3, '15m': 15, '30m': 30, '1h': 60 }
+    const tfMap: Record<string, number> = { '5m': 5, '15m': 15, '30m': 30, '1h': 60 }
     ws.send(
       JSON.stringify({
         type: 'watch',
@@ -782,6 +799,22 @@ onUnmounted(() => {
 
           <div class="h-8 w-px bg-gray-200 mx-1"></div>
 
+          <button
+            @click="showScreener = !showScreener"
+            class="relative p-2 rounded-lg transition-colors flex items-center gap-1.5"
+            :class="showScreener ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:text-indigo-600 hover:bg-indigo-50'"
+            title="NSE Live Radar (Top 200 Screener)"
+          >
+            <Radar class="w-5 h-5" />
+            <span class="text-xs font-semibold hidden md:inline">NSE Radar</span>
+            <span
+              v-if="candidateAlerts.length > 0"
+              class="absolute -top-1 -right-1 px-1.5 py-0.5 bg-rose-500 text-white text-[10px] font-bold rounded-full animate-pulse"
+            >
+              {{ candidateAlerts.length }}
+            </span>
+          </button>
+
           <a
             href="/api/auth/kite/login"
             class="p-2 text-gray-500 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
@@ -846,7 +879,7 @@ onUnmounted(() => {
                   <!-- Timeframe selector -->
                   <div class="flex bg-gray-100 rounded-lg p-0.5">
                     <button
-                      v-for="tf in ['3m', '15m', '30m', '1h']"
+                      v-for="tf in ['5m', '15m', '30m', '1h']"
                       :key="tf"
                       @click="changeTimeframe(tf)"
                       class="px-2 py-1 text-xs font-bold rounded-md transition-colors"
@@ -2025,6 +2058,153 @@ onUnmounted(() => {
             <Activity class="w-12 h-12 text-gray-300 mx-auto mb-4 opacity-50" />
             <div class="text-sm font-bold text-gray-500">Waiting for live intelligence payload...</div>
             <p class="text-xs text-gray-400 mt-1">Deep dive data will appear here once the agent makes a decision.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NSE Radar Drawer -->
+    <div
+      v-if="showScreener"
+      class="fixed inset-0 z-50 overflow-hidden flex justify-end bg-black/40 backdrop-blur-sm transition-opacity"
+      @click.self="showScreener = false"
+    >
+      <div class="w-full max-w-md bg-white h-full shadow-2xl flex flex-col z-10 animate-in">
+        <!-- Drawer Header -->
+        <div class="p-4 border-b border-gray-200 flex items-center justify-between bg-slate-900 text-white">
+          <div class="flex items-center gap-2">
+            <Radar class="w-5 h-5 text-indigo-400 animate-spin" style="animation-duration: 8s" />
+            <div>
+              <h2 class="text-base font-bold">NSE Live Radar</h2>
+              <p class="text-[11px] text-slate-400">Top 200 Scanner & In-Memory Momentum</p>
+            </div>
+          </div>
+          <button
+            @click="showScreener = false"
+            class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+          >
+            <X class="w-5 h-5" />
+          </button>
+        </div>
+
+        <!-- Drawer Content -->
+        <div class="flex-1 overflow-y-auto p-4 space-y-6">
+          <!-- Active Breakout Alerts -->
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
+                <Flame class="w-4 h-4 text-rose-500" />
+                Active Breakout Alerts
+              </h3>
+              <span
+                class="px-2 py-0.5 text-[10px] font-bold rounded-full"
+                :class="candidateAlerts.length > 0 ? 'bg-rose-100 text-rose-700' : 'bg-gray-100 text-gray-500'"
+              >
+                {{ candidateAlerts.length }} live
+              </span>
+            </div>
+
+            <div v-if="candidateAlerts.length === 0" class="p-4 rounded-xl bg-gray-50 border border-gray-100 text-center">
+              <p class="text-xs text-gray-500">Scanning Top 200 stocks in real-time...</p>
+              <p class="text-[11px] text-gray-400 mt-1">Surge triggers (&gt;3x 5m avg volume) will appear here.</p>
+            </div>
+
+            <div v-else class="space-y-2.5">
+              <div
+                v-for="alert in candidateAlerts"
+                :key="alert.id"
+                class="p-3 rounded-xl border border-rose-200 bg-rose-50/50 hover:bg-rose-50 transition-all flex items-center justify-between gap-3 shadow-sm"
+              >
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="font-black text-sm text-gray-900">{{ alert.symbol }}</span>
+                    <span
+                      class="px-1.5 py-0.5 text-[9px] font-bold rounded"
+                      :class="alert.isFnoListed ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-600'"
+                    >
+                      {{ alert.isFnoListed ? 'F&amp;O' : 'CASH' }}
+                    </span>
+                  </div>
+                  <div class="flex items-center gap-3 mt-1 text-xs text-gray-600">
+                    <span>₹{{ alert.price?.toFixed(2) }}</span>
+                    <span class="font-bold text-rose-600">⚡ {{ alert.volumeSurgeRatio }}x Vol</span>
+                    <span :class="alert.obi >= 0 ? 'text-emerald-600' : 'text-rose-600'">OBI: {{ alert.obi }}</span>
+                  </div>
+                </div>
+                <button
+                  @click="focusStock(alert.symbol); showScreener = false"
+                  class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors whitespace-nowrap"
+                >
+                  Analyze
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Top Volume Surges -->
+          <div>
+            <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <Zap class="w-4 h-4 text-amber-500" />
+              Top Volume Surges (Rolling 5m)
+            </h3>
+            <div class="divide-y divide-gray-100 border border-gray-100 rounded-xl overflow-hidden bg-white shadow-sm">
+              <div
+                v-for="stock in screenerData.topSurges.slice(0, 8)"
+                :key="stock.token"
+                class="p-2.5 flex items-center justify-between hover:bg-gray-50 cursor-pointer transition-colors"
+                @click="focusStock(stock.symbol); showScreener = false"
+              >
+                <div>
+                  <span class="font-bold text-xs text-gray-900">{{ stock.symbol }}</span>
+                  <span class="text-[10px] text-gray-400 ml-1.5">₹{{ stock.lastPrice?.toFixed(2) }}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span
+                    class="px-2 py-0.5 text-xs font-black rounded"
+                    :class="stock.volumeSurgeRatio >= 3 ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-700'"
+                  >
+                    {{ stock.volumeSurgeRatio }}x
+                  </span>
+                  <ChevronRight class="w-3.5 h-3.5 text-gray-400" />
+                </div>
+              </div>
+              <div v-if="screenerData.topSurges.length === 0" class="p-3 text-center text-xs text-gray-400">
+                Awaiting market tick stream...
+              </div>
+            </div>
+          </div>
+
+          <!-- Top Gainers -->
+          <div>
+            <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <TrendingUp class="w-4 h-4 text-emerald-500" />
+              Top Day Momentum Gainers
+            </h3>
+            <div class="divide-y divide-gray-100 border border-gray-100 rounded-xl overflow-hidden bg-white shadow-sm">
+              <div
+                v-for="stock in screenerData.topGainers.slice(0, 8)"
+                :key="stock.token"
+                class="p-2.5 flex items-center justify-between hover:bg-gray-50 cursor-pointer transition-colors"
+                @click="focusStock(stock.symbol); showScreener = false"
+              >
+                <div>
+                  <span class="font-bold text-xs text-gray-900">{{ stock.symbol }}</span>
+                  <span class="text-[10px] text-gray-400 ml-1.5">₹{{ stock.lastPrice?.toFixed(2) }}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span
+                    class="px-2 py-0.5 text-xs font-black rounded"
+                    :class="stock.changePct >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'"
+                  >
+                    {{ stock.changePct >= 0 ? '+' : '' }}{{ stock.changePct?.toFixed(2) }}%
+                  </span>
+                  <ChevronRight class="w-3.5 h-3.5 text-gray-400" />
+                </div>
+              </div>
+              <div v-if="screenerData.topGainers.length === 0" class="p-3 text-center text-xs text-gray-400">
+                Awaiting market tick stream...
+              </div>
+            </div>
           </div>
         </div>
       </div>

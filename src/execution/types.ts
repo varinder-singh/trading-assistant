@@ -36,6 +36,8 @@ export interface TradeContext {
   baseSignalPrice?: number | undefined
   triggerPrice?: number | undefined
   isTriggerOrder?: boolean | undefined
+  product?: 'MIS' | 'CNC' | undefined
+  assetClass?: 'INDEX_OPTION' | 'EQUITY' | 'STOCK_OPTION' | undefined
 }
 
 export interface PendingTriggerOrder {
@@ -70,6 +72,8 @@ export interface TradeOrder {
   price?: number | undefined
   type: OrderType
   status: OrderStatus
+  product?: 'MIS' | 'CNC' | undefined
+  assetClass?: 'INDEX_OPTION' | 'EQUITY' | 'STOCK_OPTION' | undefined
   timestamp: Date
 }
 
@@ -103,6 +107,8 @@ export interface PaperPosition {
   optionVega?: number | undefined
   optionExpiry?: Date | string | undefined
   indexInvalidation?: number | undefined // Underlying index level that invalidates the trade thesis (dual-track exit)
+  product?: 'MIS' | 'CNC' | undefined
+  assetClass?: 'INDEX_OPTION' | 'EQUITY' | 'STOCK_OPTION' | undefined
   timestamp: Date
 }
 

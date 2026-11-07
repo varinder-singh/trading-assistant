@@ -103,10 +103,10 @@ export class BlackboardContextScoper {
     const gtiComposite = Number(gtiScore?.composite ?? 0)
     const revBull = Number(input?.reversalScore?.bullish ?? 3)
     const revBear = Number(input?.reversalScore?.bearish ?? 3)
-    const rsi3m = Number(input?.tf3m?.rsi ?? 50)
+    const rsi5m = Number(input?.tf5m?.rsi ?? 50)
     const isWave5 = input?.tf15m?.waveContext?.currentPhase === 'WAVE_5'
 
-    return { zScore15m, rsi15m, gtiConf, gtiComposite, revBull, revBear, rsi3m, isWave5 }
+    return { zScore15m, rsi15m, gtiConf, gtiComposite, revBull, revBear, rsi5m, isWave5 }
   }
 
   private evaluateGatePermissions(metrics: ReturnType<typeof this.extractGateMetrics>) {
@@ -118,12 +118,12 @@ export class BlackboardContextScoper {
 
     const trendBlowoffCe =
       (metrics.zScore15m > this.policy.maxTrendBlowoffVwapZScore && metrics.rsi15m > 80) ||
-      metrics.rsi3m > 80 ||
-      (metrics.isWave5 && metrics.rsi3m > 70)
+      metrics.rsi5m > 80 ||
+      (metrics.isWave5 && metrics.rsi5m > 70)
     const trendBlowoffPe =
       (metrics.zScore15m < -this.policy.maxTrendBlowoffVwapZScore && metrics.rsi15m < 20) ||
-      metrics.rsi3m < 20 ||
-      (metrics.isWave5 && metrics.rsi3m < 30)
+      metrics.rsi5m < 20 ||
+      (metrics.isWave5 && metrics.rsi5m < 30)
 
     const trendAllowsCe = !gtiBlocksCe && !trendBlowoffCe
     const trendAllowsPe = !gtiBlocksPe && !trendBlowoffPe
@@ -155,12 +155,12 @@ export class BlackboardContextScoper {
       ...(perm.gtiBlocksPe ? [`GTI composite (${metrics.gtiComposite.toFixed(2)}) severely opposes BUY_PE`] : []),
       ...(perm.trendBlowoffCe && !perm.gtiBlocksCe
         ? [
-            `Trend momentum overheated (3m RSI: ${metrics.rsi3m.toFixed(1)}${metrics.isWave5 ? ', Wave 5' : ''}) blocks BUY_CE until pullback to 3m EMA9/VWAP`,
+            `Trend momentum overheated (5m RSI: ${metrics.rsi5m.toFixed(1)}${metrics.isWave5 ? ', Wave 5' : ''}) blocks BUY_CE until pullback to 5m EMA9/VWAP`,
           ]
         : []),
       ...(perm.trendBlowoffPe && !perm.gtiBlocksPe
         ? [
-            `Trend momentum oversold (3m RSI: ${metrics.rsi3m.toFixed(1)}${metrics.isWave5 ? ', Wave 5' : ''}) blocks BUY_PE until bounce to 3m EMA9/VWAP`,
+            `Trend momentum oversold (5m RSI: ${metrics.rsi5m.toFixed(1)}${metrics.isWave5 ? ', Wave 5' : ''}) blocks BUY_PE until bounce to 5m EMA9/VWAP`,
           ]
         : []),
       ...(!perm.scalperAllowsCe && perm.trendAllowsCe
@@ -207,7 +207,7 @@ export class BlackboardContextScoper {
       tf1h: toTimeframeSlice(input?.tf1h, '1h'),
       tf30m: toTimeframeSlice(input?.tf30m || input?.tf15m, '30m'),
       tf15m: toTimeframeSlice(input?.tf15m, '15m'),
-      tf3m: toTimeframeSlice(input?.tf3m || input?.tf15m, '3m'),
+      tf5m: toTimeframeSlice(input?.tf5m || input?.tf15m, '5m'),
       dailyContext: dc
         ? Object.freeze({
             atr14: Number(dc.atr14 || 20),

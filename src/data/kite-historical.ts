@@ -44,7 +44,7 @@ export async function getYesterdayClosingOI(kc: KiteConnect, tokens: number[]): 
 export async function getIntradayBaseline(
   kc: KiteConnect,
   token: number,
-  interval: "minute" | "3minute" | "15minute" | "30minute",
+  interval: "minute" | "5minute" | "15minute" | "30minute" | "60minute",
   days: number = 5
 ): Promise<Candle[]> {
   const now = new Date()

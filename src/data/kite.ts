@@ -1,6 +1,7 @@
 import "dotenv/config"
 import { KiteConnect, type Connect as KiteConnectInstance } from "kiteconnect"
 import { resolveKiteInstrumentName } from "../utils/symbol.js"
+import { getCachedInstruments } from "./instrument-classifier.js"
 
 /**
  * Creates a new KiteConnect client instance.
@@ -25,14 +26,14 @@ export function createKiteClient(accessToken?: string, apiKey?: string) {
 }
 
 export async function getInstrumentToken(kc: KiteConnectInstance, symbol: string): Promise<number | undefined> {
-  const instruments = await kc.getInstruments("NSE")
+  const instruments = await getCachedInstruments(kc, "NSE")
   const targetName = resolveKiteInstrumentName(symbol)
   const instrument = instruments.find(i => i.tradingsymbol === targetName || i.name === targetName)
   return instrument?.instrument_token ? Number(instrument.instrument_token) : undefined
 }
 
 export async function getOptionToken(kc: KiteConnectInstance, underlying: string, strike: number, type: "CE" | "PE"): Promise<{ token: number, symbol: string, expiry: Date } | undefined> {
-  const instruments = await kc.getInstruments("NFO")
+  const instruments = await getCachedInstruments(kc, "NFO")
   
   // Filter for current symbol and strike
   const filtered = instruments.filter(i => 

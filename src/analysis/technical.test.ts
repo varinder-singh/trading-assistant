@@ -45,21 +45,21 @@ describe('analyzeTechnical', () => {
 })
 
 describe('analyzeMultiTimeframe', () => {
-  it('should analyze all four timeframes', () => {
+  it('should analyze all standard timeframes including 5m', () => {
     const c1h = [{ high: 200, low: 180, close: 190, volume: 100, time: 1, open: 185 }]
     const c30m = [{ high: 150, low: 130, close: 140, volume: 50, time: 2, open: 135 }]
     const c15m = [{ high: 100, low: 90, close: 95, volume: 10, time: 3, open: 95 }]
-    const c3m = [{ high: 50, low: 40, close: 45, volume: 5, time: 4, open: 45 }]
+    const c5m = [{ high: 50, low: 40, close: 45, volume: 5, time: 4, open: 45 }]
 
-    const result = analyzeMultiTimeframe(c1h, c30m, c15m, c3m)
+    const result = analyzeMultiTimeframe(c1h, c30m, c15m, c5m)
 
     expect(result.tf1h).toBeDefined()
     expect(result.tf30m).toBeDefined()
     expect(result.tf15m).toBeDefined()
-    expect(result.tf3m).toBeDefined()
+    expect(result.tf5m).toBeDefined()
     expect(result.tf1h.timeframe).toBe('1h')
     expect(result.tf30m.timeframe).toBe('30m')
     expect(result.tf15m.timeframe).toBe('15m')
-    expect(result.tf3m.timeframe).toBe('3m')
+    expect(result.tf5m.timeframe).toBe('5m')
   })
 })

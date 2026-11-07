@@ -28,7 +28,7 @@ describe('runAnalysis', () => {
       candles1h: [mockCandle],
       candles30m: [],
       candles15m: [mockCandle],
-      candles3m: [mockCandle],
+      candles5m: [mockCandle],
     })
     vi.mocked(news.getNews).mockResolvedValue([])
     vi.mocked(vix.getIndiaVix).mockResolvedValue({
@@ -67,13 +67,13 @@ describe('runAnalysis', () => {
 
     expect(result.tf1h).toBeDefined()
     expect(result.tf15m).toBeDefined()
-    expect(result.tf3m).toBeDefined()
+    expect(result.tf5m).toBeDefined()
     expect(result.aiDecision?.decision).toBe('BUY')
     expect(LLMService.prototype.analyzeWithEnsemble).toHaveBeenCalledWith(
       expect.objectContaining({
         tf1h: expect.any(Object),
         tf15m: expect.any(Object),
-        tf3m: expect.any(Object),
+        tf5m: expect.any(Object),
       }),
       'SCALPER',
       expect.any(String)

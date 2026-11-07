@@ -74,6 +74,14 @@ export class ClientConnection {
     this.send({ type: 'market_closed', message: data.message })
   }
 
+  private onScreenerUpdate = (snapshot: any) => {
+    this.send({ type: 'screener_update', data: snapshot })
+  }
+
+  private onCandidateAlert = (candidate: any) => {
+    this.send({ type: 'candidate_alert', data: candidate })
+  }
+
   private onWatchError = (data: any) => {
     this.send({ type: 'error', message: data.message })
   }
@@ -153,6 +161,8 @@ export class ClientConnection {
     session.on('market_closed', this.onMarketClosed)
     session.on('watch_error', this.onWatchError)
     session.on('token_expired', this.onTokenExpired)
+    session.on('screener_update', this.onScreenerUpdate)
+    session.on('candidate_alert', this.onCandidateAlert)
 
     // Update connection status in wsConnectionManager
     wsConnectionManager.addClient(this.id, this)
@@ -193,6 +203,8 @@ export class ClientConnection {
       this.session.off('market_closed', this.onMarketClosed)
       this.session.off('watch_error', this.onWatchError)
       this.session.off('token_expired', this.onTokenExpired)
+      this.session.off('screener_update', this.onScreenerUpdate)
+      this.session.off('candidate_alert', this.onCandidateAlert)
     }
   }
 

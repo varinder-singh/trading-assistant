@@ -10,6 +10,10 @@ export interface ProfilesTable {
   tradeMode: 'PAPER' | 'REAL'
   watchedSymbol: string | null
   watchedMode: string | null
+  allowedUniverses?: string | null
+  stockOptionPreference?: 'PREFER_OPTIONS_IF_LISTED' | 'EQUITY_ONLY' | 'OPTIONS_ONLY' | string | null
+  equityHoldingMode?: 'MIS' | 'CNC' | string | null
+  equityRiskPerTrade?: string | number | null
   createdAt: string
   updatedAt: string
 }
@@ -42,6 +46,8 @@ export interface TradesTable {
   entryPrice: string // numeric
   exitPrice: string | null // numeric
   pnl: string | null // numeric
+  product?: 'MIS' | 'CNC' | string | null
+  assetClass?: 'INDEX_OPTION' | 'EQUITY' | 'STOCK_OPTION' | string | null
   openedAt: string
   closedAt: string | null
   createdAt: string

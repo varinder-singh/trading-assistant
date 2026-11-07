@@ -9,7 +9,7 @@ type KiteHistoricalInterval = Parameters<KiteConnectInstance['getHistoricalData'
 const KITE_INTERVAL_MAP: Record<string, KiteHistoricalInterval> = {
   '1h': '60minute',
   '1d': 'day',
-  '3m': '3minute',
+  '5m': '5minute',
   '15m': '15minute',
   '30m': '30minute',
 }
@@ -61,15 +61,15 @@ export async function getKiteMultiTimeframeCandles(kc: KiteConnectInstance, symb
     throw new Error(`Kite token not found for symbol: ${symbol}`)
   }
 
-  const [candles1d, candles1h, candles30m, candles15m, candles3m] = await Promise.all([
+  const [candles1d, candles1h, candles30m, candles15m, candles5m] = await Promise.all([
     getKiteCandles(kc, token, '1d', 60),
     getKiteCandles(kc, token, '1h', 30),
     getKiteCandles(kc, token, '30m', 5),
     getKiteCandles(kc, token, '15m', 5),
-    getKiteCandles(kc, token, '3m', 2),
+    getKiteCandles(kc, token, '5m', 5),
   ])
 
-  return { candles1d, candles1h, candles30m, candles15m, candles3m }
+  return { candles1d, candles1h, candles30m, candles15m, candles5m }
 }
 
 export async function getCandles(symbol: string, interval: string = '15m', range: string = '5d'): Promise<Candle[]> {
@@ -93,26 +93,6 @@ export async function getCandles(symbol: string, interval: string = '15m', range
     .filter((c: any) => c.open !== null && c.high !== null && c.low !== null && c.close !== null) as Candle[]
 }
 
-function aggregateTo3mCandles(candles1m: Candle[]): Candle[] {
-  const chunkCount = Math.ceil(candles1m.length / 3)
-  return Array.from({ length: chunkCount }, (_, idx) => candles1m.slice(idx * 3, idx * 3 + 3)).flatMap((chunk) => {
-    const first = chunk[0]
-    const last = chunk[chunk.length - 1]
-    if (!first || !last) return []
-
-    return [
-      {
-        time: first.time,
-        open: first.open,
-        high: Math.max(...chunk.map((c) => c.high)),
-        low: Math.min(...chunk.map((c) => c.low)),
-        close: last.close,
-        volume: chunk.reduce((sum, c) => sum + (c.volume || 0), 0),
-      },
-    ]
-  })
-}
-
 export async function getMultiTimeframeCandles(symbol: string, kc?: KiteConnectInstance) {
   if (kc) {
     try {
@@ -126,14 +106,20 @@ export async function getMultiTimeframeCandles(symbol: string, kc?: KiteConnectI
   const yahooTicker = resolveYahooTicker(symbol)
   console.log(`[Candles] Fetching fallback candles from Yahoo Finance for ${yahooTicker}...`)
 
-  const [candles1d, candles1h, candles30m, candles15m, candles1m] = await Promise.all([
+  const [candles1d, candles1h, candles30m, candles15m, candles5m] = await Promise.all([
     getCandles(yahooTicker, '1d', '60d'),
     getCandles(yahooTicker, '1h', '1mo'),
     getCandles(yahooTicker, '30m', '5d'),
     getCandles(yahooTicker, '15m', '5d'),
-    getCandles(yahooTicker, '1m', '2d'),
+    getCandles(yahooTicker, '5m', '5d').catch(() => []),
   ])
 
-  return { candles1d, candles1h, candles30m, candles15m, candles3m: aggregateTo3mCandles(candles1m) }
+  return {
+    candles1d,
+    candles1h,
+    candles30m,
+    candles15m,
+    candles5m: candles5m && candles5m.length > 0 ? candles5m : candles15m,
+  }
 }
 

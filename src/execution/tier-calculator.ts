@@ -180,3 +180,62 @@ function computeLotSplit(quantity: number, lotSize: number): { t1Qty: number; t2
   const t2Lots = Math.floor((totalLots - t1Lots) / 2)
   return { t1Qty: t1Lots * lotSize, t2Qty: t2Lots * lotSize }
 }
+
+export interface EquityTieredTargetInput {
+  entryPrice: number
+  stopLoss: number
+  quantity: number
+  riskRewardRatio?: number | undefined
+  upperCircuitPrice?: number | undefined
+  aiTargets?: number[] | undefined
+}
+
+function resolveEquityTargetLevels(
+  input: EquityTieredTargetInput,
+  risk: number,
+  circuitLimit: number
+): { t1Target: number; t2Target: number; t3Target: number } {
+  if (input.aiTargets && input.aiTargets.length >= 2 && input.aiTargets[0]! > input.entryPrice) {
+    const t1 = roundToPaise(Math.min(input.aiTargets[0]!, circuitLimit))
+    const t2 = roundToPaise(Math.min(input.aiTargets[1] || t1 + risk * 1.5, circuitLimit))
+    const t3 = roundToPaise(Math.min(input.aiTargets[2] || t2 + risk * 2.0, circuitLimit))
+    return { t1Target: t1, t2Target: t2, t3Target: t3 }
+  }
+
+  return {
+    t1Target: roundToPaise(Math.min(input.entryPrice + 1.2 * risk, circuitLimit)),
+    t2Target: roundToPaise(Math.min(input.entryPrice + 2.0 * risk, circuitLimit)),
+    t3Target: roundToPaise(Math.min(input.entryPrice + 3.0 * risk, circuitLimit)),
+  }
+}
+
+/**
+ * Computes tiered profit targets specifically calibrated for unleveraged cash equities.
+ * Strictly respects SEBI 20% max price capping and circuit boundaries.
+ */
+export function computeEquityTieredTargets(input: EquityTieredTargetInput): TieredTargetResult | null {
+  const { entryPrice, stopLoss, quantity, upperCircuitPrice } = input
+  if (!stopLoss || stopLoss >= entryPrice || entryPrice <= 0) return null
+
+  const risk = entryPrice - stopLoss
+  const circuitLimit = upperCircuitPrice ? upperCircuitPrice * 0.995 : entryPrice * 1.18
+  const { t1Target, t2Target, t3Target } = resolveEquityTargetLevels(input, risk, circuitLimit)
+
+  const t1Qty = Math.floor(quantity * 0.35)
+  const t2Qty = Math.floor(quantity * 0.35)
+
+  console.log(
+    `[TierCalc:Equity] T1=₹${t1Target} (${t1Qty} shares) | T2=₹${t2Target} (${t2Qty} shares) | T3=₹${t3Target} (runner, ceiling: ₹${circuitLimit.toFixed(2)})`
+  )
+
+  return {
+    t1Target,
+    t2Target,
+    t3Target,
+    t1Qty,
+    t2Qty,
+    t1Hit: false,
+    t2Hit: false,
+    strategy: 'AI_WAVE_TARGETS',
+  }
+}

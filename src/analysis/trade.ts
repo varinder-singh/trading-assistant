@@ -43,7 +43,7 @@ export class TradeAnalysisService {
       candles1h: Candle[]
       candles30m?: Candle[]
       candles15m: Candle[]
-      candles3m: Candle[]
+      candles5m?: Candle[]
     },
     userId: string = ''
   ): Promise<TradeTechnicalAnalysis> {
@@ -55,11 +55,11 @@ export class TradeAnalysisService {
       throw new Error('No 15-minute candles found.')
     }
 
-    const { tf1h, tf30m, tf15m, tf3m } = analyzeMultiTimeframe(
+    const { tf1h, tf30m, tf15m, tf5m } = analyzeMultiTimeframe(
       candles.candles1h,
       candles.candles30m || [],
       candles.candles15m,
-      candles.candles3m
+      candles.candles5m
     )
     const dailyContext = analyzeDailyContext(candles.candles1d, candles.candles15m)
     const { quotes, finalOptions, lotSize } = kiteData
@@ -79,7 +79,7 @@ export class TradeAnalysisService {
         tf1h,
         tf30m,
         tf15m,
-        tf3m,
+        tf5m,
         dailyContext,
         vix,
         sentiment: { sentiment: 'neutral', confidence: 1, reason: 'Skipped due to circuit breaker' },
@@ -101,13 +101,13 @@ export class TradeAnalysisService {
       pcr: optionsAnalysisZerodha.pcr,
     })
     tf15m.gtiScore = gtiScore
-    tf3m.gtiScore = gtiScore
+    tf5m.gtiScore = gtiScore
 
     const marketContext: MarketContext = {
       tf1h,
       tf30m,
       tf15m,
-      tf3m,
+      tf5m,
       dailyContext,
       optionsAnalysisZerodha,
       vix,
@@ -121,7 +121,7 @@ export class TradeAnalysisService {
       tf1h,
       tf30m,
       tf15m,
-      tf3m,
+      tf5m,
       dailyContext,
       vix,
       sentiment,
@@ -135,7 +135,7 @@ export class TradeAnalysisService {
         tf1h,
         tf30m,
         tf15m,
-        tf3m,
+        tf5m,
         dailyContext,
         sentiment,
         optionsAnalysisZerodha,
@@ -156,7 +156,7 @@ export class TradeAnalysisService {
           tf1h,
           tf30m,
           tf15m,
-          tf3m,
+          tf5m,
           dailyContext,
           vix,
           sentiment,
@@ -177,7 +177,7 @@ export class TradeAnalysisService {
       tf1h,
       tf30m,
       tf15m,
-      tf3m,
+      tf5m,
       dailyContext,
       aiDecision,
       vix,
@@ -186,7 +186,7 @@ export class TradeAnalysisService {
       candles1h: candles.candles1h.slice(-100),
       candles30m: candles.candles30m ? candles.candles30m.slice(-100) : [],
       candles15m: candles.candles15m.slice(-100),
-      candles3m: candles.candles3m.slice(-100),
+      candles5m: candles.candles5m.slice(-100),
       agentType: (activeAgent || 'SCALPER') as TradingAgentType,
       gtiHistory: gtiTracker.getHistory(0),
       lotSize: lotSize || 1,
@@ -246,7 +246,7 @@ export class TradeAnalysisService {
     tf1h: TradeTechnicalAnalysis['tf1h']
     tf30m: TradeTechnicalAnalysis['tf30m']
     tf15m: TradeTechnicalAnalysis['tf15m']
-    tf3m: TradeTechnicalAnalysis['tf3m']
+    tf5m: TradeTechnicalAnalysis['tf5m']
     dailyContext: TradeTechnicalAnalysis['dailyContext']
     vix: TradeTechnicalAnalysis['vix']
     sentiment: TradeTechnicalAnalysis['sentiment']
@@ -255,7 +255,7 @@ export class TradeAnalysisService {
       candles1h: Candle[]
       candles30m?: Candle[] | undefined
       candles15m: Candle[]
-      candles3m: Candle[]
+      candles5m: Candle[]
     }
     agentType: TradingAgentType
     reason: string
@@ -265,7 +265,7 @@ export class TradeAnalysisService {
       tf1h,
       tf30m,
       tf15m,
-      tf3m,
+      tf5m,
       dailyContext,
       vix,
       sentiment,
@@ -279,7 +279,7 @@ export class TradeAnalysisService {
       tf1h,
       tf30m,
       tf15m,
-      tf3m,
+      tf5m,
       dailyContext,
       vix,
       sentiment,
@@ -287,7 +287,7 @@ export class TradeAnalysisService {
       candles1h: candles.candles1h.slice(-100),
       candles30m: candles.candles30m ? candles.candles30m.slice(-100) : [],
       candles15m: candles.candles15m.slice(-100),
-      candles3m: candles.candles3m.slice(-100),
+      candles5m: candles.candles5m.slice(-100),
       agentType,
       aiDecision: {
         decision: 'NO_TRADE',
@@ -322,26 +322,30 @@ export class TradeAnalysisService {
     tf1h: TradeTechnicalAnalysis['tf1h']
     tf30m: TradeTechnicalAnalysis['tf30m']
     tf15m: TradeTechnicalAnalysis['tf15m']
-    tf3m: TradeTechnicalAnalysis['tf3m']
+    tf5m: TradeTechnicalAnalysis['tf5m']
     dailyContext: TradeTechnicalAnalysis['dailyContext']
     vix: TradeTechnicalAnalysis['vix']
     sentiment: TradeTechnicalAnalysis['sentiment']
     optionsAnalysis: TradeTechnicalAnalysis['optionsAnalysis']
-    candles: { candles1h: Candle[]; candles15m: Candle[]; candles3m: Candle[] }
+    candles: {
+      candles1h: Candle[]
+      candles15m: Candle[]
+      candles5m: Candle[]
+    }
     agentType: TradingAgentType
   }): { bullish: number; bearish: number } {
     const tempAnalysisForScore = {
       tf1h: params.tf1h,
       tf30m: params.tf30m,
       tf15m: params.tf15m,
-      tf3m: params.tf3m,
+      tf5m: params.tf5m,
       dailyContext: params.dailyContext,
       vix: params.vix,
       sentiment: params.sentiment,
       optionsAnalysis: params.optionsAnalysis,
       candles1h: params.candles.candles1h,
       candles15m: params.candles.candles15m,
-      candles3m: params.candles.candles3m,
+      candles5m: params.candles.candles5m,
       agentType: params.agentType,
     } as TradeTechnicalAnalysis
 
@@ -360,7 +364,7 @@ export class TradeAnalysisService {
       candles1h: Candle[]
       candles30m?: Candle[]
       candles15m: Candle[]
-      candles3m: Candle[]
+      candles5m?: Candle[]
     },
     userId: string = ''
   ) {
@@ -368,11 +372,11 @@ export class TradeAnalysisService {
 
     const [candles, vix, kiteData] = await this.fetchPositionEvalInputs(kc, symbol, injectedCandles)
 
-    const { tf1h, tf30m, tf15m, tf3m } = analyzeMultiTimeframe(
+    const { tf1h, tf30m, tf15m, tf5m } = analyzeMultiTimeframe(
       candles.candles1h,
       candles.candles30m || [],
       candles.candles15m,
-      candles.candles3m
+      candles.candles5m
     )
     const dailyContext = analyzeDailyContext(candles.candles1d, candles.candles15m)
 
@@ -383,7 +387,7 @@ export class TradeAnalysisService {
       tf1h,
       tf30m,
       tf15m,
-      tf3m,
+      tf5m,
       dailyContext,
       optionsAnalysisZerodha,
       vix,
@@ -449,12 +453,19 @@ export class TradeAnalysisService {
       candles1h: Candle[]
       candles30m?: Candle[]
       candles15m: Candle[]
-      candles3m: Candle[]
+      candles5m?: Candle[]
     }
   ) {
     if (injectedCandles) {
       const [headlines, vix, kiteData] = await Promise.all([getNews(symbol), getIndiaVix(), getOptionChain(kc, symbol)])
-      return [injectedCandles, headlines, vix, kiteData] as const
+      const candles = {
+        candles1d: injectedCandles.candles1d,
+        candles1h: injectedCandles.candles1h,
+        candles30m: injectedCandles.candles30m || injectedCandles.candles15m,
+        candles15m: injectedCandles.candles15m,
+        candles5m: injectedCandles.candles5m || injectedCandles.candles15m,
+      }
+      return [candles, headlines, vix, kiteData] as const
     }
 
     const [candlesData, headlines, vix, kiteData] = await Promise.all([
@@ -470,7 +481,7 @@ export class TradeAnalysisService {
       candles30m:
         candlesData.candles30m && candlesData.candles30m.length > 0 ? candlesData.candles30m : candlesData.candles15m,
       candles15m: candlesData.candles15m,
-      candles3m: candlesData.candles3m,
+      candles5m: candlesData.candles5m || candlesData.candles15m,
     }
 
     return [candles, headlines, vix, kiteData] as const
@@ -484,10 +495,18 @@ export class TradeAnalysisService {
       candles1h: Candle[]
       candles30m?: Candle[] | undefined
       candles15m: Candle[]
-      candles3m: Candle[]
+      candles5m?: Candle[]
     }
   ) {
-    if (injectedCandles.candles15m.length > 0) return injectedCandles
+    if (injectedCandles.candles15m.length > 0) {
+      return {
+        candles1d: injectedCandles.candles1d,
+        candles1h: injectedCandles.candles1h,
+        candles30m: injectedCandles.candles30m,
+        candles15m: injectedCandles.candles15m,
+        candles5m: injectedCandles.candles5m || injectedCandles.candles15m,
+      }
+    }
 
     console.log(`[Risk Manager] Real-time candles empty for ${symbol}. Falling back to Yahoo baseline.`)
     const macro = await getMultiTimeframeCandles(symbol, kc)
@@ -496,7 +515,7 @@ export class TradeAnalysisService {
       candles1h: injectedCandles.candles1h,
       candles30m: macro.candles30m,
       candles15m: macro.candles15m,
-      candles3m: macro.candles3m,
+      candles5m: macro.candles5m || macro.candles15m,
     }
   }
 
@@ -508,7 +527,7 @@ export class TradeAnalysisService {
       candles1h: Candle[]
       candles30m?: Candle[]
       candles15m: Candle[]
-      candles3m: Candle[]
+      candles5m?: Candle[]
     }
   ) {
     if (injectedCandles) {
@@ -531,7 +550,7 @@ export class TradeAnalysisService {
       candles1h: candlesData.candles1h,
       candles30m: candlesData.candles15m,
       candles15m: candlesData.candles15m,
-      candles3m: candlesData.candles3m,
+      candles5m: candlesData.candles5m || candlesData.candles15m,
     }
 
     return [candles, vix, kiteData] as const
@@ -723,7 +742,7 @@ export const runAnalysis = (
     candles1h: Candle[]
     candles30m?: Candle[]
     candles15m: Candle[]
-    candles3m: Candle[]
+    candles5m?: Candle[]
   },
   userId: string = ''
 ): Promise<TradeTechnicalAnalysis> =>
@@ -738,7 +757,7 @@ export const evaluatePosition = (
     candles1h: Candle[]
     candles30m?: Candle[]
     candles15m: Candle[]
-    candles3m: Candle[]
+    candles5m?: Candle[]
   },
   userId: string = ''
 ) => tradeAnalysisService.evaluatePosition(kc, symbol, openPosition, injectedCandles, userId)

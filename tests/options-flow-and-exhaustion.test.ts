@@ -46,7 +46,7 @@ describe('Options Flow & Compound Anti-Exhaustion Suite', () => {
           gtiScore: { composite: 45, confidence: 50 }, // Severe bullish opposition
           waveContext: { currentPhase: 'WAVE_3' },
         },
-        tf3m: {
+        tf5m: {
           price: 23840,
           vwap: 23845,
           rsi: 55,
@@ -64,7 +64,7 @@ describe('Options Flow & Compound Anti-Exhaustion Suite', () => {
       expect(gates.scalperAllowedActions).not.toContain('BUY_PE') // Scalper still blocked by severe GTI
     })
 
-    it('blocks BUY_CE for TREND agent when 3m RSI > 80 (Micro-Exhaustion Climax)', () => {
+    it('blocks BUY_CE for TREND agent when 5m RSI > 80 (Micro-Exhaustion Climax)', () => {
       const input = {
         symbol: 'NIFTY',
         tf15m: {
@@ -74,10 +74,10 @@ describe('Options Flow & Compound Anti-Exhaustion Suite', () => {
           rsi14: 80.3,
           waveContext: { currentPhase: 'WAVE_3' },
         },
-        tf3m: {
+        tf5m: {
           price: 23746,
           vwap: 23710,
-          rsi: 95.21, // Overheated micro-climax
+          rsi: 95.21,
         },
       }
 
@@ -88,7 +88,7 @@ describe('Options Flow & Compound Anti-Exhaustion Suite', () => {
       expect(gates.blockReasons.some((r) => r.includes('Trend momentum overheated'))).toBe(true)
     })
 
-    it('blocks BUY_CE for TREND agent when Wave 5 terminal phase is detected with elevated 3m RSI', () => {
+    it('blocks BUY_CE for TREND agent when Wave 5 terminal phase is detected with elevated 5m RSI', () => {
       const input = {
         symbol: 'NIFTY',
         tf15m: {
@@ -98,10 +98,10 @@ describe('Options Flow & Compound Anti-Exhaustion Suite', () => {
           rsi14: 72,
           waveContext: { currentPhase: 'WAVE_5' }, // Wave 5 terminal phase
         },
-        tf3m: {
+        tf5m: {
           price: 23746,
           vwap: 23720,
-          rsi: 74, // > 70 in Wave 5
+          rsi: 74,
         },
       }
 
@@ -112,7 +112,7 @@ describe('Options Flow & Compound Anti-Exhaustion Suite', () => {
       expect(gates.blockReasons.some((r) => r.includes('Wave 5'))).toBe(true)
     })
 
-    it('permits BUY_CE for TREND agent during healthy Wave 3 breakout when 3m RSI is healthy', () => {
+    it('permits BUY_CE for TREND agent during healthy Wave 3 breakout when 5m RSI is healthy', () => {
       const input = {
         symbol: 'NIFTY',
         tf15m: {
@@ -122,10 +122,10 @@ describe('Options Flow & Compound Anti-Exhaustion Suite', () => {
           rsi14: 68,
           waveContext: { currentPhase: 'WAVE_3' },
         },
-        tf3m: {
+        tf5m: {
           price: 23820,
           vwap: 23800,
-          rsi: 65, // Healthy momentum, not overheated
+          rsi: 65,
         },
       }
 
@@ -148,7 +148,7 @@ describe('Options Flow & Compound Anti-Exhaustion Suite', () => {
             trailingStyle: 'TIGHT',
             cleanSlateCounterfactual: 'HOLD_ONLY',
             confidence: 85,
-            reason: '3m RSI is high, tightening stop to lock risk.',
+            reason: '5m RSI is high, tightening stop to lock risk.',
           })
         ),
       }

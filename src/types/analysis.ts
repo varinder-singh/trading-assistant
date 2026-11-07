@@ -96,7 +96,7 @@ export type TradeTechnicalAnalysis = {
   tf1h: TechnicalAnalysis
   tf30m: TechnicalAnalysis
   tf15m: TechnicalAnalysis
-  tf3m: TechnicalAnalysis
+  tf5m: TechnicalAnalysis
   dailyContext: DailyContext | null
   aiDecision: AISuccessResponse | undefined
   vix: VixData
@@ -105,7 +105,7 @@ export type TradeTechnicalAnalysis = {
   candles1h: Candle[]
   candles30m: Candle[]
   candles15m: Candle[]
-  candles3m: Candle[]
+  candles5m: Candle[]
   agentType: TradingAgentType
   gtiHistory?: GTICandleData[]
   reversalScore?: {

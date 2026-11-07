@@ -13,7 +13,7 @@ const istDateFormatter = new Intl.DateTimeFormat('en-CA', {
 
 /**
  * Calculates the Opening Range (09:15 AM - 09:45 AM IST) strictly for the latest trading day.
- * Candle timestamps represent bar open times: for 15m/3m bars, start times in ['09:15', '09:45')
+ * Candle timestamps represent bar open times: for 15m/5m bars, start times in ['09:15', '09:45')
  * cover the 09:15–09:45 window without bleeding into the 09:45–10:00 candle or prior days.
  */
 export function calculateORB(candles: Candle[]): OpeningRange | null {

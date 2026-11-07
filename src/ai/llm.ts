@@ -149,12 +149,12 @@ export class LLMService {
     truncateSwings(cleaned.tf1h)
     truncateSwings(cleaned.tf30m)
     truncateSwings(cleaned.tf15m)
-    truncateSwings(cleaned.tf3m)
+    truncateSwings(cleaned.tf5m)
     if (cleaned.marketData) {
       truncateSwings(cleaned.marketData.tf1h)
       truncateSwings(cleaned.marketData.tf30m)
       truncateSwings(cleaned.marketData.tf15m)
-      truncateSwings(cleaned.marketData.tf3m)
+      truncateSwings(cleaned.marketData.tf5m)
     }
 
     // 3. Strip Raw Historical Candles (they consume massive tokens)
@@ -163,7 +163,7 @@ export class LLMService {
       delete obj.candles1h
       delete obj.candles15m
       delete obj.candles30m
-      delete obj.candles3m
+      delete obj.candles5m
       delete obj.candles1d
     }
 

@@ -20,7 +20,7 @@ import { getInstrumentToken } from '../data/kite.js'
 import type { Connect as KiteConnect } from 'kiteconnect'
 import { KiteOrderService } from './kite-orders.js'
 import { getGreeksFromPrice } from '../analysis/greeks.js'
-import { computeTieredTargets } from './tier-calculator.js'
+import { computeTieredTargets, computeEquityTieredTargets } from './tier-calculator.js'
 import { isMarketOpen } from '../utils/market-hours.js'
 import {
   getCalendarDaysToExpiry,
@@ -31,6 +31,8 @@ import {
   isIndexInvalidated,
   isRetractGuardTriggered,
   resolveIndexInvalidation,
+  EQUITY_PROFIT_RATCHET_TIERS,
+  PEAK_PROFIT_RATCHET_TIERS,
   type ExpiryRiskProfile,
 } from './expiry-risk-profile.js'
 
@@ -151,6 +153,8 @@ export class PaperTrader extends EventEmitter {
       unrealizedPnL: 0,
       maxUnrealizedPnL: 0,
       realizedPnL: 0,
+      product: trade.product || 'MIS',
+      assetClass: trade.assetClass || 'INDEX_OPTION',
       timestamp: new Date(trade.openedAt),
     }
     if (trade.strikePrice) pos.strike = Number(trade.strikePrice)
@@ -247,7 +251,7 @@ export class PaperTrader extends EventEmitter {
           candles1h: macro.candles1h,
           candles30m: this.builder.getCandles(underlyingToken || 0, 30),
           candles15m: this.builder.getCandles(underlyingToken || 0, 15),
-          candles3m: this.builder.getCandles(underlyingToken || 0, 3),
+          candles5m: this.builder.getCandles(underlyingToken || 0, 5),
         },
         this.userId
       )
@@ -436,24 +440,33 @@ export class PaperTrader extends EventEmitter {
       timeZone: 'Asia/Kolkata',
       hour12: false,
     })
-    const [hours, minutes] = istTime.split(':').map(Number)
+    const [hoursStr, minutesStr] = istTime.split(':')
+    const hours = Number(hoursStr) || 0
+    const minutes = Number(minutesStr) || 0
 
-    if (hours === 15 && minutes === 25) {
-      const positions = this.getAllPositions()
-      if (positions.length > 0) {
-        console.log(`[EXIT] 15:25 IST - Market Square-off triggered for ${positions.length} positions.`)
-        this.squareOffAll()
-      }
-    }
-
-    if (hours === 15 && minutes === 30) {
-      console.log('[EXIT] 15:30 IST - Market Closed. Emitting shutdown signal.')
-      this.emit('market_close')
-    }
+    this.checkIntradaySquareOff(hours, minutes)
+    this.checkMarketClose(hours, minutes)
   }
 
-  async squareOffAll(reason: string = 'Market Square-off') {
-    await forEachSequentially(this.getAllPositions(), async (pos) => {
+  private checkIntradaySquareOff(hours: number, minutes: number): void {
+    if (hours !== 15 || minutes !== 15) return
+
+    const misPositions = this.getAllPositions().filter((p) => !p.product || p.product === 'MIS')
+    if (misPositions.length === 0) return
+
+    console.log(`[EXIT] 15:15 IST - Closing ${misPositions.length} Intraday (MIS) positions before broker cutoff.`)
+    this.squareOffPositions(misPositions, 'Intraday EOD Square-Off (3:15 PM Rule)')
+  }
+
+  private checkMarketClose(hours: number, minutes: number): void {
+    if (hours !== 15 || minutes !== 30) return
+
+    console.log('[EXIT] 15:30 IST - Market Closed. Emitting shutdown signal.')
+    this.emit('market_close')
+  }
+
+  async squareOffPositions(positions: PaperPosition[], reason: string = 'Market Square-off') {
+    await forEachSequentially(positions, async (pos) => {
       // Re-checked per position: an earlier sell in this loop may change what is already exiting.
       if (this.exitingPositions.has(pos.symbol)) return
 
@@ -463,9 +476,13 @@ export class PaperTrader extends EventEmitter {
         side: 'SELL',
         quantity: pos.quantity,
         price: pos.currentPrice,
-        context: { aiReasoning: reason },
+        context: { aiReasoning: reason, product: pos.product, assetClass: pos.assetClass },
       })
     })
+  }
+
+  async squareOffAll(reason: string = 'Market Square-off') {
+    await this.squareOffPositions(this.getAllPositions(), reason)
   }
 
   async placeOrder(params: {
@@ -694,15 +711,34 @@ export class PaperTrader extends EventEmitter {
     return 1
   }
 
-  private calculateBuyQuantity(params: { context?: TradeContext | undefined }): number {
-    const baseLotSize = params.context?.lotSize || 1
-    const cappedLots = this.resolveCappedDeltaLots(params.context?.optionDelta)
-    const numLots = this.resolveConfidenceAdjustedLots(cappedLots, params.context?.aiConfidence)
-    const qty = baseLotSize * numLots
+  private calculateEquityQuantity(price?: number, context?: TradeContext): number {
+    const riskBudget = Number(process.env.EQUITY_RISK_PER_TRADE || 1500)
+    const entry = price || 1
+    const sl = context?.aiStopLoss || entry * 0.98
+    const slDistance = Math.max(Math.abs(entry - sl), entry * 0.005)
+    const qty = Math.max(1, Math.floor(riskBudget / slDistance))
     console.log(
-      `⚖️ Sizing: ${numLots > 1 ? `Delta=${Math.abs(params.context?.optionDelta || 0).toFixed(2)} -> ` : ''}Buying ${numLots} lot(s) (${qty} qty) with lot size ${baseLotSize}.`
+      `⚖️ [Equity Sizing] Risk Budget: ₹${riskBudget}, SL Distance: ₹${slDistance.toFixed(2)} -> Buying ${qty} shares.`
     )
     return qty
+  }
+
+  private calculateOptionQuantity(context?: TradeContext): number {
+    const baseLotSize = context?.lotSize || 1
+    const cappedLots = this.resolveCappedDeltaLots(context?.optionDelta)
+    const numLots = this.resolveConfidenceAdjustedLots(cappedLots, context?.aiConfidence)
+    const qty = baseLotSize * numLots
+    console.log(
+      `⚖️ Sizing: ${numLots > 1 ? `Delta=${Math.abs(context?.optionDelta || 0).toFixed(2)} -> ` : ''}Buying ${numLots} lot(s) (${qty} qty) with lot size ${baseLotSize}.`
+    )
+    return qty
+  }
+
+  private calculateBuyQuantity(params: { price?: number; context?: TradeContext | undefined }): number {
+    if (params.context?.assetClass === 'EQUITY') {
+      return this.calculateEquityQuantity(params.price, params.context)
+    }
+    return this.calculateOptionQuantity(params.context)
   }
 
   private persistBuyTrade(order: TradeOrder, context?: TradeContext): void {
@@ -715,6 +751,8 @@ export class PaperTrader extends EventEmitter {
         quantity: order.quantity,
         entry_price: order.price!,
         strike_price: order.strike || null,
+        product: context?.product || 'MIS',
+        assetClass: context?.assetClass || 'INDEX_OPTION',
         ai_reasoning: context?.aiReasoning || null,
         ai_confidence: context?.aiConfidence || null,
         vix_level: context?.vixLevel || null,
@@ -864,6 +902,8 @@ export class PaperTrader extends EventEmitter {
     if (context?.strategyContext) pos.strategyContext = context.strategyContext
     if (context?.optionExpiry) pos.optionExpiry = context.optionExpiry
     if (context?.optionDelta) pos.optionDelta = context.optionDelta
+    if (context?.product) pos.product = context.product
+    if (context?.assetClass) pos.assetClass = context.assetClass
     this.applyEntryRiskGuards(pos, context)
     this.applyTieredTargets(pos, order.quantity, context)
     return pos
@@ -872,20 +912,31 @@ export class PaperTrader extends EventEmitter {
   private applyTieredTargets(pos: PaperPosition, orderQuantity: number, context?: TradeContext): void {
     if (!context) return
 
-    const daysToExpiry = pos.optionExpiry
-      ? Math.max(0.001, (this.resolveExpiryCloseTimeMs(pos.optionExpiry) - Date.now()) / (1000 * 60 * 60 * 24))
-      : 2
+    let tiers: any = null
 
-    const tiers = computeTieredTargets({
-      entryPrice: pos.avgEntryPrice,
-      aiStopLoss: pos.aiStopLoss!,
-      optionDelta: pos.optionDelta || context.optionDelta || 0.01,
-      daysToExpiry,
-      quantity: orderQuantity || 65,
-      lotSize: context.lotSize || 1,
-      ...(context.aiIndexTargets?.length ? { aiIndexTargets: context.aiIndexTargets } : {}),
-      ...(context.currentIndexPrice ? { currentIndexPrice: context.currentIndexPrice } : {}),
-    })
+    if (pos.assetClass === 'EQUITY') {
+      tiers = computeEquityTieredTargets({
+        entryPrice: pos.avgEntryPrice,
+        stopLoss: pos.aiStopLoss!,
+        quantity: orderQuantity,
+        aiTargets: context.aiIndexTargets,
+      })
+    } else {
+      const daysToExpiry = pos.optionExpiry
+        ? Math.max(0.001, (this.resolveExpiryCloseTimeMs(pos.optionExpiry) - Date.now()) / (1000 * 60 * 60 * 24))
+        : 2
+
+      tiers = computeTieredTargets({
+        entryPrice: pos.avgEntryPrice,
+        aiStopLoss: pos.aiStopLoss!,
+        optionDelta: pos.optionDelta || context.optionDelta || 0.01,
+        daysToExpiry,
+        quantity: orderQuantity || 65,
+        lotSize: context.lotSize || 1,
+        ...(context.aiIndexTargets?.length ? { aiIndexTargets: context.aiIndexTargets } : {}),
+        ...(context.currentIndexPrice ? { currentIndexPrice: context.currentIndexPrice } : {}),
+      })
+    }
 
     if (!tiers) return
 
@@ -1224,7 +1275,8 @@ export class PaperTrader extends EventEmitter {
   private async processPriceTickExits(symbol: string, pos: PaperPosition, price: number): Promise<void> {
     const entryPrice = pos.avgEntryPrice
     const peakPrice = pos.peakPrice ?? pos.currentPrice
-    const ratchet = getRatchetedStopLoss(entryPrice, peakPrice)
+    const tiers = pos.assetClass === 'EQUITY' ? EQUITY_PROFIT_RATCHET_TIERS : PEAK_PROFIT_RATCHET_TIERS
+    const ratchet = getRatchetedStopLoss(entryPrice, peakPrice, tiers)
 
     if (ratchet && (pos.aiStopLoss === undefined || ratchet.targetSl > pos.aiStopLoss)) {
       const { targetSl, peakGainPct } = ratchet

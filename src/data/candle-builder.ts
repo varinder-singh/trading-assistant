@@ -3,7 +3,7 @@ import { getIntradayBaseline } from './kite-historical.js'
 
 export class CandleBuilder extends EventEmitter {
   private candles: Map<number, Map<number, any[]>> = new Map()
-  private timeframes = [1, 3, 15, 30]
+  private timeframes = [1, 5, 15, 30, 60]
 
   public isSeeded(token: number): boolean {
     return (this.candles.get(token)?.size ?? 0) > 0
@@ -20,16 +20,18 @@ export class CandleBuilder extends EventEmitter {
 
     console.log(`📊 Seeding CandleBuilder for token ${token}...`)
     try {
-      const [c1m, c3m, c15m, c30m] = await Promise.all([
+      const [c1m, c5m, c15m, c30m, c60m] = await Promise.all([
         getIntradayBaseline(kc, token, 'minute', 2),
-        getIntradayBaseline(kc, token, '3minute', 5),
+        getIntradayBaseline(kc, token, '5minute', 5),
         getIntradayBaseline(kc, token, '15minute', 5),
         getIntradayBaseline(kc, token, '30minute', 5),
+        getIntradayBaseline(kc, token, '60minute', 10),
       ])
       this.seed(token, 1, c1m)
-      this.seed(token, 3, c3m)
+      this.seed(token, 5, c5m)
       this.seed(token, 15, c15m)
       this.seed(token, 30, c30m)
+      this.seed(token, 60, c60m)
       console.log(`✅ CandleBuilder seeded for token ${token}.`)
     } catch (err) {
       console.error(`❌ Failed to seed CandleBuilder for token ${token}:`, err)

@@ -1,4 +1,4 @@
-import type { TradeTechnicalAnalysis } from '../types/analysis.js'
+import type { TradeTechnicalAnalysis, Candle } from '../types/analysis.js'
 
 export interface ReversalScoreResult {
   score: number
@@ -14,8 +14,10 @@ export interface ReversalScoreResult {
 
 export class ReversalScoreCalculator {
   public calculate(analysis: TradeTechnicalAnalysis, direction: 'BULLISH' | 'BEARISH'): ReversalScoreResult {
-    const { tf3m, tf15m, optionsAnalysis, dailyContext, candles3m } = analysis
-    const currentPrice = tf3m.price
+    const triggerTf = analysis.tf5m
+    const triggerCandles = analysis.candles5m
+    const { tf15m, optionsAnalysis, dailyContext } = analysis
+    const currentPrice = triggerTf.price
     const tolerance = currentPrice * 0.001
 
     const optionsDefense =
@@ -27,13 +29,13 @@ export class ReversalScoreCalculator {
           optionsAnalysis.marketFlow === 'SHORT_BUILDUP' ||
           optionsAnalysis.marketFlow === 'LONG_UNWINDING'
 
-    const vwapInteraction = Math.abs(currentPrice - tf3m.vwap) < tolerance
+    const vwapInteraction = Math.abs(currentPrice - triggerTf.vwap) < tolerance
 
-    const volumeClimax = this.isVolumeClimax(candles3m)
+    const volumeClimax = this.isVolumeClimax(triggerCandles)
 
     const structuralLevel = this.isNearStructure(direction, currentPrice, tolerance, tf15m, dailyContext)
 
-    const institutionalFlow = this.isInstitutionalFlowAligned(direction, tf3m.gtiScore || tf15m.gtiScore)
+    const institutionalFlow = this.isInstitutionalFlowAligned(direction, triggerTf.gtiScore || tf15m.gtiScore)
 
     const breakdown = {
       optionsDefense,
@@ -48,10 +50,10 @@ export class ReversalScoreCalculator {
     return { score, maxScore: 5, breakdown }
   }
 
-  private isVolumeClimax(candles3m: TradeTechnicalAnalysis['candles3m']): boolean {
-    if (candles3m.length < 2) return false
-    const currentCandle = candles3m[candles3m.length - 1]
-    const avgVolume = candles3m.slice(0, -1).reduce((sum, c) => sum + c.volume, 0) / (candles3m.length - 1)
+  private isVolumeClimax(candles: Candle[]): boolean {
+    if (candles.length < 2) return false
+    const currentCandle = candles[candles.length - 1]
+    const avgVolume = candles.slice(0, -1).reduce((sum, c) => sum + c.volume, 0) / (candles.length - 1)
     return !!(currentCandle && currentCandle.volume > avgVolume * 1.5)
   }
 
@@ -75,7 +77,7 @@ export class ReversalScoreCalculator {
 
   private isInstitutionalFlowAligned(
     direction: 'BULLISH' | 'BEARISH',
-    gti?: TradeTechnicalAnalysis['tf3m']['gtiScore']
+    gti?: TradeTechnicalAnalysis['tf5m']['gtiScore']
   ): boolean {
     if (!gti) return false
     return direction === 'BULLISH' ? gti.composite > 0.3 : gti.composite < -0.3

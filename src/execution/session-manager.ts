@@ -12,6 +12,8 @@ import type { Connect as KiteConnect } from 'kiteconnect'
 import type { AIMacroTrend, TradingAgentType } from '../ai/types.js'
 import { getCalendarDaysToExpiry, getExpiryRiskProfile } from './expiry-risk-profile.js'
 import type { PendingTriggerOrder, TradeContext } from './types.js'
+import { globalKiteScanner } from '../data/kite-scanner.js'
+import { equityAnalysisService } from '../analysis/equity-analysis.js'
 
 /**
  * Fix 1: Calculate pre-breakout baseline option price adjusted for directional index spike.
@@ -126,6 +128,7 @@ export class UserSession extends EventEmitter {
   private isAnalyzing: boolean = false
   private lastDecision: any = null
   private candleCloseHandler: ((data: any) => void) | null = null
+  private screenerInterval: NodeJS.Timeout | null = null
 
   constructor(userId: string, accessToken: string, apiKey?: string, tradeMode: 'PAPER' | 'REAL' = 'PAPER') {
     super()
@@ -471,10 +474,11 @@ export class UserSession extends EventEmitter {
         this.paperTrader.updatePrice(tick.instrument_token, tick.last_price)
       })
 
-      // 2. Feed global CandleBuilder and GTI Tracker (moved from ClientConnection)
+      // 2. Feed global CandleBuilder, GTI Tracker, and KiteScanner
       ticks.forEach((tick) => {
         candleBuilder.addTick(tick)
         gtiTracker.addTick(tick)
+        globalKiteScanner.processTick(tick)
       })
 
       // 3. Feed LiveAnalyzer and PaperTrader index price monitor with watched symbol tick
@@ -512,8 +516,24 @@ export class UserSession extends EventEmitter {
         this.ticker.setMode(this.ticker.modeFull, [this.watchedToken])
       }
 
+      // Subscribe screener tokens in modeQuote (lightweight multi-asset stream)
+      const screenerTokens = globalKiteScanner.getTokens()
+      if (screenerTokens.length > 0) {
+        this.ticker.subscribe(screenerTokens)
+        this.ticker.setMode(this.ticker.modeQuote, screenerTokens)
+      }
+
       this.emit('connect')
     })
+
+    // Throttled UI screener snapshot updates (every 1.5s)
+    if (this.screenerInterval) clearInterval(this.screenerInterval)
+    this.screenerInterval = setInterval(() => {
+      this.emit('screener_update', globalKiteScanner.getScreenerSnapshot())
+    }, 1500)
+
+    // Listen to autonomous candidate alerts from KiteScanner
+    globalKiteScanner.on('candidate_surfaced', this.onCandidateSurfaced)
 
     this.ticker.on('error', (err: any) => {
       console.error(`[UserSession] Ticker error for user ${this.userId}:`, err)
@@ -534,7 +554,7 @@ export class UserSession extends EventEmitter {
       // Update LiveAnalyzer with fresh GTI score and structural candle events
       if (this.analyzer) {
         this.analyzer.updateGTI(gtiScore)
-        if (timeframe === 3 || timeframe === 5) {
+        if (timeframe === 5) {
           const recentCandles = candleBuilder.getCandles(token, timeframe).slice(-6)
           this.analyzer.checkCandleClose(candle, timeframe, recentCandles)
         }
@@ -571,6 +591,89 @@ export class UserSession extends EventEmitter {
       candleBuilder.off('candle_close', this.candleCloseHandler)
       this.candleCloseHandler = null
     }
+
+    if (this.screenerInterval) {
+      clearInterval(this.screenerInterval)
+      this.screenerInterval = null
+    }
+    globalKiteScanner.off('candidate_surfaced', this.onCandidateSurfaced)
+  }
+
+  private onCandidateSurfaced = async (candidate: any) => {
+    if (this.tokenExpired || !isMarketOpen()) return
+
+    try {
+      const profile = await userRepo.getUserProfileByUserId(this.userId)
+      const allowedUniverses = profile?.allowedUniverses || 'INDEX_OPTIONS,EQUITY,STOCK_OPTIONS'
+      const allowsEquity = allowedUniverses.includes('EQUITY')
+      const allowsStockOptions = allowedUniverses.includes('STOCK_OPTIONS')
+      if (!allowsEquity && !allowsStockOptions) return
+
+      this.emit('candidate_alert', candidate)
+      const result = await equityAnalysisService.analyzeCandidate(this.kc, candidate.symbol, {
+        stockOptionPreference: profile?.stockOptionPreference || 'PREFER_OPTIONS_IF_LISTED',
+        equityHoldingMode: (profile?.equityHoldingMode as 'MIS' | 'CNC') || 'MIS',
+        equityRiskPerTrade: Number(profile?.equityRiskPerTrade) || 1500,
+      })
+
+      if (result.decision.decision !== 'BUY' || result.decision.action === 'NONE') return
+
+      if (result.assetClass === 'EQUITY' && allowsEquity) {
+        await this.executeSurfacedEquityOrder(candidate, result.decision)
+      } else if (result.assetClass === 'STOCK_OPTION' && allowsStockOptions && result.optionDetails) {
+        await this.executeSurfacedOptionOrder(result.optionDetails, result.decision)
+      }
+    } catch (err: any) {
+      console.error(`[UserSession] Error handling candidate ${candidate.symbol}:`, err.message || err)
+    }
+  }
+
+  private async executeSurfacedEquityOrder(candidate: any, decision: any): Promise<void> {
+    console.log(`[UserSession] Executing Equity Trade for ${candidate.symbol} (${decision.holdingMode})...`)
+    await this.paperTrader.placeOrder({
+      symbol: candidate.symbol,
+      token: candidate.token,
+      side: 'BUY',
+      quantity: 1,
+      price: decision.entryPrice,
+      context: {
+        assetClass: 'EQUITY',
+        product: decision.holdingMode,
+        aiReasoning: decision.reason,
+        aiConfidence: decision.confidence,
+        aiStopLoss: decision.stopLoss,
+        aiTarget: decision.targets[0],
+        aiIndexTargets: decision.targets,
+      },
+    })
+  }
+
+  private async executeSurfacedOptionOrder(option: any, decision: any): Promise<void> {
+    console.log(`[UserSession] Executing Stock Option Trade for ${option.symbol}...`)
+    this.ticker.subscribe([option.token])
+    this.ticker.setMode(this.ticker.modeFull, [option.token])
+
+    const quote = await this.kc.getQuote([`NFO:${option.symbol}`])
+    const entryPrice = quote[`NFO:${option.symbol}`]?.last_price || 0
+    if (entryPrice <= 0) return
+
+    await this.paperTrader.placeOrder({
+      symbol: option.symbol,
+      token: option.token,
+      strike: decision.strike || undefined,
+      side: 'BUY',
+      quantity: 1,
+      price: entryPrice,
+      context: {
+        assetClass: 'STOCK_OPTION',
+        product: 'MIS',
+        aiReasoning: decision.reason,
+        aiConfidence: decision.confidence,
+        aiStrike: decision.strike || undefined,
+        aiStopLoss: Number((entryPrice * 0.75).toFixed(2)),
+        aiTarget: Number((entryPrice * 1.35).toFixed(2)),
+      },
+    })
   }
 
   updateToken(accessToken: string, apiKey?: string) {

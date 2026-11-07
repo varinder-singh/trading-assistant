@@ -21,6 +21,8 @@ export interface NewPaperTradeInput {
   setup?: string | null
   strategy_context?: string | null
   agentType?: string | null
+  product?: 'MIS' | 'CNC' | string | null
+  assetClass?: 'INDEX_OPTION' | 'EQUITY' | 'STOCK_OPTION' | string | null
 }
 
 export class TradeRepository {
@@ -46,6 +48,8 @@ export class TradeRepository {
         entryPrice: String(trade.entry_price),
         exitPrice: null,
         pnl: null,
+        product: trade.product || 'MIS',
+        assetClass: trade.assetClass || 'INDEX_OPTION',
         openedAt: now,
         closedAt: null,
         createdAt: now,

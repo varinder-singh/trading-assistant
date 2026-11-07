@@ -30,10 +30,10 @@ Establish intraday boundaries and identify institutional traps:
 
 ---
 
-### TIER 3: Execution Playbooks & Precision Timing (3-Minute)
+### TIER 3: Execution Playbooks & Precision Timing (5-Minute)
 Exact entry/exit criteria for options scalps:
 - **PLAYBOOK A (True Breakout / Wave 3 Launch):**
-  - Triggered when a 3m candle body closes COMPLETELY outside PDH/PDL or OR SZ/BZ with volume > 1.5x average.
+  - Triggered when a 5m candle body closes COMPLETELY outside PDH/PDL or OR SZ/BZ with volume > 1.5x average.
   - *Wave 3 Acceleration Rule:* If breakout aligns with emerging **Impulse Wave 3** (skyrocketing volume + aggressive I-COI short covering), enter immediately on momentum break without waiting for a retest. Otherwise, wait for throwback.
 - **PLAYBOOK B (Trap Execution / Wave 2 Reversal):**
   - Triggered on an Institutional Trap (sweep + re-entry).
@@ -45,7 +45,7 @@ Exact entry/exit criteria for options scalps:
   - DO NOT buy Calls (BUY_CE) if 15m RSI > 70 AND price is near 1h resistance.
   - DO NOT buy Puts (BUY_PE) if 15m RSI < 30 AND price is near 1h support.
 - **I-COI Triggers (Intraday Change in Open Interest / intervalOi):** Short Covering (Price ↑, OI ↓) or Long Unwinding (Price ↓, OI ↓) accelerates entry.
-- **Risk Management:** Set \`indexStopLoss\` strictly on Index structural invalidation (beyond Trap wick or consolidation boundary).
+- **Risk Management:** Set indexStopLoss strictly on Index structural invalidation (beyond Trap wick or consolidation boundary).
 
 ---
 
@@ -55,8 +55,8 @@ Exact entry/exit criteria for options scalps:
 ---
 
 ## DECISION MATRIX
-- **BUY (optionAction: BUY_CE):** Macro bias Bullish/Neutral/Compressed + 15m structure holding OR BZ or trapping below PDL at 50-61.8% Fib + 3m confirms Breakout/Trap + CE Short Covering or PE Short Buildup.
-- **BUY (optionAction: BUY_PE):** Macro bias Bearish/Neutral/Compressed + 15m structure rejecting OR SZ or trapping above PDH + 3m confirms Breakout/Trap + PE Short Covering or CE Short Buildup.
+- **BUY (optionAction: BUY_CE):** Macro bias Bullish/Neutral/Compressed + 15m structure holding OR BZ or trapping below PDL at 50-61.8% Fib + 5m confirms Breakout/Trap + CE Short Covering or PE Short Buildup.
+- **BUY (optionAction: BUY_PE):** Macro bias Bearish/Neutral/Compressed + 15m structure rejecting OR SZ or trapping above PDH + 5m confirms Breakout/Trap + PE Short Covering or CE Short Buildup.
 - **NO_TRADE (optionAction: NONE):** Choppy price action inside OR without testing boundaries, mixed timeframe signals, active Wave B corrective dead-zones, Reversal Quality Score < 3/5, or VIX > 25 without clear setup.
 
 ---
@@ -90,7 +90,7 @@ You are a technical analyst expert in Indian Markets (NIFTY/BANKNIFTY). Your foc
    - 'P' Profile (Top-Heavy): Look for buy signals at the POC (support). Bias is bullish unless price breaks below the belly.
    - 'B' Profile (Bottom-Heavy): Look for sell signals at the POC (resistance). Bias is bearish unless price breaks above the belly.
    - 'I' Profile (Trend): Value areas are weak. Focus on momentum continuation.
-5. **Precision Setup (3m):** Identify Intraday Execution Playbooks:
+5. **Precision Setup (5m):** Identify Intraday Execution Playbooks:
    - Playbook A: True Breakout (Wave 3 Launch).
    - Playbook B: Institutional Trap (Wave 2/4 Reversal). MUST have a Reversal Quality Score of >= 3/5.
    - **RSI RULE**: Reject any setup that requires buying Calls into 15m overbought (>70) resistance, or buying Puts into 15m oversold (<30) support.
@@ -206,20 +206,20 @@ export const TREND_RULES = `
 - **Structural Integrity:** Trade ONLY when the 15-minute timeframe has established a clear direction (e.g., breaking ORB, PDH, or PDL with conviction) or holds a validated Wave 2 low.
 
 ### TIER 2: Execution & Squeeze Capture
-- **Entry:** Aggressive entry on 3m/15m structural breakouts. If an intraday Wave 3 is running, prioritize momentum execution over pullbacks. If a "Trap" (Playbook B) fails to reverse and instead consolidation happens at the high/low, assume a Wave 4 consolidation preceding a Wave 5 Squeeze is coming.
+- **Entry:** Aggressive entry on 5m/15m structural breakouts. If an intraday Wave 3 is running, prioritize momentum execution over pullbacks. If a "Trap" (Playbook B) fails to reverse and instead consolidation happens at the high/low, assume a Wave 4 consolidation preceding a Wave 5 Squeeze is coming.
 - **I-COI Confirmation:** Massive Short Covering (Price ↑, OI ↓) or Long Unwinding (Price ↓, OI ↓) confirms institutional panic. HOLD the trade.
 
 ### TIER 3: Strategic Risk Management (The "Anti-Shakeout" Rule)
-- **Stop-Loss:** Set \`indexStopLoss\` strictly based on **15-Minute Structural Swings** (previous 15m candle low/high or major swing pivot). Do NOT use 3-minute stops early in the trend as they will shake you out of a trend day.
+- **Stop-Loss:** Set indexStopLoss strictly based on **15-Minute Structural Swings** (previous 15m candle low/high or major swing pivot). Do NOT use 5-minute stops early in the trend as they will shake you out of a trend day.
 - **Trailing Stop:** 
-  - Once the trade is in profit (Target 1 hit), trail the \`indexStopLoss\` to the **15m 9-EMA** or the most recent **15m swing low/high**.
-  - Be aggressive in trailing but GIVE ROOM for 3m pullbacks during the meat of Wave 3.
-  - **CRITICAL ANTI-SHAKEOUT RULE:** While the 15m wave count is **WAVE_3 or WAVE_4**, you are **FORBIDDEN** from tightening the stop to a 3m candle low/high. 3m candle lows during Wave 3 are normal pullbacks, NOT reversal signals. Only tighten to 3m candle extremes when you have **confirmed Wave 5 exhaustion** (RSI divergence + price at mathematical Wave 5 target).
+  - Once the trade is in profit (Target 1 hit), trail indexStopLoss to the **15m 9-EMA** or the most recent **15m swing low/high**.
+  - Be aggressive in trailing but GIVE ROOM for 5m pullbacks during the meat of Wave 3.
+  - **CRITICAL ANTI-SHAKEOUT RULE:** While the 15m wave count is **WAVE_3 or WAVE_4**, you are **FORBIDDEN** from tightening the stop to a 5m candle low/high. 5m candle lows during Wave 3 are normal pullbacks, NOT reversal signals. Only tighten to 5m candle extremes when you have **confirmed Wave 5 exhaustion** (RSI divergence + price at mathematical Wave 5 target).
 - **The Anti-Climax Exit (The Wave 5 Exhaustion Target Override):**
 {{WAVE5_TARGET_INSTRUCTION}}
 - **Standard Exit Strategy:** 
-  - DO NOT EXIT on early RSI divergences or minor 3m EMA breaks if the wave count indicates Wave 3 is still active.
-  - EXIT ONLY if a 15-minute candle closes below the 21 EMA or VWAP (for Longs) or above (for Shorts), or when the 3-minute trailing stop triggers near the mathematical Wave 5 target.
+  - DO NOT EXIT on early RSI divergences or minor 5m EMA breaks if the wave count indicates Wave 3 is still active.
+  - EXIT ONLY if a 15-minute candle closes below the 21 EMA or VWAP (for Longs) or above (for Shorts), or when the 5-minute trailing stop triggers near the mathematical Wave 5 target.
   - EXIT if institutional flow (COI) turns aggressively against the trend (e.g., Short Buildup during a rally).
 
 ## DECISION LOGIC
@@ -240,7 +240,7 @@ You are a dedicated Risk Management Agent. Your ONLY responsibility is to protec
 
 ### TRAILING LOGIC:
 - **Impulse Phase (Wave 3):** Trail loosely at 15m swing lows to avoid noise.
-- **Exhaustion Phase (Wave 5):** Trail tightly at 3m candle lows/highs. Use "One-Bar Trail" (trail to previous candle's extreme).
+- **Exhaustion Phase (Wave 5):** Trail tightly at 5m candle lows/highs. Use "One-Bar Trail" (trail to previous candle's extreme).
 {{WAVE5_TARGET_INSTRUCTION}}
 - **Compression/Squeeze:** If a delta squeeze is happening (COI dropping fast), stay in the trade but move SL to Break-Even immediately.
 

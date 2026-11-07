@@ -8,7 +8,15 @@ export class UserRepository {
   public async getUserProfileByUserId(userId: string) {
     return this.db
       .selectFrom('profiles')
-      .select(['tradeMode', 'watchedSymbol', 'watchedMode'])
+      .select([
+        'tradeMode',
+        'watchedSymbol',
+        'watchedMode',
+        'allowedUniverses',
+        'stockOptionPreference',
+        'equityHoldingMode',
+        'equityRiskPerTrade',
+      ])
       .where('id', '=', userId)
       .executeTakeFirst()
   }
@@ -34,6 +42,33 @@ export class UserRepository {
     await this.db
       .updateTable('profiles')
       .set({ watchedSymbol: symbol, watchedMode: mode })
+      .where('id', '=', userId)
+      .execute()
+  }
+
+  public async updateUniversePreferences(
+    userId: string,
+    preferences: {
+      allowedUniverses?: string
+      stockOptionPreference?: string
+      equityHoldingMode?: string
+      equityRiskPerTrade?: number
+    }
+  ) {
+    await this.db
+      .updateTable('profiles')
+      .set({
+        ...(preferences.allowedUniverses !== undefined ? { allowedUniverses: preferences.allowedUniverses } : {}),
+        ...(preferences.stockOptionPreference !== undefined
+          ? { stockOptionPreference: preferences.stockOptionPreference }
+          : {}),
+        ...(preferences.equityHoldingMode !== undefined
+          ? { equityHoldingMode: preferences.equityHoldingMode }
+          : {}),
+        ...(preferences.equityRiskPerTrade !== undefined
+          ? { equityRiskPerTrade: preferences.equityRiskPerTrade.toString() }
+          : {}),
+      })
       .where('id', '=', userId)
       .execute()
   }
