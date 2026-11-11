@@ -4,6 +4,8 @@ import { TradeRepository } from './trade-repo.js'
 import { GtiRepository } from './gti-repo.js'
 import { EventRepository } from './event-repo.js'
 import { IvHistoryRepo } from './iv-history.js'
+import { ScannerAlertRepository } from './scanner-alert-repo.js'
+import { AnalysisSnapshotRepository } from './analysis-snapshot-repo.js'
 
 // Composition Root: Instantiate and wire up repositories with their dependencies
 export const userRepo = new UserRepository(db)
@@ -11,3 +13,5 @@ export const tradeRepo = new TradeRepository(db)
 export const gtiRepo = new GtiRepository(db)
 export const eventRepo = new EventRepository(db)
 export const ivHistoryRepo = new IvHistoryRepo(db)
+export const scannerAlertRepo = new ScannerAlertRepository(db)
+export const analysisSnapshotRepo = new AnalysisSnapshotRepository(db)

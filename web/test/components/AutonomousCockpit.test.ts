@@ -6,32 +6,34 @@ describe('AutonomousCockpit.vue', () => {
   it('renders all 4 major sections (Header, HUD, Main, Dock)', () => {
     const wrapper = mount(AutonomousCockpit, {
       props: {
-        symbol: 'NIFTY 50',
-        livePrice: 24185.4,
-        dailyPnl: 4850,
+        symbol: 'NIFTY',
+        livePrice: 25030.35,
+        dailyPnl: 0,
+        isMarketOpen: false,
+        marketStatusMessage: 'Market is Closed',
+        tradeHistory: [],
       },
     })
 
     expect(wrapper.text()).toContain('AEGIS')
     expect(wrapper.text()).toContain('Autonomous Trading Cockpit')
-    expect(wrapper.text()).toContain('MAS PIPELINE:')
-    expect(wrapper.text()).toContain('INTRADAY LIVE EXECUTION')
-    expect(wrapper.text()).toContain('Agent Council (MAS)')
-    expect(wrapper.text()).toContain('ACTIVE POSITIONS')
+    expect(wrapper.text()).toContain('NIFTY')
+    expect(wrapper.text()).toContain('25,030.35')
+    expect(wrapper.text()).toContain('EOD MISSION DEBRIEF:')
+    expect(wrapper.text()).toContain("TODAY'S CLOSED TRADES & FORENSIC LOGS (0)")
   })
 
-  it('switches to closed market mode and updates titles accordingly', async () => {
+  it('switches to open market mode when toggle is clicked', async () => {
     const wrapper = mount(AutonomousCockpit, {
       props: {
         isMarketOpen: false,
       },
     })
 
-    const closedBtn = wrapper.find('[data-test="state-closed-btn"]')
-    await closedBtn.trigger('click')
+    const openBtn = wrapper.find('[data-test="state-open-btn"]')
+    await openBtn.trigger('click')
 
-    expect(wrapper.text()).toContain('EOD MISSION DEBRIEF:')
-    expect(wrapper.text()).toContain('EOD FULL-DAY TRAJECTORY REPLAY')
-    expect(wrapper.text()).toContain("Tomorrow's Plan")
+    expect(wrapper.text()).toContain('MAS PIPELINE:')
+    expect(wrapper.text()).toContain('INTRADAY LIVE EXECUTION')
   })
 })

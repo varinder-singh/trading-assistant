@@ -6,7 +6,7 @@ import { LiveAnalyzer, type AnalysisLevels } from '../analysis/live.js'
 import { candleBuilder } from '../data/candle-builder.js'
 import { gtiTracker } from '../indicators/gti-tracker.js'
 import { runAnalysis } from '../analysis/trade.js'
-import { eventRepo, gtiRepo, userRepo } from '../db/repositories/container.js'
+import { eventRepo, gtiRepo, userRepo, scannerAlertRepo, analysisSnapshotRepo } from '../db/repositories/container.js'
 import { isMarketOpen } from '../utils/market-hours.js'
 import type { Connect as KiteConnect } from 'kiteconnect'
 import type { AIMacroTrend, TradingAgentType } from '../ai/types.js'
@@ -14,6 +14,8 @@ import { getCalendarDaysToExpiry, getExpiryRiskProfile } from './expiry-risk-pro
 import type { PendingTriggerOrder, TradeContext } from './types.js'
 import { globalKiteScanner } from '../data/kite-scanner.js'
 import { equityAnalysisService } from '../analysis/equity-analysis.js'
+import { universeBootstrapper } from '../data/universe-bootstrapper.js'
+import { analysisQueue } from './analysis-queue.js'
 
 /**
  * Fix 1: Calculate pre-breakout baseline option price adjusted for directional index spike.
@@ -145,6 +147,7 @@ export class UserSession extends EventEmitter {
   async initialize() {
     await this.paperTrader.initialize()
     this.setupTickerListeners()
+    await universeBootstrapper.bootstrapScannerUniverse(this.kc)
     this.ticker.connect()
     await this.autoWatch()
   }
@@ -257,6 +260,36 @@ export class UserSession extends EventEmitter {
       )
       this.lastDecision = analysisResult.aiDecision
       this.emit('analysis', analysisResult)
+
+      try {
+        const tradingDate = new Date().toISOString().split('T')[0]!
+        await analysisSnapshotRepo.saveSnapshot({
+          userId: this.userId,
+          symbol: this.watchedSymbol,
+          timeframe: '15m',
+          support: analysisResult.tf15m?.support,
+          resistance: analysisResult.tf15m?.resistance,
+          vwap: analysisResult.tf15m?.vwap,
+          atr: analysisResult.tf15m?.atr14,
+          levels: {
+            support: analysisResult.tf15m?.support,
+            resistance: analysisResult.tf15m?.resistance,
+            vwap: analysisResult.tf15m?.vwap,
+            orb: analysisResult.tf15m?.openingRange,
+            daily: analysisResult.dailyContext,
+          },
+          decision: analysisResult.aiDecision,
+          agentDeliberations: {
+            agentType: analysisResult.agentType,
+            vix: analysisResult.vix,
+            sentiment: analysisResult.sentiment,
+            macroTrend: analysisResult.tf1h?.trend || analysisResult.aiDecision?.macroTrend || 'NEUTRAL',
+          },
+          tradingDate,
+        })
+      } catch (snapErr) {
+        console.warn(`[UserSession] Failed to persist snapshot for ${this.watchedSymbol}:`, snapErr)
+      }
 
       // Dynamically update analyzer levels and last analysis price
       if (this.analyzer) {
@@ -519,8 +552,11 @@ export class UserSession extends EventEmitter {
       // Subscribe screener tokens in modeQuote (lightweight multi-asset stream)
       const screenerTokens = globalKiteScanner.getTokens()
       if (screenerTokens.length > 0) {
-        this.ticker.subscribe(screenerTokens)
-        this.ticker.setMode(this.ticker.modeQuote, screenerTokens)
+        for (let i = 0; i < screenerTokens.length; i += 100) {
+          const chunk = screenerTokens.slice(i, i + 100)
+          this.ticker.subscribe(chunk)
+          this.ticker.setMode(this.ticker.modeQuote, chunk)
+        }
       }
 
       this.emit('connect')
@@ -609,20 +645,72 @@ export class UserSession extends EventEmitter {
       const allowsStockOptions = allowedUniverses.includes('STOCK_OPTIONS')
       if (!allowsEquity && !allowsStockOptions) return
 
-      this.emit('candidate_alert', candidate)
-      const result = await equityAnalysisService.analyzeCandidate(this.kc, candidate.symbol, {
-        stockOptionPreference: profile?.stockOptionPreference || 'PREFER_OPTIONS_IF_LISTED',
-        equityHoldingMode: (profile?.equityHoldingMode as 'MIS' | 'CNC') || 'MIS',
-        equityRiskPerTrade: Number(profile?.equityRiskPerTrade) || 1500,
+      const tradingDate = new Date().toISOString().split('T')[0]!
+      const alertId = await scannerAlertRepo.saveAlert({
+        symbol: candidate.symbol,
+        token: candidate.token,
+        price: candidate.price,
+        atp: candidate.atp,
+        volumeSurgeRatio: candidate.volumeSurgeRatio,
+        changePct: candidate.changePct,
+        obi: candidate.obi,
+        priorityScore: candidate.priorityScore,
+        status: 'PENDING',
+        tradingDate,
+        metadata: { isFnoListed: candidate.isFnoListed },
       })
+      candidate.id = alertId
 
-      if (result.decision.decision !== 'BUY' || result.decision.action === 'NONE') return
+      this.emit('candidate_alert', candidate)
 
-      if (result.assetClass === 'EQUITY' && allowsEquity) {
-        await this.executeSurfacedEquityOrder(candidate, result.decision)
-      } else if (result.assetClass === 'STOCK_OPTION' && allowsStockOptions && result.optionDetails) {
-        await this.executeSurfacedOptionOrder(result.optionDetails, result.decision)
-      }
+      analysisQueue.enqueue(candidate, this.userId, async (cand, uId) => {
+        try {
+          const result = await equityAnalysisService.analyzeCandidate(this.kc, cand.symbol, {
+            stockOptionPreference: profile?.stockOptionPreference || 'PREFER_OPTIONS_IF_LISTED',
+            equityHoldingMode: (profile?.equityHoldingMode as 'MIS' | 'CNC') || 'MIS',
+            equityRiskPerTrade: Number(profile?.equityRiskPerTrade) || 1500,
+          })
+
+          const isTraded = result.decision.decision === 'BUY' && result.decision.action !== 'NONE'
+          await scannerAlertRepo.updateStatus(alertId, isTraded ? 'TRADED' : 'ANALYZED', {
+            decision: result.decision,
+            assetClass: result.assetClass,
+          })
+
+          await analysisSnapshotRepo.saveSnapshot({
+            userId: uId,
+            symbol: cand.symbol,
+            timeframe: '15m',
+            support: null,
+            resistance: null,
+            vwap: null,
+            atr: null,
+            levels: {
+              entry: result.decision.entryPrice,
+              stopLoss: result.decision.stopLoss,
+              targets: result.decision.targets,
+            },
+            decision: result.decision,
+            agentDeliberations: {
+              assetClass: result.assetClass,
+              confidence: result.decision.confidence,
+              reason: result.decision.reason,
+            },
+            tradingDate,
+          })
+
+          if (!isTraded) return
+
+          if (result.assetClass === 'EQUITY' && allowsEquity) {
+            await this.executeSurfacedEquityOrder(cand, result.decision)
+          } else if (result.assetClass === 'STOCK_OPTION' && allowsStockOptions && result.optionDetails) {
+            await this.executeSurfacedOptionOrder(result.optionDetails, result.decision)
+          }
+        } catch (evalErr: any) {
+          console.error(`[UserSession] Failed analysis for candidate ${cand.symbol}:`, evalErr.message || evalErr)
+          await scannerAlertRepo.updateStatus(alertId, 'EXPIRED', { error: evalErr.message })
+        }
+      })
     } catch (err: any) {
       console.error(`[UserSession] Error handling candidate ${candidate.symbol}:`, err.message || err)
     }

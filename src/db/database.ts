@@ -121,6 +121,38 @@ export interface IvHistoryTable {
   createdAt: string
 }
 
+export interface ScannerAlertsTable {
+  id: string
+  symbol: string
+  token: number
+  price: string | number
+  atp: string | number
+  volumeSurgeRatio: string | number
+  changePct: string | number
+  obi: string | number
+  priorityScore: string | number
+  status: 'PENDING' | 'ANALYZED' | 'TRADED' | 'EXPIRED' | string
+  tradingDate: string
+  createdAt: string
+  metadata?: string | null
+}
+
+export interface ActiveAnalysisSnapshotsTable {
+  id: string
+  userId: string
+  symbol: string
+  timeframe: string
+  support: string | number | null
+  resistance: string | number | null
+  vwap: string | number | null
+  atr: string | number | null
+  levels: string | null
+  decision: string | null
+  agentDeliberations: string | null
+  tradingDate: string
+  updatedAt: string
+}
+
 export interface Database {
   profiles: ProfilesTable
   brokerAccounts: BrokerAccountsTable
@@ -130,6 +162,8 @@ export interface Database {
   historicalCandles: HistoricalCandlesTable
   gtiScores: GtiScoresTable
   ivHistory: IvHistoryTable
+  scannerAlerts: ScannerAlertsTable
+  activeAnalysisSnapshots: ActiveAnalysisSnapshotsTable
 }
 
 const dbUrl = process.env.SUPABASE_DB_URL ?? process.env.DATABASE_URL

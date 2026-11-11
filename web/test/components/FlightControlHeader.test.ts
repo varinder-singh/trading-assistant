@@ -59,13 +59,37 @@ describe('FlightControlHeader.vue', () => {
     const wrapper = mount(FlightControlHeader, {
       props: {
         marketState: 'closed',
-        tokenExpiryHours: 6,
       },
     })
 
-    expect(wrapper.text()).toContain('FINAL REALIZED NET')
+    expect(wrapper.text()).toContain('TODAY REALIZED NET')
     expect(wrapper.find('[data-test="panic-btn"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="token-status-btn"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="token-status-btn"]').text()).toContain('KITE AUTH: VALID (6h)')
+    expect(wrapper.find('[data-test="token-status-btn"]').text()).toContain('KITE AUTH: ACTIVE')
+  })
+
+  it('renders active position pill in header when positions are open', () => {
+    const wrapper = mount(FlightControlHeader, {
+      props: {
+        symbol: 'NIFTY',
+        marketState: 'open',
+        positions: [
+          {
+            symbol: 'NIFTY26N0925000PE',
+            quantity: 65,
+            avgEntryPrice: 34.0,
+            unrealizedPnL: 159.25,
+            trailingSlLocked: 34.75,
+            t1Hit: true,
+          },
+        ],
+      },
+    })
+
+    const pill = wrapper.find('[data-test="header-active-position-pill"]')
+    expect(pill.exists()).toBe(true)
+    expect(pill.text()).toContain('NIFTY26N0925000PE')
+    expect(pill.text()).toContain('65x @ ₹34.00')
+    expect(pill.text()).toContain('T1 LOCKED 🥇')
   })
 })

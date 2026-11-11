@@ -12,6 +12,9 @@ REGION="us-central1"
 
 echo "📦 Skipping strict type checks due to existing backend warnings..."
 
+echo "🗄️ Running database migrations..."
+npm run db:migrate
+
 echo "🔨 Building Nuxt frontend..."
 cd web && npm run build && cd ..
 

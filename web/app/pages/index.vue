@@ -36,6 +36,15 @@ const loading = ref(false)
 const analysisResult = ref<any>(null)
 const error = ref<string | null>(null)
 const livePrice = ref<number | null>(null)
+const dayOpenPrice = ref<number | null>(null)
+const calcPriceChange = ref<number | null>(null)
+const calcPriceChangePct = ref<number | null>(null)
+const lastAnalysisTime = ref<number | null>(null)
+
+function handleTimeframeChange(tf: string) {
+  chartTimeframeStr.value = tf
+  changeTimeframe(tf)
+}
 const breakouts = ref<any[]>([])
 const portfolio = ref<any[]>([])
 const tradeHistory = ref<any[]>([])
@@ -71,7 +80,7 @@ const showScreener = ref(false)
 function focusStock(sym: string) {
   symbol.value = sym.toUpperCase()
   startWatching()
-  runAnalysis()
+  fetchInitialData()
 }
 
 const agents = ref<Record<string, any>>({
@@ -131,6 +140,29 @@ async function fetchHistory() {
     tradeHistory.value = data as any[]
   } catch (err: any) {
     console.error('Failed to fetch history:', err)
+  }
+}
+
+async function fetchPortfolio() {
+  try {
+    const data = await $fetch('/api/portfolio')
+    if (Array.isArray(data)) {
+      portfolio.value = data
+    }
+  } catch (err: any) {
+    console.warn('Failed to fetch portfolio:', err)
+  }
+}
+
+async function closePosition(targetSymbol: string) {
+  if (!confirm(`Are you sure you want to square off ${targetSymbol}?`)) return
+  try {
+    await $fetch('/api/square-off', { method: 'POST', body: { symbol: targetSymbol } })
+    await fetchPortfolio()
+    await fetchHistory()
+  } catch (err: any) {
+    console.error('Failed to close position:', err)
+    alert('Failed to close position: ' + (err.message || 'Unknown error'))
   }
 }
 
@@ -235,12 +267,18 @@ function connectWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   ws = new WebSocket(`${protocol}//${window.location.host}/websocket`)
 
-  ws.onopen = () => {
+  ws.onopen = async () => {
     console.log('WS Connected, authenticating...')
-    if (session.value?.access_token) {
-      ws!.send(JSON.stringify({ type: 'auth', token: session.value.access_token }))
-    } else {
-      console.error('No Supabase session found for WebSocket auth')
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData?.session?.access_token || session.value?.access_token
+      if (token) {
+        ws!.send(JSON.stringify({ type: 'auth', token }))
+      } else {
+        console.error('No Supabase session found for WebSocket auth')
+      }
+    } catch (e) {
+      console.error('Failed to get Supabase session for WS auth:', e)
     }
 
     // Keep connection alive
@@ -252,6 +290,10 @@ function connectWebSocket() {
     }, 30000)
   }
 
+  ws.onerror = (err) => {
+    console.warn('WS error occurred:', err)
+  }
+
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data)
     if (msg.type === 'authenticated') {
@@ -260,7 +302,10 @@ function connectWebSocket() {
     } else if (msg.type === 'tick') {
       const price = msg.data.last_price
       livePrice.value = price
-      updateChartFromTick(price, msg.data.gtiScore, msg.data.exchange_timestamp)
+      if (dayOpenPrice.value && !isNaN(price)) {
+        calcPriceChange.value = price - dayOpenPrice.value
+        calcPriceChangePct.value = (calcPriceChange.value / dayOpenPrice.value) * 100
+      }
     } else if (msg.type === 'screener_update') {
       screenerData.value = msg.data
     } else if (msg.type === 'candidate_alert') {
@@ -274,6 +319,7 @@ function connectWebSocket() {
       }
     } else if (msg.type === 'analysis') {
       analysisResult.value = msg.data
+      lastAnalysisTime.value = Date.now()
       if (!chart) {
         initChart()
       }
@@ -318,6 +364,7 @@ function connectWebSocket() {
         data,
         lastUpdate: Date.now(),
       }
+      lastAnalysisTime.value = Date.now()
     } else if (msg.type === 'breakout') {
       breakouts.value.unshift(msg.data)
       if (breakouts.value.length > 5) breakouts.value.pop()
@@ -346,23 +393,14 @@ function connectWebSocket() {
           })
         }
       }
+    } else if (msg.type === 'order') {
+      fetchPortfolio()
+      fetchHistory()
     } else if (msg.type === 'notification') {
       addNotification(msg.data)
 
-      // Add marker to chart if it's a trade execution
-      if (msg.data.details && candleSeries) {
-        const { side, price } = msg.data.details
-        const markers = candleSeries.getMarkers() || []
-        markers.push({
-          time: Math.floor(Date.now() / 1000) as any,
-          position: side === 'BUY' ? 'belowBar' : 'aboveBar',
-          color: side === 'BUY' ? '#22c55e' : '#ef4444',
-          shape: side === 'BUY' ? 'arrowUp' : 'arrowDown',
-          text: side === 'BUY' ? 'BUY' : 'SELL',
-        })
-        candleSeries.setMarkers(markers)
-
-        // Refresh history safely ONLY when a trade opens or closes
+      if (msg.data.details) {
+        fetchPortfolio()
         fetchHistory()
       }
     } else if (msg.type === 'market_closed') {
@@ -414,10 +452,22 @@ async function fetchInitialData() {
     isMarketOpen.value = data.isMarketOpen
     marketStatusMessage.value = data.marketStatusMessage
 
-    const last15m = data.candles15m[data.candles15m.length - 1]
+    const last15m = data.candles15m?.[data.candles15m.length - 1]
+    const first15m = data.candles15m?.[0]
+
+    if (last15m) {
+      if (!livePrice.value) {
+        livePrice.value = last15m.close
+      }
+      if (first15m && first15m.open) {
+        dayOpenPrice.value = first15m.open
+        calcPriceChange.value = last15m.close - first15m.open
+        calcPriceChangePct.value = (calcPriceChange.value / first15m.open) * 100
+      }
+    }
 
     analysisResult.value = {
-      tf15m: { price: last15m?.close || 0 }, // fake levels so it doesn't crash but allows drawing
+      tf15m: { price: last15m?.close || 0 },
       candles1h: data.candles1h,
       candles30m: data.candles30m,
       candles15m: data.candles15m,
@@ -427,10 +477,69 @@ async function fetchInitialData() {
     if (!chart) initChart()
     updateChartDataForTimeframe()
 
+    fetchPortfolio()
     fetchHistory()
     fetchEvents()
+    fetchScannerAlerts()
+    fetchLatestSnapshot()
   } catch (err: any) {
     console.error('Failed to load initial data', err)
+  }
+}
+
+async function fetchScannerAlerts() {
+  try {
+    const res: any = await $fetch('/api/scanner/alerts')
+    if (res?.alerts && Array.isArray(res.alerts)) {
+      screenerData.value = {
+        ...screenerData.value,
+        activeCandidates: res.alerts,
+      }
+    }
+  } catch (err) {
+    console.warn('[Scanner] Failed to hydrate scanner alerts:', err)
+  }
+}
+
+async function fetchLatestSnapshot() {
+  try {
+    const res: any = await $fetch('/api/analysis/latest', { params: { symbol: symbol.value } })
+    if (res?.snapshot) {
+      const snap = res.snapshot
+      if (!analysisResult.value) {
+        analysisResult.value = {}
+      }
+      if (!analysisResult.value.tf15m) {
+        analysisResult.value.tf15m = {}
+      }
+      if (snap.support !== null) analysisResult.value.tf15m.support = snap.support
+      if (snap.resistance !== null) analysisResult.value.tf15m.resistance = snap.resistance
+      if (snap.vwap !== null) analysisResult.value.tf15m.vwap = snap.vwap
+      if (snap.atr !== null) analysisResult.value.tf15m.atr14 = snap.atr
+      if (snap.decision) analysisResult.value.aiDecision = snap.decision
+
+      if (snap.agentDeliberations) {
+        const delib = snap.agentDeliberations
+        if (delib.agentType) {
+          agents.value[delib.agentType] = {
+            status: 'completed',
+            message: snap.decision?.reason || `Active ${delib.agentType} regime verified`,
+            lastUpdate: Date.now(),
+          }
+        }
+        if (delib.sentiment) {
+          agents.value['Regime Validator'] = {
+            status: 'completed',
+            message: `Macro: ${delib.macroTrend || 'NEUTRAL'} | Sentiment: ${delib.sentiment.sentiment || 'NEUTRAL'}`,
+            lastUpdate: Date.now(),
+          }
+        }
+      }
+
+      updateChartDataForTimeframe()
+    }
+  } catch (err) {
+    console.warn('[Analysis] Failed to hydrate latest snapshot:', err)
   }
 }
 
@@ -696,30 +805,103 @@ function getDecisionColor(decision: string) {
 }
 
 const computedLogs = computed(() => {
-  if (analyzerEvents.value && analyzerEvents.value.length > 0) {
-    return analyzerEvents.value.slice(0, 20).map((e: any) => ({
-      time: e.timestamp
-        ? new Date(e.timestamp).toLocaleTimeString([], { hour12: false })
-        : new Date().toLocaleTimeString([], { hour12: false }),
-      tag: e.event_type || 'ENGINE',
-      message: e.message || (typeof e.payload === 'string' ? e.payload : JSON.stringify(e.payload || '')),
-      tagColor:
-        e.event_type === 'TRADE_SIGNAL'
-          ? 'text-emerald-400'
-          : e.event_type === 'RISK_ALERT'
-            ? 'text-rose-400'
-            : 'text-indigo-400',
-    }))
+  const list: Array<{ time: string; tag: string; message: string; tagColor: string }> = []
+
+  // 1. Live server engine logs from WebSocket
+  if (serverLogs.value && serverLogs.value.length > 0) {
+    for (const raw of serverLogs.value.slice(-30).reverse()) {
+      const text = typeof raw === 'string' ? raw : JSON.stringify(raw)
+      list.push({
+        time: new Date().toLocaleTimeString([], { hour12: false }),
+        tag: 'LIVE_ENGINE',
+        message: text,
+        tagColor: text.includes('ERROR') || text.includes('❌') ? 'text-rose-400' : 'text-emerald-400',
+      })
+    }
   }
-  return [
-    {
-      time: new Date().toLocaleTimeString([], { hour12: false }),
-      tag: 'SYSTEM',
-      message: 'WebSocket connected. Engine standing by.',
-      tagColor: 'text-indigo-400',
-    },
-  ]
+
+  // 2. Persisted analyzer & breakout events from database
+  if (analyzerEvents.value && analyzerEvents.value.length > 0) {
+    for (const e of analyzerEvents.value) {
+      const rawDate = e.createdAt || e.timestamp
+      const timeStr = rawDate
+        ? new Date(rawDate).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })
+        : new Date().toLocaleTimeString([], { hour12: false })
+
+      let msg = e.reason || e.message
+      if (!msg) {
+        if (typeof e.payload === 'string') msg = e.payload
+        else if (e.metadata) msg = typeof e.metadata === 'string' ? e.metadata : JSON.stringify(e.metadata)
+        else msg = `Market event at price ${e.price || ''}`
+      }
+
+      list.push({
+        time: timeStr,
+        tag: e.event_type || 'ANALYZER',
+        message: msg,
+        tagColor:
+          e.event_type === 'TRADE_SIGNAL'
+            ? 'text-emerald-400'
+            : e.event_type === 'RISK_ALERT'
+              ? 'text-rose-400'
+              : 'text-indigo-400',
+      })
+    }
+  }
+
+  if (list.length === 0) {
+    return [
+      {
+        time: new Date().toLocaleTimeString([], { hour12: false }),
+        tag: 'SYSTEM',
+        message: 'Engine operational. Listening to live market tick stream.',
+        tagColor: 'text-indigo-400',
+      },
+    ]
+  }
+
+  return list.slice(0, 50)
 })
+
+let watchdogInterval: any = null
+let lastWatchdogTick = Date.now()
+
+async function handleWakeup() {
+  console.log('[ConnectionWatchdog] Waking up, ensuring active session & WS...')
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.log('[ConnectionWatchdog] WS disconnected or stale, reconnecting...')
+    connectWebSocket()
+  } else {
+    startWatching()
+  }
+  await Promise.allSettled([
+    fetchInitialData(),
+    fetchHistory(),
+    fetchEvents(),
+  ])
+}
+
+const onVisibilityChange = () => {
+  if (document.visibilityState === 'visible') {
+    handleWakeup()
+  }
+}
+
+const onOnline = () => {
+  handleWakeup()
+}
+
+const onWindowFocus = () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    handleWakeup()
+  }
+}
+
+const onResize = () => {
+  if (chart && chartContainer.value) {
+    chart.applyOptions({ width: chartContainer.value.clientWidth })
+  }
+}
 
 onMounted(() => {
   nextTick(() => {
@@ -728,11 +910,20 @@ onMounted(() => {
   fetchInitialData()
   connectWebSocket()
 
-  window.addEventListener('resize', () => {
-    if (chart && chartContainer.value) {
-      chart.applyOptions({ width: chartContainer.value.clientWidth })
+  window.addEventListener('resize', onResize)
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  window.addEventListener('online', onOnline)
+  window.addEventListener('focus', onWindowFocus)
+
+  lastWatchdogTick = Date.now()
+  watchdogInterval = setInterval(() => {
+    const now = Date.now()
+    if (now - lastWatchdogTick > 12000) {
+      console.warn(`[ConnectionWatchdog] System sleep detected (gap: ${now - lastWatchdogTick}ms). Re-awakening...`)
+      handleWakeup()
     }
-  })
+    lastWatchdogTick = now
+  }, 4000)
 })
 
 onUnmounted(() => {
@@ -740,23 +931,35 @@ onUnmounted(() => {
   if (ws) ws.close()
   clearTimeout(reconnectTimer)
   clearInterval(pingInterval)
+  clearInterval(watchdogInterval)
+  window.removeEventListener('resize', onResize)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  window.removeEventListener('online', onOnline)
+  window.removeEventListener('focus', onWindowFocus)
 })
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-950 text-slate-100 font-sans">
+  <div class="h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 font-sans fixed inset-0">
     <AutonomousCockpit
       :symbol="symbol"
       :live-price="livePrice"
-      :price-change="analysisResult?.priceChange || 112.30"
-      :price-change-pct="analysisResult?.priceChangePct || 0.47"
+      :price-change="calcPriceChange"
+      :price-change-pct="calcPriceChangePct"
       :daily-pnl="dailyPnl"
       :portfolio="portfolio"
       :trade-history="tradeHistory"
       :event-logs="computedLogs"
       :is-market-open="isMarketOpen"
-      :vix="analysisResult?.vix || 13.24"
+      :market-status-message="marketStatusMessage"
+      :agents="agents"
+      :analysis-result="analysisResult"
+      :screener-data="screenerData"
+      :chart-timeframe="chartTimeframeStr"
+      :last-analysis-time="lastAnalysisTime"
+      @timeframe-change="handleTimeframeChange"
       @panic-square-off="panicSell"
+      @close-position="closePosition"
       @symbol-change="focusStock"
       @select-stock="focusStock"
     />
@@ -828,7 +1031,14 @@ onUnmounted(() => {
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
+html,
 body {
+  height: 100%;
+  max-height: 100vh;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  background-color: #020617;
   font-family: 'Inter', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

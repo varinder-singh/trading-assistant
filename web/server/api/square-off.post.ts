@@ -34,6 +34,21 @@ export default defineEventHandler(async (event) => {
   const paperTrader = userSession.paperTrader
 
   try {
+    const body = await readBody(event).catch(() => ({}))
+    const targetSymbol = body?.symbol
+
+    if (targetSymbol) {
+      console.log(`[API ${userId}] Manual square-off requested for single symbol: ${targetSymbol}`)
+      const allPositions = paperTrader.getAllPositions()
+      const matching = allPositions.filter((p) => p.symbol === targetSymbol)
+      if (matching.length > 0) {
+        await paperTrader.squareOffPositions(matching, `Manual User Close (${targetSymbol})`)
+        return { success: true, message: `Position ${targetSymbol} squared off successfully.` }
+      } else {
+        return { success: false, message: `Position ${targetSymbol} not found or already closed.` }
+      }
+    }
+
     console.log(`[API ${userId}] Panic Sell triggered. Squaring off all positions...`)
     await paperTrader.squareOffAll('Manual Panic Sell')
     return { success: true, message: 'All positions squared off successfully.' }

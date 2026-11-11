@@ -32,14 +32,51 @@
             class="text-base font-bold"
             :class="(priceChange || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'"
           >
-            {{ livePrice ? livePrice.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '24,185.40' }}
+            {{ livePrice !== null && livePrice !== undefined ? livePrice.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '—' }}
           </span>
           <span
+            v-if="priceChange !== null && priceChange !== undefined"
             class="text-xs font-medium"
             :class="(priceChange || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'"
           >
-            {{ (priceChange || 0) >= 0 ? '+' : '' }}{{ priceChange ? priceChange.toFixed(2) : '+112.30' }}
-            ({{ (priceChangePct || 0) >= 0 ? '+' : '' }}{{ priceChangePct ? priceChangePct.toFixed(2) : '+0.47' }}%)
+            {{ (priceChange || 0) >= 0 ? '+' : '' }}{{ priceChange.toFixed(2) }}
+            ({{ (priceChangePct || 0) >= 0 ? '+' : '' }}{{ (priceChangePct || 0).toFixed(2) }}%)
+          </span>
+        </div>
+      </div>
+
+      <!-- Active Trade Pill (if any position open) -->
+      <div
+        v-if="positions && positions.length > 0"
+        data-test="header-active-position-pill"
+        class="flex items-center gap-2.5 bg-indigo-950/90 border border-indigo-500/60 px-3 py-1.5 rounded-lg shadow-sm"
+      >
+        <span class="relative flex h-2.5 w-2.5">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+        </span>
+        <div class="flex items-center gap-2 font-mono text-xs">
+          <span class="font-bold text-white">{{ positions[0].symbol }}</span>
+          <span class="text-slate-300">
+            {{ positions[0].quantity }}x @ ₹{{ Number(positions[0].avgEntryPrice || positions[0].buyPrice || 0).toFixed(2) }}
+          </span>
+          <span
+            class="font-bold"
+            :class="(positions[0].unrealizedPnL || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'"
+          >
+            {{ (positions[0].unrealizedPnL || 0) >= 0 ? '+' : '' }}₹{{ Number(positions[0].unrealizedPnL || 0).toFixed(2) }}
+          </span>
+          <span
+            v-if="positions[0].t1Hit"
+            class="px-1.5 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded text-[10px] font-bold"
+          >
+            T1 LOCKED 🥇 (SL ₹{{ Number(positions[0].trailingSlLocked || positions[0].aiStopLoss || 0).toFixed(2) }})
+          </span>
+          <span
+            v-else-if="positions[0].trailingSlLocked || positions[0].aiStopLoss"
+            class="text-[10px] text-slate-400"
+          >
+            SL: ₹{{ Number(positions[0].trailingSlLocked || positions[0].aiStopLoss).toFixed(2) }}
           </span>
         </div>
       </div>
@@ -72,8 +109,8 @@
       <!-- Regime / Market Hours Badge -->
       <div class="hidden xl:flex items-center gap-2 px-3 py-1.5 bg-blue-950/40 border border-blue-800/40 rounded-lg text-xs">
         <span class="text-slate-400">Regime:</span>
-        <span class="font-bold text-blue-400 uppercase tracking-wide">{{ regime || 'Bullish Trend Expansion' }}</span>
-        <span class="text-slate-400 border-l border-slate-700 pl-2">VIX: <span class="font-mono text-slate-200">{{ vix || '13.24' }}</span></span>
+        <span class="font-bold text-blue-400 uppercase tracking-wide">{{ regime || 'EVALUATING' }}</span>
+        <span v-if="vix" class="text-slate-400 border-l border-slate-700 pl-2">VIX: <span class="font-mono text-slate-200">{{ vix.toFixed(2) }}</span></span>
       </div>
     </div>
 
@@ -114,18 +151,18 @@
       <!-- Daily PnL Telemetry -->
       <div class="bg-slate-800/80 border border-slate-700 px-3 py-1 rounded-lg text-right font-mono">
         <div class="text-[11px] text-slate-400 leading-none">
-          {{ marketState === 'open' ? "TODAY'S P&L (NET)" : 'FINAL REALIZED NET' }}
+          {{ marketState === 'open' ? "TODAY'S P&L (NET)" : 'TODAY REALIZED NET' }}
         </div>
         <div
           class="text-sm font-bold leading-tight"
-          :class="dailyPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'"
+          :class="(dailyPnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'"
         >
-          {{ dailyPnl >= 0 ? '+' : '' }}₹{{ dailyPnl.toLocaleString('en-IN', { minimumFractionDigits: 2 }) }}
+          {{ (dailyPnl || 0) >= 0 ? '+' : '' }}₹{{ (dailyPnl || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 }) }}
         </div>
       </div>
 
-      <!-- Action Button: Emergency Square Off or Auth Token Status -->
-      <div>
+      <!-- Action Button: Emergency Square Off, Kite Token Refresh, Settings -->
+      <div class="flex items-center gap-2">
         <button
           v-if="marketState === 'open'"
           data-test="panic-btn"
@@ -138,15 +175,32 @@
           </svg>
           SQUARE OFF ALL
         </button>
-        <button
-          v-else
+
+        <!-- Zerodha Kite Token Refresh Button -->
+        <a
+          href="/api/auth/kite/login"
           data-test="token-status-btn"
-          type="button"
-          class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-300 rounded-lg text-xs font-mono font-medium transition flex items-center gap-1.5"
+          class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 hover:text-white border border-slate-600 text-slate-300 rounded-lg text-xs font-mono font-medium transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+          title="Login to Zerodha & Refresh Daily Kite Session Token"
         >
           <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-          KITE AUTH: VALID ({{ tokenExpiryHours || 7 }}h)
-        </button>
+          <span>KITE AUTH: ACTIVE (REFRESH)</span>
+          <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        </a>
+
+        <!-- Settings & Broker Connections Link -->
+        <a
+          href="/profile"
+          class="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition flex items-center justify-center"
+          title="Settings & Broker Connections"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </a>
       </div>
     </div>
   </header>
@@ -163,20 +217,22 @@ withDefaults(
     flightMode?: 'auto' | 'supervised' | 'halt'
     dailyPnl?: number
     regime?: string
-    vix?: number
+    vix?: number | null
     tokenExpiryHours?: number
+    positions?: any[]
   }>(),
   {
-    symbol: 'NIFTY 50',
-    livePrice: 24185.4,
-    priceChange: 112.3,
-    priceChangePct: 0.47,
-    marketState: 'open',
+    symbol: 'NIFTY',
+    livePrice: null,
+    priceChange: null,
+    priceChangePct: null,
+    marketState: 'closed',
     flightMode: 'auto',
-    dailyPnl: 4850,
-    regime: 'Bullish Trend Expansion',
-    vix: 13.24,
+    dailyPnl: 0,
+    regime: '',
+    vix: null,
     tokenExpiryHours: 7,
+    positions: () => [],
   }
 )
 

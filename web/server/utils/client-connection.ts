@@ -33,6 +33,10 @@ export class ClientConnection {
     this.send({ type: 'portfolio', data: positions })
   }
 
+  private onOrderUpdate = (order: any) => {
+    this.send({ type: 'order', data: order })
+  }
+
   private onNotification = (notif: any) => {
     this.send({ type: 'notification', data: notif })
   }
@@ -152,6 +156,7 @@ export class ClientConnection {
     // Register UI relay listeners on session
     session.paperTrader.on('portfolio_update', this.onPortfolioUpdate)
     session.paperTrader.on('pnl_update', this.onPnlUpdate)
+    session.paperTrader.on('order_update', this.onOrderUpdate)
     session.paperTrader.on('notification', this.onNotification)
     session.on('ticks', this.onTicks)
     session.on('breakout', this.onBreakout)
@@ -170,10 +175,12 @@ export class ClientConnection {
     this.send({ type: 'authenticated' })
     console.log(`[ws] User ${userId} authenticated on peer ${this.id}`)
 
+    // Immediately sync current portfolio on authentication
+    this.send({ type: 'portfolio', data: session.paperTrader.getAllPositions() })
+
     // If the session already has an active watch, sync the client immediately
     if (session.watchedSymbol && session.watchedToken) {
       this.send({ type: 'watching', symbol: session.watchedSymbol, token: session.watchedToken })
-      this.send({ type: 'portfolio', data: session.paperTrader.getAllPositions() })
     }
   }
 
@@ -194,6 +201,7 @@ export class ClientConnection {
     if (this.session) {
       this.session.paperTrader.off('portfolio_update', this.onPortfolioUpdate)
       this.session.paperTrader.off('pnl_update', this.onPnlUpdate)
+      this.session.paperTrader.off('order_update', this.onOrderUpdate)
       this.session.paperTrader.off('notification', this.onNotification)
       this.session.off('ticks', this.onTicks)
       this.session.off('breakout', this.onBreakout)

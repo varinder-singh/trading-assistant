@@ -1,16 +1,16 @@
 <template>
-  <div class="flex-1 flex flex-col bg-slate-950 border-r border-slate-800">
-    <!-- Top Chart Controls / Debrief Mode Switcher Bar -->
-    <div class="px-4 py-2 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2 bg-slate-900/40 text-xs">
+  <div class="flex-1 min-h-0 flex flex-col bg-slate-950 border-r border-slate-800 h-full overflow-hidden">
+    <!-- Top Chart Controls Bar -->
+    <div class="shrink-0 px-4 py-2 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2 bg-slate-900/40 text-xs">
       <!-- Left Title & Toggles -->
       <div class="flex items-center gap-3">
         <div data-test="chart-mode-title" class="font-bold text-slate-300 font-mono">
-          {{ marketState === 'open' ? 'INTRADAY LIVE EXECUTION' : 'EOD FULL-DAY TRAJECTORY REPLAY' }}
+          {{ marketState === 'open' ? 'INTRADAY LIVE EXECUTION' : 'HISTORICAL TRAJECTORY REPLAY' }}
         </div>
 
         <div class="flex items-center gap-1 font-mono">
           <button
-            v-for="tf in ['1m', '3m', '5m', '15m']"
+            v-for="tf in ['5m', '15m', '30m', '1h']"
             :key="tf"
             data-test="timeframe-btn"
             type="button"
@@ -28,20 +28,11 @@
         <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
           <input
             type="checkbox"
-            :checked="overlays.ratchetBands"
-            @change="$emit('update:overlays', { ...overlays, ratchetBands: !overlays.ratchetBands })"
-            class="rounded border-slate-700 text-indigo-600 focus:ring-0"
-          >
-          <span>AI Ratchet Bands</span>
-        </label>
-        <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
-          <input
-            type="checkbox"
             :checked="overlays.pocVah"
             @change="$emit('update:overlays', { ...overlays, pocVah: !overlays.pocVah })"
             class="rounded border-slate-700 text-indigo-600 focus:ring-0"
           >
-          <span>Structural POC/VAH</span>
+          <span>Support / Resistance</span>
         </label>
         <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
           <input
@@ -50,129 +41,92 @@
             @change="$emit('update:overlays', { ...overlays, vwapEma: !overlays.vwapEma })"
             class="rounded border-slate-700 text-indigo-600 focus:ring-0"
           >
-          <span>VWAP / EMA-9</span>
+          <span>VWAP</span>
         </label>
       </div>
 
-      <!-- Session Levels -->
+      <!-- Session High/Low Levels -->
       <div class="flex items-center gap-2 font-mono text-[11px] text-slate-400">
-        <span>HIGH: <span class="text-slate-200">{{ high.toFixed(2) }}</span></span>
-        <span>LOW: <span class="text-slate-200">{{ low.toFixed(2) }}</span></span>
-        <span>POC: <span class="text-amber-400 font-bold">{{ poc.toFixed(2) }}</span></span>
+        <span v-if="high">HIGH: <span class="text-slate-200">{{ high.toFixed(2) }}</span></span>
+        <span v-if="low">LOW: <span class="text-slate-200">{{ low.toFixed(2) }}</span></span>
+        <span v-if="livePrice">LTP: <span class="text-emerald-400 font-bold">{{ livePrice.toFixed(2) }}</span></span>
       </div>
     </div>
 
-    <!-- MAIN CANVAS CONTAINER -->
-    <div class="relative flex-1 bg-slate-950 p-4 min-h-[380px] flex flex-col justify-between overflow-hidden">
-      <!-- Legend Overlay in Top Left of Chart -->
-      <div class="absolute top-4 left-4 z-10 bg-slate-900/90 border border-slate-800 rounded-lg p-2.5 backdrop-blur font-mono text-xs space-y-1">
-        <div v-if="overlays.pocVah" class="flex items-center gap-2">
-          <span class="w-3 h-0.5 bg-amber-400 inline-block"></span>
-          <span class="text-slate-400">POC (Institutional Volume):</span>
-          <span class="text-amber-400 font-bold">{{ poc.toFixed(2) }}</span>
+    <!-- MAIN REAL CHART CONTAINER -->
+    <div class="relative flex-1 min-h-0 bg-slate-950 p-2 flex flex-col overflow-hidden">
+      <!-- Floating Active Trade Overlay on Chart -->
+      <div
+        v-if="positions && positions.length > 0"
+        data-test="chart-active-trade-overlay"
+        class="absolute top-4 left-4 z-20 bg-slate-900/95 backdrop-blur border border-indigo-500/50 rounded-xl p-2.5 shadow-2xl text-xs font-mono max-w-sm pointer-events-none"
+      >
+        <div class="flex items-center justify-between gap-3 mb-1.5">
+          <div class="flex items-center gap-1.5 font-bold text-white">
+            <span
+              class="px-1.5 py-0.5 rounded text-[10px]"
+              :class="positions[0].symbol?.endsWith('PE') ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'"
+            >
+              {{ positions[0].symbol?.endsWith('PE') ? 'PE' : 'CE' }}
+            </span>
+            <span>{{ positions[0].symbol }}</span>
+          </div>
+          <span
+            class="font-bold text-xs"
+            :class="(positions[0].unrealizedPnL || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'"
+          >
+            {{ (positions[0].unrealizedPnL || 0) >= 0 ? '+' : '' }}₹{{ Number(positions[0].unrealizedPnL || 0).toFixed(2) }}
+          </span>
         </div>
-        <div v-if="overlays.vwapEma" class="flex items-center gap-2">
-          <span class="w-3 h-0.5 bg-blue-400 inline-block"></span>
-          <span class="text-slate-400">Anchored VWAP:</span>
-          <span class="text-blue-400">{{ vwap.toFixed(2) }}</span>
+        <div class="grid grid-cols-3 gap-2 text-[10px] text-slate-400 pt-1 border-t border-slate-800">
+          <div>
+            <div>QTY</div>
+            <div class="text-white font-bold">{{ positions[0].quantity }}</div>
+          </div>
+          <div>
+            <div>ENTRY</div>
+            <div class="text-white font-bold">₹{{ Number(positions[0].avgEntryPrice || positions[0].buyPrice || 0).toFixed(2) }}</div>
+          </div>
+          <div>
+            <div>LTP</div>
+            <div class="text-emerald-400 font-bold">₹{{ Number(positions[0].currentPrice || positions[0].lastPrice || positions[0].avgEntryPrice || 0).toFixed(2) }}</div>
+          </div>
         </div>
-        <div v-if="overlays.ratchetBands" class="flex items-center gap-2">
-          <span class="w-3 h-0.5 bg-emerald-400 inline-block"></span>
-          <span class="text-slate-400">Ratchet Locked Floor (Tier 2):</span>
-          <span class="text-emerald-400 font-bold">{{ ratchetFloor.toFixed(2) }}</span>
+        <div class="mt-1.5 flex items-center justify-between text-[10px] pt-1 border-t border-slate-800/60">
+          <div class="text-rose-400 font-bold">
+            SL: ₹{{ Number(positions[0].trailingSlLocked || positions[0].aiStopLoss || 0).toFixed(2) }}
+          </div>
+          <div v-if="positions[0].t1Hit" class="text-amber-400 font-bold flex items-center gap-1">
+            <span>T1 HIT 🥇</span>
+            <span class="text-slate-400 font-normal">SL +50% cushion</span>
+          </div>
+          <div v-else-if="positions[0].t1Target" class="text-slate-400">
+            T1: ₹{{ Number(positions[0].t1Target).toFixed(2) }}
+          </div>
         </div>
       </div>
 
-      <!-- Simulated Candlestick Canvas -->
-      <div class="relative w-full h-full flex items-center justify-center">
-        <svg viewBox="0 0 800 320" class="w-full h-full text-slate-800 overflow-visible" preserveAspectRatio="none">
-          <!-- Grid Lines -->
-          <line x1="0" y1="60" x2="800" y2="60" stroke="rgba(255,255,255,0.04)" stroke-dasharray="4"/>
-          <line x1="0" y1="120" x2="800" y2="120" stroke="rgba(255,255,255,0.04)" stroke-dasharray="4"/>
-          <line x1="0" y1="180" x2="800" y2="180" stroke="rgba(255,255,255,0.04)" stroke-dasharray="4"/>
-          <line x1="0" y1="240" x2="800" y2="240" stroke="rgba(255,255,255,0.04)" stroke-dasharray="4"/>
+      <!-- Real Lightweight Chart Mount Target -->
+      <div ref="chartContainer" class="w-full flex-1 min-h-0 overflow-hidden"></div>
 
-          <!-- Structural POC Level -->
-          <line v-if="overlays.pocVah" x1="0" y1="180" x2="800" y2="180" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="6"/>
-
-          <!-- Anchored VWAP -->
-          <path v-if="overlays.vwapEma" d="M 0 230 Q 200 210, 400 190 T 800 160" fill="none" stroke="#60a5fa" stroke-width="2"/>
-
-          <!-- Ratchet Trailing Floor Band -->
-          <path v-if="overlays.ratchetBands" d="M 460 210 L 520 200 L 600 160 L 700 130 L 800 120" fill="none" stroke="#10b981" stroke-width="2" stroke-dasharray="3"/>
-
-          <!-- Candlesticks Series -->
-          <line x1="60" y1="210" x2="60" y2="255" stroke="#ef4444" stroke-width="1"/>
-          <rect x="54" y="220" width="12" height="25" fill="#ef4444"/>
-          <line x1="110" y1="205" x2="110" y2="245" stroke="#ef4444" stroke-width="1"/>
-          <rect x="104" y="215" width="12" height="20" fill="#ef4444"/>
-          <line x1="160" y1="185" x2="160" y2="260" stroke="#10b981" stroke-width="1"/>
-          <rect x="154" y="190" width="12" height="20" fill="#10b981"/>
-          <line x1="210" y1="175" x2="210" y2="215" stroke="#10b981" stroke-width="1"/>
-          <rect x="204" y="180" width="12" height="22" fill="#10b981"/>
-          <line x1="260" y1="180" x2="260" y2="210" stroke="#ef4444" stroke-width="1"/>
-          <rect x="254" y="188" width="12" height="14" fill="#ef4444"/>
-          <line x1="310" y1="170" x2="310" y2="200" stroke="#10b981" stroke-width="1"/>
-          <rect x="304" y="172" width="12" height="18" fill="#10b981"/>
-          <line x1="360" y1="155" x2="360" y2="190" stroke="#10b981" stroke-width="1"/>
-          <rect x="354" y="160" width="12" height="24" fill="#10b981"/>
-          
-          <!-- AI ENTRY TRIGGER CANDLE -->
-          <line x1="410" y1="140" x2="410" y2="180" stroke="#10b981" stroke-width="1"/>
-          <rect x="404" y="145" width="12" height="28" fill="#10b981"/>
-
-          <line x1="460" y1="130" x2="460" y2="165" stroke="#10b981" stroke-width="1"/>
-          <rect x="454" y="132" width="12" height="22" fill="#10b981"/>
-          <line x1="510" y1="135" x2="510" y2="160" stroke="#ef4444" stroke-width="1"/>
-          <rect x="504" y="140" width="12" height="12" fill="#ef4444"/>
-          <line x1="560" y1="110" x2="560" y2="148" stroke="#10b981" stroke-width="1"/>
-          <rect x="554" y="115" width="12" height="28" fill="#10b981"/>
-          <line x1="610" y1="95" x2="610" y2="135" stroke="#10b981" stroke-width="1"/>
-          <rect x="604" y="100" width="12" height="26" fill="#10b981"/>
-          <line x1="660" y1="85" x2="660" y2="120" stroke="#10b981" stroke-width="1"/>
-          <rect x="654" y="90" width="12" height="22" fill="#10b981"/>
-          <line x1="710" y1="75" x2="710" y2="110" stroke="#10b981" stroke-width="1"/>
-          <rect x="704" y="78" width="12" height="18" fill="#10b981"/>
-
-          <!-- AI Entry Marker Beacon -->
-          <g transform="translate(410, 195)">
-            <circle cx="0" cy="0" r="14" fill="rgba(99, 102, 241, 0.25)" class="animate-ping"/>
-            <circle cx="0" cy="0" r="7" fill="#6366f1"/>
-            <path d="M 0 -2 L -4 4 L 4 4 Z" fill="#ffffff"/>
-          </g>
-
-          <!-- Exit Marker in Closed Mode -->
-          <g v-if="marketState === 'closed'" transform="translate(710, 60)">
-            <circle cx="0" cy="0" r="8" fill="#10b981"/>
-            <text x="0" y="3" text-anchor="middle" fill="#ffffff" font-size="9" font-weight="bold">✓</text>
-          </g>
-        </svg>
-
-        <!-- Floating AI Entry Tooltip -->
-        <div
-          v-if="marketState === 'open'"
-          data-test="chart-entry-tooltip"
-          class="absolute top-[62%] left-[48%] bg-indigo-950/90 border border-indigo-500/80 rounded-lg p-2 backdrop-blur shadow-xl font-mono text-xs z-20 pointer-events-none"
-        >
-          <div class="text-indigo-300 font-bold flex items-center gap-1.5">
-            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-            MAS AUTONOMOUS ENTRY: BUY CE
-          </div>
-          <div class="text-slate-300 text-[11px]">
-            Strike: 24200 CE @ ₹142.00 | Conf: 92%
-          </div>
-        </div>
+      <!-- Empty state when no candles yet -->
+      <div
+        v-if="!candles || candles.length === 0"
+        class="absolute inset-0 flex items-center justify-center bg-slate-950/80 z-10 text-slate-400 text-xs font-mono"
+      >
+        Loading market candle history...
       </div>
 
       <!-- Chart Bottom Status Strip -->
-      <div class="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 font-mono">
+      <div class="shrink-0 pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 font-mono">
         <div class="flex items-center gap-4">
-          <span>RSI(14): <span class="text-slate-200">{{ rsi }}</span></span>
-          <span>ATR(1m): <span class="text-slate-200">{{ atr.toFixed(2) }}</span></span>
-          <span>GTI Flow: <span class="text-emerald-400 font-bold">{{ gti }} / 100</span> (Strong Inflow)</span>
+          <span v-if="rsi">RSI(14): <span class="text-slate-200">{{ rsi.toFixed(1) }}</span></span>
+          <span v-if="atr">ATR: <span class="text-slate-200">{{ atr.toFixed(2) }}</span></span>
+          <span v-if="vwap">VWAP: <span class="text-blue-400 font-bold">{{ vwap.toFixed(2) }}</span></span>
+          <span v-if="gti">GTI: <span class="text-emerald-400 font-bold">{{ gti }}</span></span>
         </div>
         <div>
-          {{ marketState === 'open' ? `Tick Latency: ${tickLatencyMs}ms` : 'Market Status: CLOSED (EOD DB Replay)' }}
+          {{ marketState === 'open' ? 'Live Stream Active' : 'Market Closed (Offline Data)' }}
         </div>
       </div>
     </div>
@@ -180,41 +134,352 @@
 </template>
 
 <script setup lang="ts">
-withDefaults(
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { createChart, CandlestickSeries, CrosshairMode } from 'lightweight-charts'
+import type { IChartApi, ISeriesApi } from 'lightweight-charts'
+
+const props = withDefaults(
   defineProps<{
+    candles?: Array<{ time: number; open: number; high: number; low: number; close: number; volume?: number }>
+    gtiHistory?: Array<any>
+    resistance?: number | null
+    support?: number | null
+    vwap?: number | null
+    selectedTimeframe?: string
     marketState?: 'open' | 'closed'
     symbol?: string
-    selectedTimeframe?: string
-    overlays?: { ratchetBands: boolean; pocVah: boolean; vwapEma: boolean }
-    poc?: number
-    vwap?: number
-    ratchetFloor?: number
-    high?: number
-    low?: number
-    rsi?: number
-    atr?: number
-    gti?: number
-    tickLatencyMs?: number
+    high?: number | null
+    low?: number | null
+    livePrice?: number | null
+    rsi?: number | null
+    atr?: number | null
+    gti?: number | null
+    overlays?: { ratchetBands?: boolean; pocVah?: boolean; vwapEma?: boolean }
+    positions?: any[]
   }>(),
   {
-    marketState: 'open',
-    symbol: 'NIFTY 50',
-    selectedTimeframe: '3m',
+    candles: () => [],
+    gtiHistory: () => [],
+    resistance: null,
+    support: null,
+    vwap: null,
+    selectedTimeframe: '15m',
+    marketState: 'closed',
+    symbol: 'NIFTY',
+    high: null,
+    low: null,
+    livePrice: null,
+    rsi: null,
+    atr: null,
+    gti: null,
     overlays: () => ({ ratchetBands: true, pocVah: true, vwapEma: true }),
-    poc: 24150.0,
-    vwap: 24142.15,
-    ratchetFloor: 24168.0,
-    high: 24210.8,
-    low: 24095.1,
-    rsi: 64.2,
-    atr: 14.5,
-    gti: 78,
-    tickLatencyMs: 18,
+    positions: () => [],
   }
 )
 
 defineEmits<{
   (e: 'update:selectedTimeframe', tf: string): void
-  (e: 'update:overlays', overlays: { ratchetBands: boolean; pocVah: boolean; vwapEma: boolean }): void
+  (e: 'update:overlays', overlays: { ratchetBands?: boolean; pocVah?: boolean; vwapEma?: boolean }): void
 }>()
+
+const chartContainer = ref<HTMLElement | null>(null)
+let chart: IChartApi | null = null
+let candleSeries: ISeriesApi<'Candlestick'> | null = null
+let resistanceLine: any = null
+let supportLine: any = null
+let vwapLine: any = null
+
+function getGtiColors(gtiScore: any | undefined, isUp: boolean) {
+  let color = isUp ? '#22c55e' : '#ef4444'
+  if (!gtiScore) return { color, wickColor: color }
+  const score = gtiScore.composite || 0
+  if (score > 0.6) color = '#3b82f6'
+  else if (score > 0.2) color = '#10b981'
+  else if (score < -0.6) color = '#9333ea'
+  else if (score < -0.2) color = '#f43f5e'
+  else color = isUp ? '#22c55e' : '#ef4444'
+  return { color, wickColor: color }
+}
+
+function initChart() {
+  if (!chartContainer.value) return
+  // Skip in headless test environment where canvas 2D rendering is stubbed
+  if (typeof window === 'undefined' || typeof document === 'undefined' || navigator.userAgent.includes('HappyDOM') || (window as any).__vitest_worker__) {
+    return
+  }
+
+  if (chart) {
+    try {
+      chart.remove()
+    } catch (_) {}
+    chart = null
+  }
+
+  try {
+    chart = createChart(chartContainer.value, {
+      localization: {
+        timeFormatter: (time: number) => {
+          const date = new Date(time * 1000)
+          return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })
+        },
+      },
+      layout: {
+        background: { color: '#090d16' },
+        textColor: '#e2e8f0',
+      },
+      grid: {
+        vertLines: { color: '#1e293b' },
+        horzLines: { color: '#1e293b' },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+      },
+      rightPriceScale: {
+        borderColor: '#1e293b',
+        autoScale: true,
+      },
+      timeScale: {
+        borderColor: '#1e293b',
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: (time: number) => {
+          const date = new Date(time * 1000)
+          return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })
+        },
+      },
+      width: chartContainer.value.clientWidth || 600,
+      height: chartContainer.value.clientHeight > 0 ? chartContainer.value.clientHeight : 380,
+    })
+
+    candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: '#22c55e',
+      downColor: '#ef4444',
+      borderVisible: false,
+      wickUpColor: '#22c55e',
+      wickDownColor: '#ef4444',
+      priceFormat: {
+        type: 'price',
+        precision: 2,
+        minMove: 0.05,
+      },
+    })
+
+    renderCandles()
+    renderPriceLines()
+  } catch (err) {
+    console.warn('Lightweight chart initialization skipped in test environment')
+  }
+}
+
+const currentCandle = ref<any>(null)
+
+function renderCandles() {
+  if (!candleSeries || !props.candles || props.candles.length === 0) return
+
+  // 1. Clean, sort strictly in ascending time order, and deduplicate
+  const sorted = [...props.candles]
+    .map((c) => ({
+      ...c,
+      time: Math.floor(Number(c.time)),
+      open: Number(c.open),
+      high: Number(c.high),
+      low: Number(c.low),
+      close: Number(c.close),
+    }))
+    .filter((c) => !isNaN(c.time) && !isNaN(c.open) && !isNaN(c.close))
+    .sort((a, b) => a.time - b.time)
+
+  const deduplicated: typeof sorted = []
+  for (const c of sorted) {
+    if (deduplicated.length === 0 || c.time > deduplicated[deduplicated.length - 1].time) {
+      deduplicated.push(c)
+    }
+  }
+
+  const formatted = deduplicated.map((c) => {
+    const isUp = c.close >= c.open
+    const gtiMatch = props.gtiHistory.find((g: any) => g.time === c.time)
+    const { color, wickColor } = getGtiColors(gtiMatch?.gtiScore, isUp)
+    return {
+      time: c.time as any,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      color,
+      wickColor,
+    }
+  })
+
+  candleSeries.setData(formatted)
+
+  // Seed current forming candle from the latest historical bar
+  if (formatted.length > 0) {
+    const last = formatted[formatted.length - 1]
+    currentCandle.value = { ...last }
+
+    // If live price is already populated, update the forming candle immediately
+    if (props.livePrice !== null && props.livePrice !== undefined) {
+      updateLiveCandle(props.livePrice)
+    }
+  }
+}
+
+function updateLiveCandle(price: number) {
+  if (!candleSeries || !price || isNaN(price)) return
+
+  const tfMap: Record<string, number> = { '5m': 300, '15m': 900, '30m': 1800, '1h': 3600 }
+  const bucketSecs = tfMap[props.selectedTimeframe || '15m'] || 900
+  const now = Math.floor(Date.now() / 1000)
+  const currentBucketTime = now - (now % bucketSecs)
+
+  if (!currentCandle.value || currentBucketTime > Number(currentCandle.value.time)) {
+    // Start of a new candle period
+    const isUp = true
+    const { color, wickColor } = getGtiColors(props.gti !== null && props.gti !== undefined ? { composite: props.gti / 100 } : undefined, isUp)
+
+    currentCandle.value = {
+      time: currentBucketTime as any,
+      open: price,
+      high: price,
+      low: price,
+      close: price,
+      color,
+      wickColor,
+    }
+  } else {
+    // Live update of active forming candle
+    currentCandle.value.close = price
+    if (price > currentCandle.value.high) currentCandle.value.high = price
+    if (price < currentCandle.value.low) currentCandle.value.low = price
+
+    const isUp = currentCandle.value.close >= currentCandle.value.open
+    const { color, wickColor } = getGtiColors(props.gti !== null && props.gti !== undefined ? { composite: props.gti / 100 } : undefined, isUp)
+    currentCandle.value.color = color
+    currentCandle.value.wickColor = wickColor
+  }
+
+  try {
+    candleSeries.update(currentCandle.value)
+  } catch (err) {
+    console.warn('Lightweight charts live tick update warning:', err)
+  }
+}
+
+function renderPriceLines() {
+  if (!candleSeries) return
+
+  if (resistanceLine) {
+    candleSeries.removePriceLine(resistanceLine)
+    resistanceLine = null
+  }
+  if (supportLine) {
+    candleSeries.removePriceLine(supportLine)
+    supportLine = null
+  }
+  if (vwapLine) {
+    candleSeries.removePriceLine(vwapLine)
+    vwapLine = null
+  }
+
+  if (props.overlays?.pocVah) {
+    if (props.resistance) {
+      resistanceLine = candleSeries.createPriceLine({
+        price: props.resistance,
+        color: '#ef4444',
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: true,
+        title: 'RESISTANCE',
+      })
+    }
+    if (props.support) {
+      supportLine = candleSeries.createPriceLine({
+        price: props.support,
+        color: '#22c55e',
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: true,
+        title: 'SUPPORT',
+      })
+    }
+  }
+
+  if (props.overlays?.vwapEma && props.vwap) {
+    vwapLine = candleSeries.createPriceLine({
+      price: props.vwap,
+      color: '#3b82f6',
+      lineWidth: 1,
+      lineStyle: 1,
+      axisLabelVisible: true,
+      title: 'VWAP',
+    })
+  }
+}
+
+watch(() => props.candles, () => {
+  renderCandles()
+}, { deep: true })
+
+watch(() => props.livePrice, (newPrice) => {
+  if (newPrice !== null && newPrice !== undefined) {
+    updateLiveCandle(newPrice)
+  }
+})
+
+watch(() => props.selectedTimeframe, () => {
+  currentCandle.value = null
+  renderCandles()
+})
+
+watch([() => props.resistance, () => props.support, () => props.vwap, () => props.overlays], () => {
+  renderPriceLines()
+}, { deep: true })
+
+let resizeObserver: ResizeObserver | null = null
+
+function handleResize() {
+  if (chart && chartContainer.value) {
+    const width = chartContainer.value.clientWidth
+    const height = chartContainer.value.clientHeight
+    if (width > 0 && height > 0) {
+      chart.applyOptions({ width, height })
+    }
+  }
+}
+
+function setupResizeObserver() {
+  if (!chartContainer.value) return
+  if (typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver((entries) => {
+      if (!entries || entries.length === 0 || !chart) return
+      const entry = entries[0]
+      const { width, height } = entry.contentRect
+      if (width > 0 && height > 0) {
+        chart.applyOptions({ width, height })
+      }
+    })
+    resizeObserver.observe(chartContainer.value)
+  }
+}
+
+onMounted(() => {
+  nextTick(() => {
+    initChart()
+    setupResizeObserver()
+    window.addEventListener('resize', handleResize)
+  })
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', handleResize)
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
+  if (chart) {
+    chart.remove()
+    chart = null
+  }
+})
 </script>

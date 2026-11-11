@@ -7,61 +7,56 @@ describe('AgentPipelineHud.vue', () => {
     const wrapper = mount(AgentPipelineHud, {
       props: {
         marketState: 'open',
-        orchestratorAgent: 'SCALPER AGENT',
-        specialists: { structure: 'VAH Break', options: 'Call Unwind', gti: 85 },
-        criticRisk: 'Low Risk',
-        consensus: 'BUY 24200 CE',
-        consensusConfidence: 95,
-        ratchetTier: 'Tier 3 (+65% MFE)',
+        agents: {
+          Orchestrator: { status: 'active', message: 'Trend mode selected' },
+          'Adversarial Critic': { status: 'decided', message: 'Risk verified' },
+          'Consensus Judge': { status: 'decided', message: 'BUY signal confirmed' },
+          'Risk Manager': { status: 'active', message: 'Position protected' },
+        },
+        activeSpecialist: 'SCALPER',
       },
     })
 
     expect(wrapper.find('[data-test="hud-live-section"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="hud-closed-section"]').exists()).toBe(false)
-    expect(wrapper.text()).toContain('SCALPER AGENT')
-    expect(wrapper.text()).toContain('VAH Break')
-    expect(wrapper.text()).toContain('85')
-    expect(wrapper.text()).toContain('BUY 24200 CE (95%)')
-    expect(wrapper.text()).toContain('Tier 3 (+65% MFE)')
+    expect(wrapper.text()).toContain('ACTIVE')
+    expect(wrapper.text()).toContain('SCALPER')
   })
 
   it('emits selectAgent when node is clicked', async () => {
     const wrapper = mount(AgentPipelineHud, {
       props: {
         marketState: 'open',
+        agents: {
+          Orchestrator: { status: 'active', message: 'Analyzing' },
+        },
       },
     })
 
     const orchBtn = wrapper.find('[data-test="hud-orchestrator-btn"]')
     await orchBtn.trigger('click')
-    expect(wrapper.emitted('selectAgent')![0]).toEqual(['orchestrator'])
-
-    const criticBtn = wrapper.find('[data-test="hud-critic-btn"]')
-    await criticBtn.trigger('click')
-    expect(wrapper.emitted('selectAgent')![1]).toEqual(['critic'])
+    expect(wrapper.emitted('selectAgent')![0]).toEqual(['Orchestrator'])
   })
 
-  it('renders EOD debrief metrics when market is closed', () => {
+  it('renders real EOD debrief metrics calculated from tradeHistory when closed', () => {
+    const today = new Date().toISOString().split('T')[0]
     const wrapper = mount(AgentPipelineHud, {
       props: {
         marketState: 'closed',
-        eodOutcome: {
-          wins: 5,
-          losses: 0,
-          winRate: 100,
-          mfeCapturedPct: 75.5,
-          savedCapital: 4200,
-          scenariosCount: 3,
-          nextOpenText: 'Tomorrow 09:15 IST',
-        },
+        tradeHistory: [
+          { id: 't1', closedAt: `${today}T10:00:00Z`, pnl: '1500' },
+          { id: 't2', closedAt: `${today}T11:00:00Z`, pnl: '-500' },
+        ],
+        marketStatusMessage: 'Market is Closed',
       },
     })
 
     expect(wrapper.find('[data-test="hud-live-section"]').exists()).toBe(false)
     const closedSec = wrapper.find('[data-test="hud-closed-section"]')
     expect(closedSec.exists()).toBe(true)
-    expect(closedSec.text()).toContain('5 WINS / 0 LOSS (100% WIN RATE)')
-    expect(closedSec.text()).toContain('75.5% PEAK MFE CAPTURED')
-    expect(closedSec.text()).toContain('4,200 REVERSAL SAVE')
+    expect(closedSec.text()).toContain('2 TRADES (1W / 1L)')
+    expect(closedSec.text()).toContain('50.0%')
+    expect(closedSec.text()).toContain('+₹1,000.00')
+    expect(closedSec.text()).toContain('Market is Closed')
   })
 })

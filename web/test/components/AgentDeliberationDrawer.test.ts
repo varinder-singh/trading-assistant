@@ -19,55 +19,38 @@ describe('AgentDeliberationDrawer.vue', () => {
     expect(wrapper.emitted('update:activeTab')![0]).toEqual(['secondary'])
   })
 
-  it('renders Greeks and active strike buildup correctly in tab 2', () => {
+  it('renders real options analysis data when available in tab 2', () => {
     const wrapper = mount(AgentDeliberationDrawer, {
       props: {
         activeTab: 'secondary',
         marketState: 'open',
-        greeks: {
-          delta: 0.54,
-          theta: 165.5,
-          gamma: 0.0031,
-          ivRank: 32.5,
-          strikeBuildup: [
-            { strike: '24,200 ATM', ceOi: 40, peOi: 60, totalText: '62.0L' },
-          ],
+        optionsAnalysis: {
+          pcr: 1.34,
+          maxPain: 25000,
         },
       },
     })
 
     const content = wrapper.find('[data-test="tab-secondary-content"]')
-    expect(content.text()).toContain('+0.54 Δ')
-    expect(content.text()).toContain('₹165.50')
-    expect(content.text()).toContain('32.5%')
-    expect(content.text()).toContain('24,200 ATM')
+    expect(content.text()).toContain('1.34')
+    expect(content.text()).toContain('25000')
   })
 
-  it('renders tomorrow reference levels and scenarios when market is closed', () => {
+  it('renders agent status and messages in tab 1', () => {
     const wrapper = mount(AgentDeliberationDrawer, {
       props: {
         activeTab: 'primary',
         marketState: 'closed',
-        tomorrowPlan: {
-          levels: { val: 24050, poc: 24120, vah: 24220 },
-          scenarios: [
-            {
-              code: 'A',
-              title: 'SCENARIO A: Breakout',
-              agent: 'TREND AGENT',
-              description: 'Wait for 5m close above 24,220 VAH.',
-              borderColor: 'border-emerald-500',
-            },
-          ],
+        agents: {
+          Orchestrator: { status: 'idle', message: 'Awaiting market open...' },
+          'Consensus Judge': { status: 'decided', message: 'All EOD positions settled.' },
         },
       },
     })
 
     const content = wrapper.find('[data-test="tab-primary-content"]')
-    expect(content.text()).toContain('24050.00')
-    expect(content.text()).toContain('24120.00')
-    expect(content.text()).toContain('24220.00')
-    expect(content.text()).toContain('SCENARIO A: Breakout')
+    expect(content.text()).toContain('Awaiting market open...')
+    expect(content.text()).toContain('All EOD positions settled.')
   })
 
   it('emits selectStock when a screener candidate is clicked in tab 3', async () => {
@@ -75,9 +58,9 @@ describe('AgentDeliberationDrawer.vue', () => {
       props: {
         activeTab: 'tertiary',
         marketState: 'open',
-        screener: [
-          { symbol: 'TCS', trigger: 'POC Test', change: '+1.2%', gti: 88 },
-        ],
+        screenerData: {
+          topGainers: [{ symbol: 'TCS', lastPrice: 3850, changePct: 2.1 }],
+        },
       },
     })
 

@@ -1,7 +1,8 @@
 <template>
-  <div class="bg-slate-950 text-slate-100 font-sans antialiased min-h-screen flex flex-col select-none overflow-x-hidden">
-    <!-- 1. Header -->
+  <div class="bg-slate-950 text-slate-100 font-sans antialiased h-screen max-h-screen flex flex-col select-none overflow-hidden fixed inset-0">
+    <!-- 1. Header (Anchored permanently) -->
     <FlightControlHeader
+      class="shrink-0 z-30"
       :symbol="symbol"
       :live-price="livePrice"
       :price-change="priceChange"
@@ -9,59 +10,62 @@
       :market-state="marketState"
       :flight-mode="flightMode"
       :daily-pnl="dailyPnl"
-      :regime="regime"
-      :vix="vix"
-      :token-expiry-hours="tokenExpiryHours"
+      :regime="currentRegime"
+      :vix="currentVix"
+      :positions="portfolio"
       @update:flight-mode="flightMode = $event"
       @update:market-state="marketState = $event"
       @panic-square-off="$emit('panicSquareOff')"
       @symbol-change="$emit('symbolChange', $event)"
     />
 
-    <!-- 2. Agent Pipeline HUD -->
+    <!-- 2. Agent Pipeline HUD (Anchored below header) -->
     <AgentPipelineHud
+      class="shrink-0"
       :market-state="marketState"
-      :orchestrator-agent="orchestratorAgent"
-      :specialists="specialists"
-      :critic-risk="criticRisk"
-      :consensus="consensusVerdict"
-      :consensus-confidence="consensusConfidence"
-      :ratchet-tier="ratchetTier"
-      :eod-outcome="eodOutcome"
+      :agents="agents"
+      :active-specialist="activeSpecialist"
+      :trade-history="tradeHistory"
+      :market-status-message="marketStatusMessage"
+      :last-analysis-time="effectiveLastRun"
       @select-agent="handleSelectAgent"
     />
 
     <!-- 3. Main Workspace Canvas -->
-    <main class="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-[500px]">
-      <!-- Chart -->
+    <main class="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
+      <!-- Real Lightweight Candlestick Chart -->
       <CockpitChart
+        class="flex-1 min-w-0 h-full"
         :market-state="marketState"
         :symbol="symbol"
-        :selected-timeframe="selectedTimeframe"
-        :overlays="overlays"
-        :poc="pocLevel"
+        :selected-timeframe="chartTimeframe"
+        :candles="candles"
+        :gti-history="gtiHistory"
+        :resistance="resistanceLevel"
+        :support="supportLevel"
         :vwap="vwapLevel"
-        :ratchet-floor="ratchetFloor"
         :high="highPrice"
         :low="lowPrice"
-        :rsi="rsiValue"
-        :atr="atrValue"
-        :gti="gtiValue"
-        :tick-latency-ms="tickLatencyMs"
-        @update:selected-timeframe="selectedTimeframe = $event"
+        :live-price="livePrice"
+        :rsi="currentRsi"
+        :atr="currentAtr"
+        :gti="currentGti"
+        :overlays="overlays"
+        :positions="portfolio"
+        @update:selected-timeframe="$emit('timeframeChange', $event)"
         @update:overlays="overlays = $event"
       />
 
       <!-- Right Deliberation Drawer -->
       <AgentDeliberationDrawer
+        class="w-full lg:w-[420px] shrink-0 h-full flex flex-col overflow-hidden"
         :active-tab="rightPanelTab"
         :market-state="marketState"
-        :consensus="consensusObject"
-        :specialists="specialistsDetailed"
-        :critic="criticDetailed"
-        :tomorrow-plan="tomorrowPlan"
-        :greeks="greeksData"
-        :screener="screenerData"
+        :agents="agents"
+        :active-specialist="activeSpecialist"
+        :options-analysis="analysisResult?.optionsAnalysis"
+        :screener-data="screenerData"
+        :last-analysis-time="effectiveLastRun"
         @update:active-tab="rightPanelTab = $event"
         @select-stock="$emit('selectStock', $event)"
       />
@@ -69,25 +73,29 @@
 
     <!-- 4. Bottom Positions & Forensics Dock -->
     <CockpitDock
+      class="shrink-0 max-h-[220px] flex flex-col overflow-hidden"
       :active-tab="dockTab"
       :market-state="marketState"
-      :positions="computedPositions"
-      :closed-trades="computedClosedTrades"
+      :positions="portfolio"
+      :trade-history="tradeHistory"
       :event-logs="eventLogs"
       @update:active-tab="dockTab = $event"
-      @scale-position="$emit('scalePosition', $event)"
       @close-position="$emit('closePosition', $event)"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import FlightControlHeader from './FlightControlHeader.vue'
 import AgentPipelineHud from './AgentPipelineHud.vue'
 import AgentDeliberationDrawer from './AgentDeliberationDrawer.vue'
 import CockpitChart from './CockpitChart.vue'
 import CockpitDock from './CockpitDock.vue'
+
+onMounted(() => {
+  window.scrollTo(0, 0)
+})
 
 const props = withDefaults(
   defineProps<{
@@ -100,41 +108,61 @@ const props = withDefaults(
     tradeHistory?: any[]
     eventLogs?: any[]
     isMarketOpen?: boolean
-    vix?: number
+    marketStatusMessage?: string
+    agents?: Record<string, any>
+    analysisResult?: any
+    screenerData?: any
+    chartTimeframe?: string
+    lastAnalysisTime?: number | null
   }>(),
   {
-    symbol: 'NIFTY 50',
-    livePrice: 24185.4,
-    priceChange: 112.3,
-    priceChangePct: 0.47,
-    dailyPnl: 4850,
+    symbol: 'NIFTY',
+    livePrice: null,
+    priceChange: null,
+    priceChangePct: null,
+    dailyPnl: 0,
     portfolio: () => [],
     tradeHistory: () => [],
-    eventLogs: () => [
-      { time: '21:58:12', tag: 'WS_TICK', message: 'KiteTicker heartbeat: 0 dropped frames. Session alive.', tagColor: 'text-indigo-400' },
-      { time: '21:58:14', tag: 'RATCHET_EVAL', message: 'Retract Guard active. Noise Floor Gate (6.0%) evaluated OK.', tagColor: 'text-emerald-400' },
-      { time: '21:58:16', tag: 'CRITIC_PING', message: 'Red-Team Adversarial check passed with minor note (low theta risk).', tagColor: 'text-amber-400' },
-      { time: '21:58:20', tag: 'BROKER_AUTH', message: 'Zerodha Kite Token: VALID (Expires in 7h 14m at 06:00 AM).', tagColor: 'text-purple-400' },
-    ],
-    isMarketOpen: true,
-    vix: 13.24,
+    eventLogs: () => [],
+    isMarketOpen: false,
+    marketStatusMessage: 'Market is Closed',
+    agents: () => ({}),
+    analysisResult: null,
+    screenerData: () => ({ topGainers: [], topSurges: [] }),
+    chartTimeframe: '15m',
+    lastAnalysisTime: null,
   }
 )
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'panicSquareOff'): void
   (e: 'symbolChange', symbol: string): void
   (e: 'selectStock', symbol: string): void
-  (e: 'scalePosition', payload: { id: string; pct: number }): void
+  (e: 'timeframeChange', tf: string): void
   (e: 'closePosition', id: string): void
 }>()
 
 // UI state
 const marketState = ref<'open' | 'closed'>(props.isMarketOpen ? 'open' : 'closed')
+watch(() => props.isMarketOpen, (val) => {
+  marketState.value = val ? 'open' : 'closed'
+})
+
 const flightMode = ref<'auto' | 'supervised' | 'halt'>('auto')
-const selectedTimeframe = ref('3m')
 const rightPanelTab = ref<'primary' | 'secondary' | 'tertiary'>('primary')
-const dockTab = ref<'positions' | 'history' | 'events'>('positions')
+const dockTab = ref<'positions' | 'history' | 'events'>(
+  props.portfolio && props.portfolio.length > 0 ? 'positions' : (props.isMarketOpen ? 'positions' : 'history')
+)
+
+watch(
+  () => props.portfolio,
+  (newVal) => {
+    if (newVal && newVal.length > 0 && dockTab.value === 'history') {
+      dockTab.value = 'positions'
+    }
+  },
+  { deep: true }
+)
 
 const overlays = ref({
   ratchetBands: true,
@@ -142,224 +170,58 @@ const overlays = ref({
   vwapEma: true,
 })
 
-// Autonomous state defaults
-const regime = ref('Bullish Trend Expansion')
-const tokenExpiryHours = ref(7)
-const orchestratorAgent = ref('TREND AGENT')
-const criticRisk = ref('1 Pre-Mortem Risk Flag')
-const consensusVerdict = ref('BUY 24200 CE')
-const consensusConfidence = ref(92)
-const ratchetTier = ref('Tier-2 Lock (+55% MFE)')
-
-const specialists = ref({
-  structure: 'POC',
-  options: 'PE Build',
-  gti: 78,
+const effectiveLastRun = computed(() => {
+  if (props.lastAnalysisTime) return props.lastAnalysisTime
+  const agentTimes = Object.values(props.agents || {}).map((a: any) => a?.lastUpdate || 0)
+  const maxAgent = Math.max(0, ...agentTimes)
+  return maxAgent > 0 ? maxAgent : null
 })
 
-const pocLevel = ref(24150.0)
-const vwapLevel = ref(24142.15)
-const ratchetFloor = ref(24168.0)
-const highPrice = ref(24210.8)
-const lowPrice = ref(24095.1)
-const rsiValue = ref(64.2)
-const atrValue = ref(14.5)
-const gtiValue = ref(78)
-const tickLatencyMs = ref(18)
-
-const eodOutcome = ref({
-  wins: 4,
-  losses: 1,
-  winRate: 80,
-  mfeCapturedPct: 68.4,
-  savedCapital: 3175,
-  scenariosCount: 3,
-  nextOpenText: 'Tomorrow 09:15 IST (in 10h 42m)',
+const activeSpecialist = computed(() => {
+  if (props.agents['TREND'] && props.agents['TREND'].status !== 'idle') return 'TREND'
+  if (props.agents['SCALPER'] && props.agents['SCALPER'].status !== 'idle') return 'SCALPER'
+  return 'SCALPER'
 })
 
-const consensusObject = computed(() => ({
-  verdict: consensusVerdict.value,
-  confidence: consensusConfidence.value,
-  summary:
-    'Consensus Judge confirmed trend alignment with Volume Profile POC defense at 24,150 and heavy PE put-writing buildup at 24,100 strike. Sizing calibrated to target 0.50 Delta notional.',
-}))
-
-const specialistsDetailed = ref({
-  structure: {
-    title: '1. Structure Specialist',
-    tag: 'BULLISH POC HOLD',
-    description: 'Price bounced off 5m VWAP with higher low above 24,140 POC. VAH target opened at 24,240.',
-  },
-  options: {
-    title: '2. Options Specialist',
-    tag: 'PCR: 1.28 (+0.14)',
-    description: 'Aggressive Put addition at 24,100 & 24,150 PE. Call unwinding noted at 24,200 CE.',
-  },
-  macro: {
-    title: '3. Macro & GTI Specialist',
-    tag: 'GTI: 78 (INSTITUTIONAL)',
-    description: 'India VIX cooled -2.1% to 13.24. Banking index (HDFC, ICICI) leading breadth expansion.',
-  },
+const currentRegime = computed(() => {
+  return props.analysisResult?.regime || props.agents['Regime Validator']?.message || 'EVALUATING'
 })
 
-const criticDetailed = ref({
-  riskLevel: 'LOW/MODERATE',
-  pitfall: '0DTE Expiry Theta burn accelerates after 14:15 IST.',
-  mitigation: 'Enforced strict Retract Guard (Near DTE) and locked Profit Ratchet at Tier-1 immediately upon +8% MFE gain.',
+const currentVix = computed(() => {
+  return props.analysisResult?.vix || props.analysisResult?.indiaVix || null
 })
 
-const tomorrowPlan = ref({
-  levels: { val: 24080, poc: 24150, vah: 24240 },
-  scenarios: [
-    {
-      code: 'A',
-      title: 'SCENARIO A: Gap-Up (>24,240 VAH)',
-      agent: 'TREND AGENT',
-      description: 'If Gift Nifty holds above 24,240 on 5m opening bar with Positive GTI, initialize Trend Bullish breakout. Target: 24,350.',
-      borderColor: 'border-emerald-500',
-    },
-    {
-      code: 'B',
-      title: 'SCENARIO B: Range Open (24,100 - 24,200)',
-      agent: 'SCALPER AGENT',
-      description: 'Mean reversion between Value Area boundaries. High-frequency scalping activated targeting POC 24,150 retests.',
-      borderColor: 'border-indigo-500',
-    },
-    {
-      code: 'C',
-      title: 'SCENARIO C: Breakdown (<24,080 VAL)',
-      agent: 'DEFENSIVE / STANDBY',
-      description: 'Critic requires 15m consolidation before allowing PE buys. Strict Max Loss limit capped at ₹3,000.',
-      borderColor: 'border-rose-500',
-    },
-  ],
+const candles = computed(() => {
+  if (!props.analysisResult) return []
+  const key = `candles${props.chartTimeframe}`
+  return props.analysisResult[key] || props.analysisResult.candles15m || []
 })
 
-const greeksData = ref({
-  delta: 0.52,
-  theta: 140,
-  gamma: 0.0028,
-  ivRank: 28.4,
-  strikeBuildup: [
-    { strike: '24,300 CE', ceOi: 70, peOi: 0, totalText: '42.1L' },
-    { strike: '24,200 ATM', ceOi: 45, peOi: 55, totalText: '58.4L' },
-    { strike: '24,100 PE', ceOi: 0, peOi: 85, totalText: '81.2L' },
-  ],
+const gtiHistory = computed(() => {
+  return props.analysisResult?.gtiHistory || []
 })
 
-const screenerData = ref([
-  { symbol: 'RELIANCE', trigger: 'VWAP Cross + High Volume Surge', change: '+1.85%', gti: 84 },
-  { symbol: 'HDFCBANK', trigger: 'Consolidation Breakout (15m POC)', change: '+0.94%', gti: 79 },
-])
-
-const computedPositions = computed(() => {
-  if (props.portfolio && props.portfolio.length > 0) {
-    return props.portfolio.map((p, idx) => ({
-      id: p.id || `pos-${idx}`,
-      symbol: p.symbol || 'NIFTY 24200 CE',
-      type: (p.symbol && p.symbol.endsWith('PE') ? 'PE' : 'CE') as 'CE' | 'PE',
-      mode: 'AUTONOMOUS',
-      quantity: p.quantity || 50,
-      entryPrice: p.buyPrice || 142.0,
-      currentPrice: p.lastPrice || 174.5,
-      peakPrice: p.highestPrice || 178.0,
-      peakPct: p.highestPrice && p.buyPrice ? ((p.highestPrice - p.buyPrice) / p.buyPrice) * 100 : 25.3,
-      ratchetTierText: 'Tier 2: Locked +55% MFE',
-      stopLoss: p.stopLoss || 161.8,
-      unrealizedPnl: p.unrealizedPnL || 1625.0,
-      unrealizedPnlPct: p.unrealizedPnL && p.buyPrice && p.quantity ? (p.unrealizedPnL / (p.buyPrice * p.quantity)) * 100 : 22.8,
-    }))
-  }
-  return [
-    {
-      id: 'pos-1',
-      symbol: 'NIFTY 24200 CE',
-      type: 'CE' as const,
-      mode: 'AUTONOMOUS',
-      quantity: 50,
-      entryPrice: 142.0,
-      currentPrice: 174.5,
-      peakPrice: 178.0,
-      peakPct: 25.3,
-      ratchetTierText: 'Tier 2: Locked +55% MFE',
-      stopLoss: 161.8,
-      unrealizedPnl: 1625.0,
-      unrealizedPnlPct: 22.8,
-    },
-  ]
+const currentStats = computed(() => {
+  if (!props.analysisResult) return null
+  const key = `tf${props.chartTimeframe}`
+  return props.analysisResult[key] || props.analysisResult.tf15m || null
 })
 
-const computedClosedTrades = computed(() => {
-  if (props.tradeHistory && props.tradeHistory.length > 0) {
-    return props.tradeHistory.slice(0, 10).map((t, idx) => ({
-      id: t.id ? `TRD-${t.id.slice(0, 6)}` : `TRD-2410-0${idx + 1}`,
-      symbol: t.symbol || 'NIFTY 24150 CE',
-      entryPrice: t.entry_price || t.entryPrice || 110.0,
-      exitPrice: t.exit_price || t.exitPrice || 148.5,
-      exitAttribution: t.exit_reason || 'Ratchet Tier 3 Lock',
-      peakMfePct: 38.5,
-      mfeCapturePct: 74.2,
-      netPnl: t.pnl || 1925.0,
-      forensicVerdict: 'Protected Runner Against Sudden Pullback',
-    }))
-  }
-  return [
-    {
-      id: 'TRD-2410-01',
-      symbol: 'NIFTY 24150 CE',
-      entryPrice: 110.0,
-      exitPrice: 148.5,
-      exitAttribution: 'Ratchet Tier 3 Lock',
-      peakMfePct: 38.5,
-      mfeCapturePct: 74.2,
-      netPnl: 1925.0,
-      forensicVerdict: 'Protected Runner Against Sudden Pullback',
-    },
-    {
-      id: 'TRD-2410-02',
-      symbol: 'NIFTY 24200 PE',
-      entryPrice: 95.0,
-      exitPrice: 104.2,
-      exitAttribution: 'Retract Guard (Near DTE)',
-      peakMfePct: 16.8,
-      mfeCapturePct: 58.0,
-      netPnl: 460.0,
-      forensicVerdict: 'Reversal Save (+₹3,175 Capital Preserved)',
-    },
-    {
-      id: 'TRD-2410-03',
-      symbol: 'NIFTY 24200 CE',
-      entryPrice: 135.0,
-      exitPrice: 172.0,
-      exitAttribution: 'Ratchet Tier 2 Lock',
-      peakMfePct: 31.2,
-      mfeCapturePct: 71.5,
-      netPnl: 1850.0,
-      forensicVerdict: 'Captured Trend Expansion to VAH',
-    },
-    {
-      id: 'TRD-2410-04',
-      symbol: 'NIFTY 24100 PE',
-      entryPrice: 88.0,
-      exitPrice: 79.0,
-      exitAttribution: 'Strict SL Cut',
-      peakMfePct: 3.2,
-      mfeCapturePct: 0,
-      netPnl: -450.0,
-      forensicVerdict: 'Fast Exit on Invalidation at POC',
-    },
-    {
-      id: 'TRD-2410-05',
-      symbol: 'NIFTY 24200 CE',
-      entryPrice: 142.0,
-      exitPrice: 163.3,
-      exitAttribution: 'EOD Auto Square-off',
-      peakMfePct: 25.3,
-      mfeCapturePct: 69.8,
-      netPnl: 1065.0,
-      forensicVerdict: 'Market Close Zero-Overnight Mandate',
-    },
-  ]
+const resistanceLevel = computed(() => currentStats.value?.resistance || null)
+const supportLevel = computed(() => currentStats.value?.support || null)
+const vwapLevel = computed(() => currentStats.value?.vwap || null)
+const currentRsi = computed(() => currentStats.value?.rsi || null)
+const currentAtr = computed(() => currentStats.value?.atr || null)
+const currentGti = computed(() => currentStats.value?.gtiScore?.composite ? Math.round(currentStats.value.gtiScore.composite * 100) : null)
+
+const highPrice = computed(() => {
+  if (candles.value.length === 0) return null
+  return Math.max(...candles.value.map((c: any) => c.high))
+})
+
+const lowPrice = computed(() => {
+  if (candles.value.length === 0) return null
+  return Math.min(...candles.value.map((c: any) => c.low))
 })
 
 function handleSelectAgent(agentId: string) {

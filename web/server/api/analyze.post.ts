@@ -3,7 +3,7 @@ import { getOptionToken } from '@core/data/kite.js'
 import { classifyInstrument } from '@core/data/instrument-classifier.js'
 import { equityAnalysisService } from '@core/analysis/equity-analysis.js'
 import { serverSupabaseUser } from '#supabase/server'
-import { userRepo } from '@core/db/repositories/container.js'
+import { userRepo, analysisSnapshotRepo } from '@core/db/repositories/container.js'
 import { sessionManager } from '@core/execution/session-manager.js'
 import { isMarketOpen } from '@core/utils/market-hours.js'
 import { decryptSecret } from '@core/utils/crypto.js'
@@ -87,6 +87,29 @@ export default defineEventHandler(async (event) => {
         })
       }
 
+      const tradingDate = new Date().toISOString().split('T')[0]!
+      await analysisSnapshotRepo.saveSnapshot({
+        userId,
+        symbol: decision.symbol,
+        timeframe: '15m',
+        support: null,
+        resistance: null,
+        vwap: null,
+        atr: null,
+        levels: {
+          entry: decision.entryPrice,
+          stopLoss: decision.stopLoss,
+          targets: decision.targets,
+        },
+        decision,
+        agentDeliberations: {
+          assetClass: equityResult.assetClass,
+          confidence: decision.confidence,
+          reason: decision.reason,
+        },
+        tradingDate,
+      })
+
       return equityResult
     }
 
@@ -144,6 +167,32 @@ export default defineEventHandler(async (event) => {
         }
       }
     }
+
+    const tradingDate = new Date().toISOString().split('T')[0]!
+    await analysisSnapshotRepo.saveSnapshot({
+      userId,
+      symbol,
+      timeframe: '15m',
+      support: tf.support,
+      resistance: tf.resistance,
+      vwap: tf.vwap,
+      atr: tf.atr14,
+      levels: {
+        support: tf.support,
+        resistance: tf.resistance,
+        vwap: tf.vwap,
+        orb: tf.openingRange,
+        daily: result.dailyContext,
+      },
+      decision,
+      agentDeliberations: {
+        agentType,
+        vix,
+        sentiment: result.sentiment,
+        macroTrend: result.macroTrend,
+      },
+      tradingDate,
+    })
 
     return result
   } catch (error: any) {
