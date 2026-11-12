@@ -725,6 +725,9 @@ export class PaperTrader extends EventEmitter {
 
   private calculateOptionQuantity(context?: TradeContext): number {
     const baseLotSize = context?.lotSize || 1
+    if (context?.assetClass === 'STOCK_OPTION' && baseLotSize <= 1) {
+      console.warn('⚠️ [PaperTrader] Stock option missing contract lot size! Defaulting to 1.')
+    }
     const cappedLots = this.resolveCappedDeltaLots(context?.optionDelta)
     const numLots = this.resolveConfidenceAdjustedLots(cappedLots, context?.aiConfidence)
     const qty = baseLotSize * numLots
@@ -772,6 +775,9 @@ export class PaperTrader extends EventEmitter {
 
     const existing = this.positions.get(order.symbol)
     if (existing?.aiStopLoss && order.price! <= existing.aiStopLoss) {
+      if (order.price! >= existing.avgEntryPrice) {
+        return { title: '🔒 Trailing SL Hit (Profit Locked)', type: 'info' }
+      }
       return { title: '🛑 Stop-Loss Hit', type: 'error' }
     }
     if (existing?.aiTarget && order.price! >= existing.aiTarget) {
@@ -837,12 +843,24 @@ export class PaperTrader extends EventEmitter {
     const pos = this.positions.get(order.symbol)
     if (!pos || pos.side !== 'BUY') return
 
-    if (pos.aiStopLoss !== undefined && pos.aiStopLoss > 1000) {
-      pos.aiStopLoss = this.translateIndexStopToPremium(pos, order.price!, context)
+    if (pos.assetClass === 'EQUITY') {
+      if (pos.aiStopLoss !== undefined && pos.aiStopLoss >= order.price!) {
+        delete pos.aiStopLoss
+      }
+      if (pos.aiTarget !== undefined && pos.aiTarget <= order.price!) {
+        delete pos.aiTarget
+      }
+      return
     }
 
-    if (pos.aiTarget !== undefined && pos.aiTarget > 1000) {
-      pos.aiTarget = this.translateIndexTargetToPremium(pos, order.price!, context)
+    if (pos.assetClass === 'INDEX_OPTION') {
+      if (pos.aiStopLoss !== undefined && pos.aiStopLoss > 1000) {
+        pos.aiStopLoss = this.translateIndexStopToPremium(pos, order.price!, context)
+      }
+
+      if (pos.aiTarget !== undefined && pos.aiTarget > 1000) {
+        pos.aiTarget = this.translateIndexTargetToPremium(pos, order.price!, context)
+      }
     }
 
     if (pos.aiStopLoss !== undefined && pos.aiStopLoss >= order.price!) {
@@ -1228,6 +1246,14 @@ export class PaperTrader extends EventEmitter {
    * sit at ₹0.05, i.e. no stop at all) and records the validated index invalidation level.
    */
   private applyEntryRiskGuards(pos: PaperPosition, context?: TradeContext): void {
+    if (pos.assetClass === 'EQUITY') {
+      const minEquitySl = pos.avgEntryPrice * 0.97
+      if (pos.aiStopLoss === undefined || pos.aiStopLoss < minEquitySl) {
+        pos.aiStopLoss = Number((pos.avgEntryPrice * 0.985).toFixed(2))
+      }
+      return
+    }
+
     this.enforcePremiumStopFloor(pos)
 
     const indexInvalidation = resolveIndexInvalidation(
@@ -1272,6 +1298,28 @@ export class PaperTrader extends EventEmitter {
     })
   }
 
+  private async exitOnStopLossHit(pos: PaperPosition, price: number, entryPrice: number): Promise<void> {
+    const isProfitable = price >= entryPrice
+    const title = isProfitable ? '🔒 Trailing Stop Hit (Profit Locked)' : '⛔ Stop-Loss Hit'
+    const reason = isProfitable ? 'Trailing Stop Hit (Locked Profit)' : 'Stop-Loss hit'
+    const type = isProfitable ? 'info' : 'error'
+
+    console.log(`[EXIT] ${title} for ${pos.symbol} @ ${price} (SL: ${pos.aiStopLoss})`)
+    this.emit('notification', {
+      title,
+      message: `${pos.symbol} exited @ ₹${price.toFixed(2)} (${isProfitable ? 'Profit locked' : 'SL'}: ₹${pos.aiStopLoss?.toFixed(2)})`,
+      type,
+    })
+    await this.placeOrder({
+      symbol: pos.symbol,
+      token: pos.token,
+      side: 'SELL',
+      quantity: pos.quantity,
+      price: price,
+      context: { aiReasoning: reason },
+    })
+  }
+
   private async processPriceTickExits(symbol: string, pos: PaperPosition, price: number): Promise<void> {
     const entryPrice = pos.avgEntryPrice
     const peakPrice = pos.peakPrice ?? pos.currentPrice
@@ -1299,20 +1347,7 @@ export class PaperTrader extends EventEmitter {
     }
 
     if (pos.aiStopLoss && price <= pos.aiStopLoss) {
-      console.log(`[EXIT] ⛔ Stop-Loss hit for ${symbol} @ ${price} (SL: ${pos.aiStopLoss})`)
-      this.emit('notification', {
-        title: `⛔ Stop-Loss Hit`,
-        message: `${symbol} exited @ ₹${price.toFixed(2)} (SL: ₹${pos.aiStopLoss.toFixed(2)})`,
-        type: 'error',
-      })
-      await this.placeOrder({
-        symbol: pos.symbol,
-        token: pos.token,
-        side: 'SELL',
-        quantity: pos.quantity,
-        price: price,
-        context: { aiReasoning: 'Stop-Loss hit' },
-      })
+      await this.exitOnStopLossHit(pos, price, entryPrice)
       return
     }
 

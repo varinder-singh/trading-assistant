@@ -58,7 +58,7 @@ export class InstrumentClassifier {
     const s = symbol.toUpperCase().trim()
     try {
       const nfo = await this.getCachedInstruments(kc, 'NFO')
-      const item = nfo.find((i) => i.name === s && i.segment === 'NFO-OPT')
+      const item = nfo.find((i) => (i.name === s || i.tradingsymbol === s) && i.segment === 'NFO-OPT')
       return item?.lot_size ?? 1
     } catch {
       return 1

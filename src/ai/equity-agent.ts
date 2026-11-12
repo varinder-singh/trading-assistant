@@ -146,15 +146,23 @@ CONSTRAINTS & PREFERENCES:
 
     try {
       const parsed = JSON.parse(cleaned)
+      const decision = parsed.decision ?? 'NO_TRADE'
+      const action = this.resolveAction(parsed.action, context.isFnoListed)
+      const entryPrice = this.resolveEquityEntryPrice(parsed.entryPrice, context.currentPrice)
+      const stopLoss = this.resolveEquityStopLoss(parsed.stopLoss, entryPrice)
+      const targets = this.resolveEquityTargets(parsed.targets, entryPrice)
+      const strike = this.resolveStrike(action, parsed.strike, context.currentPrice)
+      const riskRewardRatio = this.computeRiskReward(entryPrice, stopLoss, targets)
+
       return {
         symbol: context.symbol,
-        decision: parsed.decision ?? 'NO_TRADE',
-        action: parsed.action ?? 'NONE',
-        strike: parsed.strike ?? null,
-        entryPrice: Number(parsed.entryPrice) || context.currentPrice,
-        stopLoss: Number(parsed.stopLoss) || Number((context.currentPrice * 0.985).toFixed(2)),
-        targets: this.resolveTargets(parsed.targets, context.currentPrice),
-        riskRewardRatio: Number(parsed.riskRewardRatio) || 1.5,
+        decision,
+        action,
+        strike,
+        entryPrice,
+        stopLoss,
+        targets,
+        riskRewardRatio,
         confidence: Number(parsed.confidence) || 50,
         holdingMode: parsed.holdingMode === 'CNC' ? 'CNC' : 'MIS',
         reason: parsed.reason ?? 'Evaluated based on price action and VWAP structure.',
@@ -164,22 +172,68 @@ CONSTRAINTS & PREFERENCES:
     }
   }
 
+  private resolveAction(rawAction: any, isFnoListed: boolean): 'BUY_EQUITY' | 'BUY_CE' | 'BUY_PE' | 'NONE' {
+    if (!rawAction || typeof rawAction !== 'string') return 'NONE'
+    if (!isFnoListed && (rawAction === 'BUY_CE' || rawAction === 'BUY_PE')) return 'BUY_EQUITY'
+    if (rawAction === 'BUY_EQUITY' || rawAction === 'BUY_CE' || rawAction === 'BUY_PE') return rawAction
+    return 'NONE'
+  }
+
+  private resolveEquityEntryPrice(rawEntry: any, currentPrice: number): number {
+    const price = Number(rawEntry)
+    if (!price || price <= 0) return currentPrice
+    const deviation = Math.abs(price - currentPrice) / currentPrice
+    if (deviation > 0.025) {
+      console.warn(`[EquityAnalystAgent] AI entry ₹${price} deviates >2.5% from CMP ₹${currentPrice}. Forcing CMP.`)
+      return currentPrice
+    }
+    return price
+  }
+
+  private resolveEquityStopLoss(rawSl: any, entryPrice: number): number {
+    const sl = Number(rawSl)
+    const minSl = entryPrice * 0.97
+    const maxSl = entryPrice * 0.995
+    if (!sl || sl < minSl || sl > maxSl) {
+      return Number((entryPrice * 0.985).toFixed(2))
+    }
+    return sl
+  }
+
+  private resolveEquityTargets(rawTargets: any, entryPrice: number): number[] {
+    const defaultTargets = [
+      Number((entryPrice * 1.012).toFixed(2)),
+      Number((entryPrice * 1.020).toFixed(2)),
+      Number((entryPrice * 1.032).toFixed(2)),
+    ]
+    if (!Array.isArray(rawTargets) || rawTargets.length < 2) return defaultTargets
+    const validTargets = rawTargets.map(Number).filter((t) => t > entryPrice && t <= entryPrice * 1.08)
+    const isAscending = validTargets.every((t, i) => i === 0 || t > validTargets[i - 1]!)
+    if (validTargets.length >= 2 && isAscending) return validTargets
+    return defaultTargets
+  }
+
+  private resolveStrike(action: string, rawStrike: any, currentPrice: number): number | null {
+    if (action === 'BUY_EQUITY' || action === 'NONE') return null
+    const strike = Number(rawStrike)
+    if (!strike || strike <= 0) return Math.round(currentPrice)
+    const deviation = Math.abs(strike - currentPrice) / currentPrice
+    if (deviation > 0.15) return Math.round(currentPrice)
+    return strike
+  }
+
+  private computeRiskReward(entryPrice: number, stopLoss: number, targets: number[]): number {
+    const risk = Math.max(entryPrice - stopLoss, 0.01)
+    const reward = Math.max((targets[0] || entryPrice) - entryPrice, 0.01)
+    return Number((reward / risk).toFixed(2))
+  }
+
   private extractJsonBlock(raw: string): string {
     const text = raw.trim()
     const firstBrace = text.indexOf('{')
     const lastBrace = text.lastIndexOf('}')
     const hasBraces = firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace
     return hasBraces ? text.substring(firstBrace, lastBrace + 1) : text
-  }
-
-  private resolveTargets(targets: any, currentPrice: number): number[] {
-    const isArrayWithValues = Array.isArray(targets) && targets.length > 0
-    if (isArrayWithValues) return targets.map(Number)
-
-    return [
-      Number((currentPrice * 1.015).toFixed(2)),
-      Number((currentPrice * 1.025).toFixed(2)),
-    ]
   }
 
   private buildFallbackNoTrade(context: EquityAnalysisContext, reason: string): EquityAgentDecision {

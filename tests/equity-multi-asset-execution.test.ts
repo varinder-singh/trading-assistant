@@ -166,4 +166,133 @@ describe('PaperTrader Scenario A (MIS) vs Scenario B (CNC)', () => {
     expect(remaining[0]?.symbol).toBe('STOCK_CNC') // CNC was preserved!
     expect(remaining[0]?.product).toBe('CNC')
   })
+
+  it('correctly enforces F&O lot size for stock options (never buys Qty: 1)', async () => {
+    const res = await paperTrader.placeOrder({
+      symbol: 'MFSL26NOV1320CE',
+      token: 999123,
+      side: 'BUY',
+      quantity: 1, // Base input
+      price: 42.5,
+      context: {
+        assetClass: 'STOCK_OPTION',
+        product: 'MIS',
+        lotSize: 400, // MFSL F&O lot size
+        aiStopLoss: 31.87,
+        aiTarget: 57.37,
+      },
+    })
+
+    expect(res.success).toBe(true)
+    const pos = paperTrader.getAllPositions().find((p) => p.symbol === 'MFSL26NOV1320CE')
+    expect(pos).toBeDefined()
+    expect(pos?.quantity).toBe(400) // Correct lot size!
+  })
+
+  it('preserves stop loss on high-priced equities (>1000 INR) without index translation mangling', async () => {
+    const res = await paperTrader.placeOrder({
+      symbol: 'PIIND',
+      token: 618521,
+      side: 'BUY',
+      quantity: 10,
+      price: 1772.0,
+      context: {
+        assetClass: 'EQUITY',
+        product: 'MIS',
+        aiStopLoss: 1745.0, // Valid stock stop loss > 1000
+        aiTarget: 1810.0,
+      },
+    })
+
+    expect(res.success).toBe(true)
+    const pos = paperTrader.getAllPositions().find((p) => p.symbol === 'PIIND')
+    expect(pos).toBeDefined()
+    // Must remain 1745.0, NOT translated to index premium!
+    expect(pos?.aiStopLoss).toBe(1745.0)
+    expect(pos?.aiTarget).toBe(1810.0)
+  })
+
+  it('labels profitable trailing stop exits as Trailing Stop Hit (Locked Profit), not Stop-Loss hit', async () => {
+    await paperTrader.placeOrder({
+      symbol: 'STOCK_TRAIL',
+      token: 555001,
+      side: 'BUY',
+      quantity: 100,
+      price: 100.0,
+      context: {
+        assetClass: 'EQUITY',
+        product: 'MIS',
+        aiStopLoss: 98.0,
+        aiTarget: 110.0,
+      },
+    })
+
+    const notifications: any[] = []
+    paperTrader.on('notification', (n) => notifications.push(n))
+
+    // 1. Price surges to 102.50 (+2.5% gain) -> triggers ratchet
+    await paperTrader.updatePrice(555001, 102.5)
+
+    const pos = paperTrader.getAllPositions().find((p) => p.symbol === 'STOCK_TRAIL')
+    expect(pos?.aiStopLoss).toBeGreaterThan(100.0) // SL locked above entry
+
+    // 2. Price retraces to hit the ratcheted SL
+    const lockedSl = pos!.aiStopLoss!
+    await paperTrader.updatePrice(555001, lockedSl - 0.05)
+
+    // Position should be closed
+    const closed = paperTrader.getAllPositions().find((p) => p.symbol === 'STOCK_TRAIL')
+    expect(closed).toBeUndefined()
+
+    // Notification must be info / success lock, NOT error Stop-Loss Hit
+    const exitNotif = notifications.find((n) => n.title.includes('Trailing Stop Hit'))
+    expect(exitNotif).toBeDefined()
+    expect(exitNotif.type).toBe('info')
+  })
+})
+
+describe('EquityAnalystAgent AI Hallucination Sanitization', () => {
+  it('sanitizes option-like hallucinated entry price (e.g. ITC 2.50 vs CMP 287.40)', async () => {
+    const { EquityAnalystAgent } = await import('../src/ai/equity-agent.js')
+    const mockProvider = {
+      chat: vi.fn().mockResolvedValue(`
+        {
+          "symbol": "ITC",
+          "decision": "BUY",
+          "action": "BUY_EQUITY",
+          "strike": 288,
+          "entryPrice": 2.50,
+          "stopLoss": 1.50,
+          "targets": [2.95, 3.50, 4.00],
+          "confidence": 85,
+          "holdingMode": "MIS",
+          "reason": "Strong volume breakout above VWAP"
+        }
+      `),
+    }
+
+    const agent = new EquityAnalystAgent(mockProvider as any)
+    const decision = await agent.evaluate({
+      symbol: 'ITC',
+      currentPrice: 287.4,
+      atp: 286.5,
+      changePct: 1.2,
+      volumeSurgeRatio: 3.5,
+      obi: 0.4,
+      tf5m: { price: 287.4, rsi: 62, vwap: 286.8, trend: 'BULLISH' },
+      tf15m: { price: 287.4, rsi: 65, vwap: 286.0, trend: 'BULLISH', support: 285.0, resistance: 290.0 },
+      relativeStrengthVsNifty: 1.5,
+      isFnoListed: true,
+    })
+
+    // Entry price MUST be sanitized to CMP
+    expect(decision.entryPrice).toBe(287.4)
+    // StopLoss MUST be within realistic equity risk
+    expect(decision.stopLoss).toBeGreaterThanOrEqual(287.4 * 0.97)
+    expect(decision.stopLoss).toBeLessThanOrEqual(287.4 * 0.995)
+    // Targets MUST be above 287.4
+    expect(decision.targets[0]).toBeGreaterThan(287.4)
+    // Strike must be null for BUY_EQUITY
+    expect(decision.strike).toBeNull()
+  })
 })

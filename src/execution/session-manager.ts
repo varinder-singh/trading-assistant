@@ -14,6 +14,7 @@ import { getCalendarDaysToExpiry, getExpiryRiskProfile } from './expiry-risk-pro
 import type { PendingTriggerOrder, TradeContext } from './types.js'
 import { globalKiteScanner } from '../data/kite-scanner.js'
 import { equityAnalysisService } from '../analysis/equity-analysis.js'
+import { getFnoLotSize } from '../data/instrument-classifier.js'
 import { universeBootstrapper } from '../data/universe-bootstrapper.js'
 import { analysisQueue } from './analysis-queue.js'
 
@@ -718,12 +719,15 @@ export class UserSession extends EventEmitter {
 
   private async executeSurfacedEquityOrder(candidate: any, decision: any): Promise<void> {
     console.log(`[UserSession] Executing Equity Trade for ${candidate.symbol} (${decision.holdingMode})...`)
+    const livePrice = candidate.price && candidate.price > 0 ? candidate.price : decision.entryPrice
+    const entryPrice = Math.abs(decision.entryPrice - livePrice) / livePrice > 0.02 ? livePrice : decision.entryPrice
+
     await this.paperTrader.placeOrder({
       symbol: candidate.symbol,
       token: candidate.token,
       side: 'BUY',
       quantity: 1,
-      price: decision.entryPrice,
+      price: entryPrice,
       context: {
         assetClass: 'EQUITY',
         product: decision.holdingMode,
@@ -736,14 +740,38 @@ export class UserSession extends EventEmitter {
     })
   }
 
-  private async executeSurfacedOptionOrder(option: any, decision: any): Promise<void> {
-    console.log(`[UserSession] Executing Stock Option Trade for ${option.symbol}...`)
+  private resolveSurfacedOptionPrice(quote: any): number {
+    const hasTradedToday = (quote?.volume ?? 0) > 0 && (quote?.ohlc?.open ?? 0) > 0
+    const bestAsk = quote?.depth?.sell?.[0]?.price ?? 0
+    if (hasTradedToday && quote?.last_price > 0) return quote.last_price
+    return bestAsk > 0 ? bestAsk : 0
+  }
+
+  private isOptionLiquiditySufficient(quote: any): boolean {
+    const bestAsk = quote?.depth?.sell?.[0]?.price ?? 0
+    const bestBid = quote?.depth?.buy?.[0]?.price ?? 0
+    if (bestAsk <= 0 || bestBid <= 0) return true
+    const spreadPct = ((bestAsk - bestBid) / bestAsk) * 100
+    return spreadPct <= 12
+  }
+
+  private async executeSurfacedOptionOrder(
+    option: { symbol: string; token: number; expiry?: Date; lotSize?: number },
+    decision: any
+  ): Promise<void> {
+    console.log(`[UserSession] Validating & Executing Stock Option Trade for ${option.symbol}...`)
+    const quoteMap = await this.kc.getQuote([`NFO:${option.symbol}`])
+    const quote = quoteMap[`NFO:${option.symbol}`]
+    const entryPrice = this.resolveSurfacedOptionPrice(quote)
+
+    if (entryPrice <= 0 || !this.isOptionLiquiditySufficient(quote)) {
+      console.warn(`[UserSession] Option ${option.symbol} skipped: stale/untraded quote or wide spread.`)
+      return
+    }
+
+    const lotSize = option.lotSize || (await getFnoLotSize(this.kc, option.symbol)) || 1
     this.ticker.subscribe([option.token])
     this.ticker.setMode(this.ticker.modeFull, [option.token])
-
-    const quote = await this.kc.getQuote([`NFO:${option.symbol}`])
-    const entryPrice = quote[`NFO:${option.symbol}`]?.last_price || 0
-    if (entryPrice <= 0) return
 
     await this.paperTrader.placeOrder({
       symbol: option.symbol,
@@ -755,6 +783,8 @@ export class UserSession extends EventEmitter {
       context: {
         assetClass: 'STOCK_OPTION',
         product: 'MIS',
+        lotSize,
+        optionExpiry: option.expiry,
         aiReasoning: decision.reason,
         aiConfidence: decision.confidence,
         aiStrike: decision.strike || undefined,

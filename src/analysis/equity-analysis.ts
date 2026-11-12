@@ -14,6 +14,7 @@ export interface EquityAnalysisPipelineResult {
     symbol: string
     token: number
     expiry: Date
+    lotSize: number
   }
 }
 

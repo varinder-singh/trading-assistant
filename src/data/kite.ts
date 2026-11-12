@@ -32,7 +32,7 @@ export async function getInstrumentToken(kc: KiteConnectInstance, symbol: string
   return instrument?.instrument_token ? Number(instrument.instrument_token) : undefined
 }
 
-export async function getOptionToken(kc: KiteConnectInstance, underlying: string, strike: number, type: "CE" | "PE"): Promise<{ token: number, symbol: string, expiry: Date } | undefined> {
+export async function getOptionToken(kc: KiteConnectInstance, underlying: string, strike: number, type: "CE" | "PE"): Promise<{ token: number, symbol: string, expiry: Date, lotSize: number } | undefined> {
   const instruments = await getCachedInstruments(kc, "NFO")
   
   // Filter for current symbol and strike
@@ -52,7 +52,8 @@ export async function getOptionToken(kc: KiteConnectInstance, underlying: string
   return {
     token: Number(target.instrument_token),
     symbol: target.tradingsymbol,
-    expiry: target.expiry
+    expiry: target.expiry,
+    lotSize: Number(target.lot_size) || 1
   }
 }
 export default createKiteClient(process.env.KITE_ACCESS_TOKEN)
