@@ -1,5 +1,6 @@
 <template>
-  <footer class="bg-slate-900 border-t border-slate-800 flex flex-col">
+  <!-- 1. DESKTOP DOCK MODE (Default: unchanged desktop multi-pane dock) -->
+  <footer v-if="!mobileView" class="bg-slate-900 border-t border-slate-800 flex flex-col">
     <!-- Bottom Tabs Bar -->
     <div class="shrink-0 px-4 py-1.5 border-b border-slate-800 bg-slate-900 flex flex-wrap items-center justify-between gap-2 text-xs">
       <div class="flex items-center gap-4">
@@ -344,6 +345,321 @@
       </div>
     </div>
   </footer>
+
+  <!-- 2. MOBILE FULL-HEIGHT VIEW MODE (Thumb-friendly cards, zero horizontal table squishing) -->
+  <div v-else class="flex-1 min-h-0 flex flex-col bg-slate-900 overflow-hidden">
+    <!-- Active Positions Mobile View -->
+    <div
+      v-if="activeTab === 'positions'"
+      data-test="dock-positions-content"
+      class="flex-1 min-h-0 flex flex-col overflow-hidden"
+    >
+      <div class="shrink-0 px-4 py-2 border-b border-slate-800 bg-slate-900/90 flex items-center justify-between text-xs">
+        <div class="flex items-center gap-2 font-bold text-white">
+          <span
+            class="w-2 h-2 rounded-full"
+            :class="positions.length > 0 ? 'bg-emerald-400 animate-pulse' : (marketState === 'open' ? 'bg-emerald-500' : 'bg-slate-500')"
+          ></span>
+          <span>ACTIVE POSITIONS ({{ positions.length }})</span>
+        </div>
+        <div v-if="positions.length > 0" class="text-xs font-mono">
+          Total Unrealized:
+          <span class="font-bold" :class="totalUnrealizedPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+            {{ totalUnrealizedPnl >= 0 ? '+' : '' }}₹{{ totalUnrealizedPnl.toFixed(2) }}
+          </span>
+        </div>
+      </div>
+
+      <div class="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
+        <div
+          v-for="pos in positions"
+          :key="pos.id || pos.symbol"
+          data-test="position-row"
+          class="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-2.5 shadow-sm"
+        >
+          <!-- Row 1: Symbol, CE/PE badge, Mode, and Unrealized P&L -->
+          <div class="flex items-start justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <span
+                class="px-1.5 py-0.5 rounded text-[10px] font-bold"
+                :class="pos.symbol?.endsWith('PE') ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'"
+              >
+                {{ pos.symbol?.endsWith('PE') ? 'PE' : 'CE' }}
+              </span>
+              <span class="font-bold text-sm text-white font-mono">{{ pos.symbol }}</span>
+              <span class="text-[10px] px-1.5 py-0.2 bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 rounded font-semibold">{{ pos.product || 'PAPER' }}</span>
+            </div>
+            <div
+              class="font-mono font-bold text-base"
+              :class="(pos.unrealizedPnL || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'"
+            >
+              {{ (pos.unrealizedPnL || 0) >= 0 ? '+' : '' }}₹{{ Number(pos.unrealizedPnL || 0).toFixed(2) }}
+            </div>
+          </div>
+
+          <!-- Row 2: Quantities & Prices Grid -->
+          <div class="grid grid-cols-3 gap-2 text-xs font-mono bg-slate-900/60 p-2 rounded-lg border border-slate-800/60">
+            <div>
+              <div class="text-[10px] text-slate-500">QTY</div>
+              <div class="text-slate-200 font-semibold">{{ pos.quantity }}</div>
+            </div>
+            <div>
+              <div class="text-[10px] text-slate-500">AVG ENTRY</div>
+              <div class="text-slate-200 font-semibold">₹{{ Number(pos.avgEntryPrice || pos.buyPrice || pos.price || 0).toFixed(2) }}</div>
+            </div>
+            <div>
+              <div class="text-[10px] text-slate-500">LTP</div>
+              <div class="text-emerald-400 font-bold">₹{{ Number(pos.currentPrice || pos.lastPrice || pos.avgEntryPrice || 0).toFixed(2) }}</div>
+            </div>
+          </div>
+
+          <!-- Row 3: Target & Trailing SL -->
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+            <div class="flex items-center gap-1.5">
+              <span class="text-slate-400 text-[11px]">SL:</span>
+              <span class="text-rose-400 font-bold">
+                ₹{{ (pos.trailingSlLocked || pos.aiStopLoss || pos.stopLoss) ? Number(pos.trailingSlLocked || pos.aiStopLoss || pos.stopLoss).toFixed(2) : '—' }}
+              </span>
+              <span
+                v-if="pos.trailingSlLocked"
+                class="text-[9px] px-1 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded font-bold"
+              >
+                LOCKED
+              </span>
+            </div>
+
+            <div class="text-[11px]">
+              <span v-if="pos.t1Target" class="inline-flex items-center gap-1">
+                <span class="text-slate-400">T1:</span>
+                <span :class="pos.t1Hit ? 'text-amber-400 font-bold line-through' : 'text-slate-200'">₹{{ Number(pos.t1Target).toFixed(2) }}</span>
+                <span v-if="pos.t1Hit" class="text-amber-400 font-black">🥇 HIT</span>
+              </span>
+              <span v-else-if="pos.aiTarget" class="text-slate-200">
+                Target: ₹{{ Number(pos.aiTarget).toFixed(2) }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Row 4: Action Button -->
+          <button
+            data-test="close-btn"
+            type="button"
+            @click="$emit('closePosition', pos.id || pos.symbol)"
+            class="w-full py-2 bg-rose-950/80 hover:bg-rose-900 border border-rose-700/80 text-rose-200 hover:text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 active:scale-[0.98]"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+            <span>Square Off Position</span>
+          </button>
+        </div>
+
+        <!-- Empty Banner -->
+        <div v-if="positions.length === 0" class="py-12 text-center text-slate-400 px-4">
+          <div class="w-12 h-12 mx-auto mb-3 rounded-full bg-slate-800 flex items-center justify-center text-slate-500 text-xl">
+            💼
+          </div>
+          <div class="text-sm font-bold text-slate-300">
+            {{ marketState === 'open' ? 'No active open positions' : 'All intraday positions squared off' }}
+          </div>
+          <div class="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
+            {{ marketState === 'open' ? 'Autonomous MAS is monitoring for new high-probability setups.' : 'Zero overnight exposure carried forward. Check the "Forensics" tab for today\'s trade autopsies.' }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Closed Trades & Forensic Mobile View -->
+    <div
+      v-else-if="activeTab === 'history'"
+      data-test="dock-history-content"
+      class="flex-1 min-h-0 flex flex-col overflow-hidden text-xs font-mono"
+    >
+      <!-- Filter Bar & Net P&L Summary -->
+      <div class="shrink-0 p-3 border-b border-slate-800 bg-slate-900/90 space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-white flex items-center gap-1.5">
+            <span>🔬</span> CLOSED TRADES & FORENSICS
+          </span>
+          <div class="text-xs font-mono text-slate-300">
+            Net P&L:
+            <span
+              class="font-bold"
+              :class="totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'"
+            >
+              {{ totalPnl >= 0 ? '+' : '' }}₹{{ totalPnl.toLocaleString('en-IN', { minimumFractionDigits: 2 }) }}
+            </span>
+          </div>
+        </div>
+
+        <!-- Filter Toggle -->
+        <div class="flex items-center gap-2 text-xs">
+          <button
+            type="button"
+            @click="historyFilter = 'today'"
+            class="flex-1 py-1.5 rounded-lg text-center font-medium transition"
+            :class="historyFilter === 'today' ? 'bg-indigo-600 text-white font-bold shadow-sm' : 'bg-slate-800 text-slate-400 hover:text-white'"
+          >
+            Today's Trades ({{ todaysTrades.length }})
+          </button>
+          <button
+            type="button"
+            @click="historyFilter = 'all'"
+            class="flex-1 py-1.5 rounded-lg text-center font-medium transition"
+            :class="historyFilter === 'all' ? 'bg-indigo-600 text-white font-bold shadow-sm' : 'bg-slate-800 text-slate-400 hover:text-white'"
+          >
+            All History ({{ tradeHistory.length }})
+          </button>
+        </div>
+      </div>
+
+      <!-- Trade Cards List -->
+      <div class="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
+        <div
+          v-for="t in paginatedTrades"
+          :key="t.id"
+          data-test="history-row"
+          @click="toggleExpand(t.id)"
+          class="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-2.5 transition cursor-pointer select-none"
+          :class="expandedTradeId === t.id ? 'border-indigo-500/60 ring-1 ring-indigo-500/40 bg-slate-900/70' : 'hover:border-slate-700'"
+        >
+          <!-- Header row: Time, Side, Instrument, Net PnL -->
+          <div class="flex items-start justify-between gap-2">
+            <div class="space-y-1">
+              <div class="flex items-center gap-2">
+                <span
+                  class="px-1.5 py-0.5 rounded text-[10px] font-bold font-mono"
+                  :class="t.side === 'BUY' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'"
+                >
+                  {{ t.side }}
+                </span>
+                <span class="font-bold text-white font-mono text-sm">{{ t.symbol }}</span>
+              </div>
+              <div class="text-[11px] text-slate-500 font-mono">
+                {{ formatTimestamp(t.closedAt || t.openedAt) }} • ID: {{ t.id?.slice(0, 8) }}
+              </div>
+            </div>
+            <div
+              class="font-mono font-bold text-base"
+              :class="(Number(t.pnl) || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'"
+            >
+              {{ t.pnl !== null && t.pnl !== undefined ? ((Number(t.pnl) || 0) >= 0 ? '+' : '') + '₹' + Number(t.pnl).toFixed(2) : '—' }}
+            </div>
+          </div>
+
+          <!-- Quantities & Prices Grid -->
+          <div class="grid grid-cols-3 gap-2 text-xs font-mono bg-slate-900/60 p-2 rounded-lg border border-slate-800/60">
+            <div>
+              <div class="text-[10px] text-slate-500">QTY</div>
+              <div class="text-slate-200">{{ t.quantity }}</div>
+            </div>
+            <div>
+              <div class="text-[10px] text-slate-500">ENTRY ➔ EXIT</div>
+              <div class="text-slate-200">₹{{ Number(t.entryPrice || 0).toFixed(1) }} ➔ {{ t.exitPrice ? '₹' + Number(t.exitPrice).toFixed(1) : '—' }}</div>
+            </div>
+            <div>
+              <div class="text-[10px] text-slate-500">CONFIDENCE</div>
+              <div class="text-indigo-300 font-semibold">{{ t.aiConfidence ? t.aiConfidence + '%' : (t.aiReasoning ? 'Analyzed' : '—') }}</div>
+            </div>
+          </div>
+
+          <!-- Exit Reason & Expand Hint -->
+          <div class="flex items-center justify-between text-xs pt-0.5">
+            <div class="flex items-center gap-1.5 font-mono">
+              <span class="text-slate-500 text-[11px]">EXIT:</span>
+              <span
+                class="font-bold"
+                :class="(Number(t.pnl) || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'"
+              >
+                {{ t.exitReason || t.status }}
+              </span>
+            </div>
+            <div class="text-indigo-400 font-medium text-[11px] flex items-center gap-1">
+              <span>{{ expandedTradeId === t.id ? 'Hide Forensic Trace ▲' : 'View Forensic Trace ▼' }}</span>
+            </div>
+          </div>
+
+          <!-- Expandable Forensic Panel -->
+          <div v-if="expandedTradeId === t.id" class="pt-2 border-t border-slate-800 space-y-2 font-mono text-xs">
+            <div class="text-indigo-400 font-bold flex items-center gap-1 text-[11px]">
+              <span>🔬</span> FORENSIC AUDIT & DECISION TRACE
+            </div>
+            <div class="space-y-1.5 bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px]">
+              <div>
+                <span class="text-slate-500 block text-[10px] uppercase">Strategy Setup</span>
+                <span class="text-slate-200 font-bold">{{ t.setup || t.strategyContext || 'Autonomous MAS Execution' }}</span>
+              </div>
+              <div>
+                <span class="text-slate-500 block text-[10px] uppercase">Market Regime & VIX</span>
+                <span class="text-slate-200">VIX: {{ t.vixLevel || '—' }} | RSI: {{ t.rsiLevel || '—' }} | Trend: {{ t.trend15m || '—' }}</span>
+              </div>
+              <div>
+                <span class="text-slate-500 block text-[10px] uppercase">Exit Verdict & Protection</span>
+                <span :class="(Number(t.pnl) || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'" class="font-bold">
+                  {{ t.exitReason || t.forensicVerdict || t.status }}
+                </span>
+              </div>
+              <div v-if="t.aiReasoning || t.forensicVerdict" class="pt-1.5 border-t border-slate-800/80 text-slate-300 leading-relaxed">
+                <span class="text-indigo-400 font-bold">AI Reasoning: </span>
+                {{ t.aiReasoning || t.forensicVerdict }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Pagination Controls -->
+        <div v-if="totalPages > 1" class="pt-2 flex items-center justify-between text-xs text-slate-400 font-mono">
+          <button
+            type="button"
+            data-test="prev-page-btn"
+            @click.stop="currentPage--"
+            :disabled="currentPage === 1"
+            class="px-3 py-1.5 rounded bg-slate-800 border border-slate-700 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition"
+          >
+            ◀ Prev
+          </button>
+          <span>Page {{ currentPage }} of {{ totalPages }}</span>
+          <button
+            type="button"
+            data-test="next-page-btn"
+            @click.stop="currentPage++"
+            :disabled="currentPage === totalPages"
+            class="px-3 py-1.5 rounded bg-slate-800 border border-slate-700 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition"
+          >
+            Next ▶
+          </button>
+        </div>
+
+        <!-- Empty State -->
+        <div v-if="displayedTrades.length === 0" class="py-12 text-center text-slate-500">
+          No {{ historyFilter === 'today' ? "trades recorded today." : "trades recorded in database yet for this account." }}
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Event Bus & Engine Health Mobile View -->
+    <div
+      v-else-if="activeTab === 'events'"
+      data-test="dock-events-content"
+      class="flex-1 min-h-0 flex flex-col overflow-hidden text-xs font-mono"
+    >
+      <div class="shrink-0 px-4 py-2 border-b border-slate-800 bg-slate-900/90 flex items-center justify-between text-xs">
+        <span class="font-bold text-white flex items-center gap-1.5">
+          <span>📋</span> SYSTEM HEALTH & ENGINE LOGS ({{ eventLogs.length }})
+        </span>
+      </div>
+      <div class="flex-1 min-h-0 overflow-y-auto p-3 space-y-1.5 text-slate-400">
+        <div v-for="(log, idx) in eventLogs" :key="idx" data-test="event-log-item" class="flex items-start gap-2 hover:bg-slate-800/40 p-1.5 rounded transition bg-slate-950/40 border border-slate-800/50">
+          <span class="text-slate-500 whitespace-nowrap">[{{ log.time }}]</span>
+          <span class="font-bold whitespace-nowrap" :class="log.tagColor">[{{ log.tag }}]</span>
+          <span class="text-slate-200 leading-relaxed break-words flex-1">{{ log.message }}</span>
+        </div>
+        <div v-if="eventLogs.length === 0" class="text-center py-12 text-slate-500">
+          No recent system events logged.
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -356,6 +672,7 @@ const props = withDefaults(
     positions?: Array<any>
     tradeHistory?: Array<any>
     eventLogs?: Array<{ time: string; tag: string; message: string; tagColor: string }>
+    mobileView?: boolean
   }>(),
   {
     activeTab: 'history',
@@ -363,6 +680,7 @@ const props = withDefaults(
     positions: () => [],
     tradeHistory: () => [],
     eventLogs: () => [],
+    mobileView: false,
   }
 )
 
@@ -417,6 +735,10 @@ const paginatedTrades = computed(() => {
 
 const totalPnl = computed(() => {
   return displayedTrades.value.reduce((acc, t) => acc + (Number(t.pnl) || 0), 0)
+})
+
+const totalUnrealizedPnl = computed(() => {
+  return props.positions.reduce((acc, p) => acc + (Number(p.unrealizedPnL) || 0), 0)
 })
 
 function formatTimestamp(timestamp?: string) {

@@ -36,4 +36,45 @@ describe('AutonomousCockpit.vue', () => {
     expect(wrapper.text()).toContain('MAS PIPELINE:')
     expect(wrapper.text()).toContain('INTRADAY LIVE EXECUTION')
   })
+
+  it('renders mobile bottom navigation bar with all 5 tabs and allows tab switching', async () => {
+    const wrapper = mount(AutonomousCockpit, {
+      props: {
+        symbol: 'NIFTY',
+        tradeHistory: [
+          {
+            id: 'TRD-TODAY-01',
+            symbol: 'NIFTY24O1924200CE',
+            side: 'BUY',
+            quantity: 50,
+            pnl: 1200,
+            closedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    })
+
+    const nav = wrapper.find('[data-test="mobile-bottom-nav"]')
+    expect(nav.exists()).toBe(true)
+
+    // Check all 5 tabs exist
+    expect(wrapper.find('[data-test="mobile-tab-positions"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="mobile-tab-history"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="mobile-tab-chart"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="mobile-tab-agents"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="mobile-tab-events"]').exists()).toBe(true)
+
+    // Forensics badge reflects today's trade count
+    expect(wrapper.find('[data-test="mobile-tab-history"]').text()).toContain('Forensics')
+    expect(wrapper.find('[data-test="mobile-tab-history"]').text()).toContain('1')
+
+    // Switch tab to Chart
+    const chartTab = wrapper.find('[data-test="mobile-tab-chart"]')
+    await chartTab.trigger('click')
+
+    // Switch tab to Forensics
+    const historyTab = wrapper.find('[data-test="mobile-tab-history"]')
+    await historyTab.trigger('click')
+    expect(wrapper.text()).toContain('CLOSED TRADES & FORENSICS')
+  })
 })

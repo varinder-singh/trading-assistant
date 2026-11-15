@@ -1,6 +1,6 @@
 <template>
-  <header class="bg-slate-900/90 backdrop-blur border-b border-slate-800 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 sticky top-0 z-30">
-    <div class="flex items-center gap-4">
+  <header class="bg-slate-900/90 backdrop-blur border-b border-slate-800 px-3 sm:px-4 py-2 sm:py-2.5 flex flex-wrap items-center justify-between gap-2 sm:gap-3 sticky top-0 z-30">
+    <div class="flex items-center gap-3 sm:gap-4">
       <!-- App Brand & Pulse -->
       <div class="flex items-center gap-2.5 pr-3 border-r border-slate-800">
         <div class="relative flex h-3 w-3">
@@ -17,7 +17,7 @@
           <div class="font-bold text-sm tracking-wide text-white flex items-center gap-1.5">
             AEGIS <span class="text-xs px-1.5 py-0.2 bg-indigo-500/20 text-indigo-400 border border-indigo-500/40 rounded font-mono">MAS-V2</span>
           </div>
-          <div class="text-xs text-slate-400">Autonomous Trading Cockpit</div>
+          <div class="hidden sm:block text-xs text-slate-400">Autonomous Trading Cockpit</div>
         </div>
       </div>
 
@@ -180,12 +180,12 @@
         <a
           href="/api/auth/kite/login"
           data-test="token-status-btn"
-          class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 hover:text-white border border-slate-600 text-slate-300 rounded-lg text-xs font-mono font-medium transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+          class="px-2.5 sm:px-3 py-1.5 bg-slate-800 hover:bg-slate-700 hover:text-white border border-slate-600 text-slate-300 rounded-lg text-xs font-mono font-medium transition flex items-center gap-1.5 cursor-pointer shadow-sm"
           title="Login to Zerodha & Refresh Daily Kite Session Token"
         >
-          <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-          <span>KITE AUTH: ACTIVE (REFRESH)</span>
-          <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
+          <span>KITE AUTH: ACTIVE<span class="hidden md:inline"> (REFRESH)</span></span>
+          <svg class="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
         </a>

@@ -180,4 +180,44 @@ describe('CockpitDock.vue', () => {
     expect(wrapper.text()).toContain('Page 2 of 3')
     expect(wrapper.text()).toContain('Showing 11-20 of 25 trades')
   })
+
+  it('renders mobile card view when mobileView is true', async () => {
+    const wrapper = mount(CockpitDock, {
+      props: {
+        activeTab: 'history',
+        marketState: 'closed',
+        mobileView: true,
+        tradeHistory: [
+          {
+            id: 'TRD-MOB-01',
+            symbol: 'NIFTY24O1924200CE',
+            side: 'BUY',
+            quantity: 50,
+            entryPrice: '140.00',
+            exitPrice: '170.00',
+            exitReason: 'Trailing SL Hit',
+            pnl: '1500.00',
+            aiConfidence: 85,
+            aiReasoning: 'Wave 3 exhaustion detected.',
+            setup: 'VWAP_MOMENTUM',
+            vixLevel: '13.5',
+            openedAt: '2026-11-08T10:00:00Z',
+          },
+        ],
+      },
+    })
+
+    expect(wrapper.text()).toContain('CLOSED TRADES & FORENSICS')
+    expect(wrapper.text()).toContain('NIFTY24O1924200CE')
+    expect(wrapper.text()).toContain('+₹1500.00')
+    expect(wrapper.text()).toContain('View Forensic Trace ▼')
+
+    // Tap card to expand forensic trace
+    const card = wrapper.find('[data-test="history-row"]')
+    await card.trigger('click')
+
+    expect(wrapper.text()).toContain('FORENSIC AUDIT & DECISION TRACE')
+    expect(wrapper.text()).toContain('Wave 3 exhaustion detected.')
+    expect(wrapper.text()).toContain('Hide Forensic Trace ▲')
+  })
 })
