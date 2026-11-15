@@ -33,6 +33,7 @@ import {
   resolveIndexInvalidation,
   EQUITY_PROFIT_RATCHET_TIERS,
   PEAK_PROFIT_RATCHET_TIERS,
+  STOCK_OPTION_PROFIT_RATCHET_TIERS,
   type ExpiryRiskProfile,
 } from './expiry-risk-profile.js'
 
@@ -44,7 +45,7 @@ export class PaperTrader extends EventEmitter {
   private initializationPromise: Promise<void> | null = null
   private exitingPositions: Set<string> = new Set()
   private recentExits: Map<string, Date> = new Map()
-  public maxConcurrentPositions = Number(process.env.MAX_PAPER_POSITIONS || 2)
+  public maxConcurrentPositions = Number(process.env.MAX_ACTIVE_POSITIONS || process.env.MAX_PAPER_POSITIONS || 4)
   public entryCooldownMins = Number(process.env.ENTRY_COOLDOWN_MINS || 15)
   private inFlightOrders: Set<string> = new Set()
 
@@ -1320,10 +1321,43 @@ export class PaperTrader extends EventEmitter {
     })
   }
 
+  private resolveProfitRatchetTiers(pos: PaperPosition) {
+    if (pos.assetClass === 'EQUITY') return EQUITY_PROFIT_RATCHET_TIERS
+    if (pos.assetClass === 'STOCK_OPTION') return STOCK_OPTION_PROFIT_RATCHET_TIERS
+    return PEAK_PROFIT_RATCHET_TIERS
+  }
+
+  private isOptionStagnant(pos: PaperPosition, price: number): boolean {
+    if (pos.assetClass !== 'STOCK_OPTION') return false
+    const holdMs = Date.now() - pos.timestamp.getTime()
+    const maxHoldMs = Number(process.env.OPTION_STAGNATION_HOLD_MINS || 60) * 60 * 1000
+    if (holdMs < maxHoldMs) return false
+    const gainPct = (price - pos.avgEntryPrice) / pos.avgEntryPrice
+    return gainPct < 0.04
+  }
+
+  private async exitOnOptionStagnation(pos: PaperPosition, price: number): Promise<void> {
+    const holdMins = Math.round((Date.now() - pos.timestamp.getTime()) / 60000)
+    console.log(`[EXIT] ⏱️ Stagnant Option Timeout (${holdMins}m Rule) for ${pos.symbol} @ ₹${price.toFixed(2)}`)
+    this.emit('notification', {
+      title: '⏱️ Option Stagnation Cutoff',
+      message: `${pos.symbol} exited @ ₹${price.toFixed(2)} to protect against theta decay (held ${holdMins}m with <4% gain)`,
+      type: 'info',
+    })
+    await this.placeOrder({
+      symbol: pos.symbol,
+      token: pos.token,
+      side: 'SELL',
+      quantity: pos.quantity,
+      price: price,
+      context: { aiReasoning: `Stagnant Option Timeout (${holdMins}m Rule - Theta Protection)` },
+    })
+  }
+
   private async processPriceTickExits(symbol: string, pos: PaperPosition, price: number): Promise<void> {
     const entryPrice = pos.avgEntryPrice
     const peakPrice = pos.peakPrice ?? pos.currentPrice
-    const tiers = pos.assetClass === 'EQUITY' ? EQUITY_PROFIT_RATCHET_TIERS : PEAK_PROFIT_RATCHET_TIERS
+    const tiers = this.resolveProfitRatchetTiers(pos)
     const ratchet = getRatchetedStopLoss(entryPrice, peakPrice, tiers)
 
     if (ratchet && (pos.aiStopLoss === undefined || ratchet.targetSl > pos.aiStopLoss)) {
@@ -1339,6 +1373,11 @@ export class PaperTrader extends EventEmitter {
         message: `${symbol}: Peak +${(peakGainPct * 100).toFixed(1)}% gain (₹${peakPrice.toFixed(2)}). SL ratcheted to ₹${targetSl.toFixed(2)}`,
         type: 'info',
       })
+    }
+
+    if (this.isOptionStagnant(pos, price)) {
+      await this.exitOnOptionStagnation(pos, price)
+      return
     }
 
     if (isRetractGuardTriggered(entryPrice, peakPrice, price, this.getRiskProfile(pos))) {

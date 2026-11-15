@@ -170,4 +170,36 @@ describe('KiteScanner', () => {
     expect(alert.symbol).toBe('RELIANCE')
     expect(alert.price).toBe(2550)
   })
+
+  it('rejects candidate when 1-minute traded turnover is below ₹25 Lakhs threshold', () => {
+    let triggeredCandidate: CandidateAlert | null = null
+    scanner.on('candidate_surfaced', (candidate: CandidateAlert) => {
+      triggeredCandidate = candidate
+    })
+
+    scanner.registerStock(2222, 'LOW_TURNOVER_STOCK', true)
+
+    // Tick 1: Baseline volume (600 shares @ ₹100)
+    scanner.processTick({
+      instrument_token: 2222,
+      last_price: 100,
+      average_traded_price: 99,
+      ohlc: { open: 98, high: 100, low: 97, close: 98 },
+      volume_traded: 600,
+    })
+
+    // Tick 2: Volume jumps by 3,000 shares (5x surge), but 1m turnover = 3,000 * 105 = ₹3.15 Lakhs (< ₹25 Lakhs)
+    scanner.processTick({
+      instrument_token: 2222,
+      last_price: 105,
+      average_traded_price: 100,
+      ohlc: { open: 98, high: 105, low: 97, close: 98 },
+      volume_traded: 3600,
+    })
+
+    const state = scanner.getStockState('LOW_TURNOVER_STOCK')
+    expect(state).toBeDefined()
+    // Even if surge ratio triggered or near high, turnover < ₹25 Lakhs prevents false alert
+    expect(triggeredCandidate).toBeNull()
+  })
 })

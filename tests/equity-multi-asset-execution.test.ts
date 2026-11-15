@@ -3,6 +3,7 @@ import { computeEquityTieredTargets } from '../src/execution/tier-calculator.js'
 import {
   getRatchetedStopLoss,
   EQUITY_PROFIT_RATCHET_TIERS,
+  STOCK_OPTION_PROFIT_RATCHET_TIERS,
 } from '../src/execution/expiry-risk-profile.js'
 import { isIndexSymbol, isNearMonthlyExpiry } from '../src/data/instrument-classifier.js'
 import { PaperTrader } from '../src/execution/paper-trader.js'
@@ -294,5 +295,71 @@ describe('EquityAnalystAgent AI Hallucination Sanitization', () => {
     expect(decision.targets[0]).toBeGreaterThan(287.4)
     // Strike must be null for BUY_EQUITY
     expect(decision.strike).toBeNull()
+  })
+})
+
+describe('Stock Option Enhancements: 4 Active Positions, Ratchets & Stagnation', () => {
+  let paperTrader: PaperTrader
+  const mockRepo: any = {
+    getOpenTrades: vi.fn().mockResolvedValue([]),
+    getTodaysTrades: vi.fn().mockResolvedValue([]),
+    insertTrade: vi.fn().mockResolvedValue(undefined),
+    closeTrade: vi.fn().mockResolvedValue(undefined),
+  }
+
+  beforeEach(() => {
+    delete process.env.MAX_ACTIVE_POSITIONS
+    delete process.env.MAX_PAPER_POSITIONS
+    paperTrader = new PaperTrader('test_user', null as any, mockRepo, null as any)
+  })
+
+  it('defaults max concurrent active positions to 4', () => {
+    expect(paperTrader.maxConcurrentPositions).toBe(4)
+  })
+
+  it('calibrated stock option ratchets lock 70% of profit on +14% peak gain', () => {
+    const entry = 100
+    const peak = 115 // +15% peak gain
+    const ratchet = getRatchetedStopLoss(entry, peak, STOCK_OPTION_PROFIT_RATCHET_TIERS)
+
+    expect(ratchet).toBeDefined()
+    expect(ratchet?.tier.minPeakGainPct).toBe(0.14)
+    // 100 + 0.70 * 15 = 110.50
+    expect(ratchet?.targetSl).toBeCloseTo(110.50, 2)
+  })
+
+  it('triggers stagnation cutoff for stock options held >60m with <4% gain', async () => {
+    await paperTrader.placeOrder({
+      symbol: 'STAGNANT26NOV100CE',
+      token: 777001,
+      side: 'BUY',
+      quantity: 100,
+      price: 100.0,
+      context: {
+        assetClass: 'STOCK_OPTION',
+        product: 'MIS',
+        lotSize: 100,
+        aiStopLoss: 75.0,
+        aiTarget: 135.0,
+      },
+    })
+
+    const pos = paperTrader.getAllPositions().find((p) => p.symbol === 'STAGNANT26NOV100CE')
+    expect(pos).toBeDefined()
+
+    // Simulate 65 minutes passed
+    pos!.timestamp = new Date(Date.now() - 65 * 60 * 1000)
+
+    const notifications: any[] = []
+    paperTrader.on('notification', (n) => notifications.push(n))
+
+    // Price is at 101.5 (+1.5% gain, < 4%)
+    await paperTrader.updatePrice(777001, 101.5)
+
+    const remaining = paperTrader.getAllPositions().find((p) => p.symbol === 'STAGNANT26NOV100CE')
+    expect(remaining).toBeUndefined() // Successfully closed!
+
+    const cutoffNotif = notifications.find((n) => n.title.includes('Stagnation Cutoff'))
+    expect(cutoffNotif).toBeDefined()
   })
 })

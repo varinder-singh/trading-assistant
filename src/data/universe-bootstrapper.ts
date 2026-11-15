@@ -1,6 +1,7 @@
 import type { Connect as KiteConnectInstance } from 'kiteconnect'
 import { InstrumentClassifier } from './instrument-classifier.js'
 import { KiteScanner, globalKiteScanner } from './kite-scanner.js'
+import { NIFTY_100_SET } from './nifty100-symbols.js'
 
 export class UniverseBootstrapper {
   constructor(private readonly classifier: InstrumentClassifier = new InstrumentClassifier()) {}
@@ -24,14 +25,13 @@ export class UniverseBootstrapper {
       const fnoUnderlyings = this.extractFnoUnderlyings(nfoList)
       const nseEquityMap = this.buildNseEquityMap(nseList)
 
-      const registeredTokens: number[] = []
-      for (const symbol of fnoUnderlyings) {
-        const token = nseEquityMap.get(symbol)
-        if (token) {
-          scanner.registerStock(token, symbol, true)
-          registeredTokens.push(token)
-        }
-      }
+      const registeredTokens = Array.from(fnoUnderlyings)
+        .map((symbol) => ({ symbol, token: nseEquityMap.get(symbol) }))
+        .filter((entry): entry is { symbol: string; token: number } => entry.token !== undefined)
+        .map(({ symbol, token }) => {
+          scanner.registerFnoStock(token, symbol)
+          return token
+        })
 
       console.log(
         `[UniverseBootstrapper] ✅ Registered ${registeredTokens.length} active F&O equity stocks into KiteScanner.`
@@ -44,29 +44,33 @@ export class UniverseBootstrapper {
   }
 
   private extractFnoUnderlyings(nfoList: any[]): Set<string> {
-    const underlyings = new Set<string>()
-    for (const item of nfoList) {
-      if (item.segment === 'NFO-OPT' && item.name && typeof item.name === 'string') {
-        const s = item.name.toUpperCase().trim()
-        if (!s.startsWith('NIFTY') && !s.startsWith('BANKNIFTY') && !s.startsWith('FINNIFTY') && !s.startsWith('MIDCPNIFTY')) {
-          underlyings.add(s)
-        }
-      }
-    }
-    return underlyings
+    const universeMode = (process.env.SCANNER_UNIVERSE_MODE || 'NIFTY_100').toUpperCase().trim()
+
+    const validSymbols = nfoList
+      .filter((item) => item?.segment === 'NFO-OPT' && typeof item?.name === 'string')
+      .map((item) => item.name.toUpperCase().trim())
+      .filter((symbol) => !this.isExcludedIndex(symbol))
+      .filter((symbol) => universeMode === 'ALL_FNO' || NIFTY_100_SET.has(symbol))
+
+    return new Set(validSymbols)
+  }
+
+  private isExcludedIndex(symbol: string): boolean {
+    return (
+      symbol.startsWith('NIFTY') ||
+      symbol.startsWith('BANKNIFTY') ||
+      symbol.startsWith('FINNIFTY') ||
+      symbol.startsWith('MIDCPNIFTY')
+    )
   }
 
   private buildNseEquityMap(nseList: any[]): Map<string, number> {
-    const map = new Map<string, number>()
-    for (const item of nseList) {
-      if (item.segment === 'NSE' && (item.instrument_type === 'EQ' || !item.instrument_type)) {
-        const sym = (item.tradingsymbol || '').toUpperCase().trim()
-        if (sym && item.instrument_token) {
-          map.set(sym, Number(item.instrument_token))
-        }
-      }
-    }
-    return map
+    const entries = nseList
+      .filter((item) => item?.segment === 'NSE' && (item.instrument_type === 'EQ' || !item.instrument_type))
+      .filter((item) => item?.tradingsymbol && item?.instrument_token)
+      .map((item) => [item.tradingsymbol.toUpperCase().trim(), Number(item.instrument_token)] as const)
+
+    return new Map(entries)
   }
 }
 

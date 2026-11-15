@@ -131,6 +131,18 @@ export const EQUITY_PROFIT_RATCHET_TIERS: readonly PeakRatchetTier[] = [
 ]
 
 /**
+ * Stock Option Profit Ratchet Tiers:
+ * Calibrated specifically for F&O stock options which typically move 8% to 25% intraday.
+ * Locks gains faster than index options to preserve profits on quick momentum spikes.
+ */
+export const STOCK_OPTION_PROFIT_RATCHET_TIERS: readonly PeakRatchetTier[] = [
+  { minPeakGainPct: 0.20, lockPeakGainRatio: 0.80 }, // +20%+ peak gain -> lock 80% of peak gain
+  { minPeakGainPct: 0.14, lockPeakGainRatio: 0.70 }, // +14%+ peak gain -> lock 70% of peak gain
+  { minPeakGainPct: 0.09, lockPeakGainRatio: 0.55 }, // +9%+  peak gain -> lock 55% of peak gain
+  { minPeakGainPct: 0.05, lockPeakGainRatio: 0.20 }, // +5%+  peak gain -> lock breakeven (+20% buffer)
+]
+
+/**
  * Computes the ratcheted stop-loss price from the matching PeakRatchetTier,
  * or undefined when the peak gain has not yet reached the lowest tier.
  */

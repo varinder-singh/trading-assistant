@@ -124,13 +124,35 @@ export class KiteScanner extends EventEmitter {
   private cooldownMs = 15 * 60 * 1000 // 15 mins cooldown per symbol
   private symbolCooldowns: Map<string, number> = new Map()
   private minPrice = 50 // Ignore penny stocks under ₹50
+  private minMinuteTurnover: number
+  private minRollingTurnover: number
 
-  constructor(capacity = 10, ttlMs = 45000) {
+  constructor(
+    capacity = 10,
+    ttlMs = 45000,
+    minMinuteTurnover = Number(process.env.SCANNER_MIN_MINUTE_TURNOVER || 2500000),
+    minRollingTurnover = Number(process.env.SCANNER_MIN_ROLLING_TURNOVER || 1000000)
+  ) {
     super()
     this.priorityQueue = new BoundedPriorityQueue(capacity, ttlMs)
+    this.minMinuteTurnover = minMinuteTurnover
+    this.minRollingTurnover = minRollingTurnover
+  }
+
+  public setTurnoverThresholds(minMinuteTurnover: number, minRollingTurnover: number): void {
+    this.minMinuteTurnover = minMinuteTurnover
+    this.minRollingTurnover = minRollingTurnover
+  }
+
+  public registerFnoStock(token: number, symbol: string): void {
+    this.registerStockWithFnoFlag(token, symbol, true)
   }
 
   public registerStock(token: number, symbol: string, isFnoListed = false): void {
+    this.registerStockWithFnoFlag(token, symbol, isFnoListed)
+  }
+
+  private registerStockWithFnoFlag(token: number, symbol: string, isFnoListed: boolean): void {
     const upper = symbol.toUpperCase().trim()
     this.symbolToToken.set(upper, token)
 
@@ -283,16 +305,23 @@ export class KiteScanner extends EventEmitter {
     const sum5m = state.minuteBuckets.reduce((acc, val) => acc + (val || 0), 0)
     state.rolling5mAvgVolume = sum5m / 5
 
+    const rollingTurnover = state.rolling5mAvgVolume * state.lastPrice
     const current1mRate = state.minuteBuckets[state.currentBucketIndex] || 0
-    state.volumeSurgeRatio =
-      state.rolling5mAvgVolume > 500
-        ? parseFloat((current1mRate / (state.rolling5mAvgVolume || 1)).toFixed(2))
-        : 1.0
+    const hasAdequateRollingVolume =
+      state.rolling5mAvgVolume > 500 && rollingTurnover >= this.minRollingTurnover
+
+    state.volumeSurgeRatio = hasAdequateRollingVolume
+      ? parseFloat((current1mRate / (state.rolling5mAvgVolume || 1)).toFixed(2))
+      : 1.0
   }
 
   private evaluateTriggers(state: StockScanState): void {
     if (state.lastPrice < this.minPrice) return
     if (this.isSymbolOnCooldown(state.symbol)) return
+
+    const current1mVolume = state.minuteBuckets[state.currentBucketIndex] || 0
+    const current1mTurnover = state.lastPrice * current1mVolume
+    if (current1mTurnover < this.minMinuteTurnover) return
 
     const isSurging = state.volumeSurgeRatio >= this.surgeThreshold
     const isNearDayHigh = state.high > 0 && state.lastPrice >= state.high * 0.998

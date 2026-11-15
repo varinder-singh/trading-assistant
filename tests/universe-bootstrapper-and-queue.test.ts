@@ -48,8 +48,42 @@ describe('UniverseBootstrapper', () => {
     expect(scanner.getStockState(2953217)?.symbol).toBe('TCS')
   })
 
+  it('filters out non-NIFTY-100 F&O stocks by default and includes them in ALL_FNO mode', async () => {
+    classifierMock.getCachedInstruments.mockImplementation((kc: any, segment: string) => {
+      if (segment === 'NFO') {
+        return Promise.resolve([
+          { segment: 'NFO-OPT', name: 'RELIANCE' }, // In NIFTY 100
+          { segment: 'NFO-OPT', name: 'MAHABANK' }, // F&O stock, but not in NIFTY 100
+        ])
+      }
+      if (segment === 'NSE') {
+        return Promise.resolve([
+          { segment: 'NSE', tradingsymbol: 'RELIANCE', instrument_token: 738561, instrument_type: 'EQ' },
+          { segment: 'NSE', tradingsymbol: 'MAHABANK', instrument_token: 3876097, instrument_type: 'EQ' },
+        ])
+      }
+      return Promise.resolve([])
+    })
+
+    // Default mode: NIFTY_100
+    delete process.env.SCANNER_UNIVERSE_MODE
+    const defaultTokens = await bootstrapper.bootstrapScannerUniverse({} as any, scanner)
+    expect(defaultTokens).toHaveLength(1)
+    expect(defaultTokens).toContain(738561)
+    expect(scanner.getStockState(3876097)).toBeUndefined()
+
+    // Mode: ALL_FNO
+    const allFnoScanner = new KiteScanner(10, 45000)
+    process.env.SCANNER_UNIVERSE_MODE = 'ALL_FNO'
+    const allTokens = await bootstrapper.bootstrapScannerUniverse({} as any, allFnoScanner)
+    expect(allTokens).toHaveLength(2)
+    expect(allTokens).toContain(738561)
+    expect(allTokens).toContain(3876097)
+    delete process.env.SCANNER_UNIVERSE_MODE
+  })
+
   it('returns existing tokens if scanner is already bootstrapped', async () => {
-    scanner.registerStock(12345, 'INFY', true)
+    scanner.registerFnoStock(12345, 'INFY')
 
     const tokens = await bootstrapper.bootstrapScannerUniverse({} as any, scanner)
 

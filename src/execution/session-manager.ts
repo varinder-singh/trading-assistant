@@ -705,7 +705,7 @@ export class UserSession extends EventEmitter {
           if (result.assetClass === 'EQUITY' && allowsEquity) {
             await this.executeSurfacedEquityOrder(cand, result.decision)
           } else if (result.assetClass === 'STOCK_OPTION' && allowsStockOptions && result.optionDetails) {
-            await this.executeSurfacedOptionOrder(result.optionDetails, result.decision)
+            await this.executeSurfacedOptionOrder(result.optionDetails, result.decision, cand)
           }
         } catch (evalErr: any) {
           console.error(`[UserSession] Failed analysis for candidate ${cand.symbol}:`, evalErr.message || evalErr)
@@ -757,7 +757,8 @@ export class UserSession extends EventEmitter {
 
   private async executeSurfacedOptionOrder(
     option: { symbol: string; token: number; expiry?: Date; lotSize?: number },
-    decision: any
+    decision: any,
+    candidate?: any
   ): Promise<void> {
     console.log(`[UserSession] Validating & Executing Stock Option Trade for ${option.symbol}...`)
     const quoteMap = await this.kc.getQuote([`NFO:${option.symbol}`])
@@ -770,6 +771,17 @@ export class UserSession extends EventEmitter {
     }
 
     const lotSize = option.lotSize || (await getFnoLotSize(this.kc, option.symbol)) || 1
+    const maxOptionRisk = Number(process.env.MAX_OPTION_RISK_PER_TRADE || 2000)
+    const estimatedRisk = lotSize * entryPrice * 0.25
+
+    if (estimatedRisk > maxOptionRisk && candidate) {
+      console.log(
+        `⚖️ [UserSession] Option ${option.symbol} 1-lot risk (₹${estimatedRisk.toFixed(2)}) exceeds max risk cap (₹${maxOptionRisk}). Routing to Cash Equity.`
+      )
+      await this.executeSurfacedEquityOrder(candidate, decision)
+      return
+    }
+
     this.ticker.subscribe([option.token])
     this.ticker.setMode(this.ticker.modeFull, [option.token])
 
