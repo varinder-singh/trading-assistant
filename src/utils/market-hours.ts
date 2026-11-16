@@ -61,6 +61,42 @@ export function getActiveSpecialSession(date: Date = new Date()): SpecialSession
   return null
 }
 
+function getIstMinutesFromMidnight(date: Date): { timeInMinutes: number; weekday: string } {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    hour12: false,
+    weekday: 'long',
+    hour: 'numeric',
+    minute: 'numeric',
+  })
+  const parts = formatter.formatToParts(date)
+  const getValue = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
+  const hour = parseInt(getValue('hour') || '0', 10)
+  const minute = parseInt(getValue('minute') || '0', 10)
+
+  return {
+    timeInMinutes: hour * 60 + minute,
+    weekday: getValue('weekday'),
+  }
+}
+
+export function isOpeningBellFilterActive(date: Date = new Date()): boolean {
+  if (typeof process !== 'undefined' && process.env?.DISABLE_OPENING_BELL_FILTER === 'true') {
+    return false
+  }
+
+  const filterMinutes = Number(process.env?.OPENING_BELL_FILTER_MINS ?? 15)
+  if (filterMinutes <= 0) return false
+
+  const { timeInMinutes, weekday } = getIstMinutesFromMidnight(date)
+  if (weekday === 'Saturday' || weekday === 'Sunday') return false
+
+  const marketOpen = 9 * 60 + 15 // 555 (09:15 IST)
+  const openingBellEnd = marketOpen + filterMinutes // 570 (09:30 IST default)
+
+  return timeInMinutes >= marketOpen && timeInMinutes < openingBellEnd
+}
+
 export function isMarketOpen(date: Date = new Date()): boolean {
   if (typeof process !== 'undefined' && (process.env?.FORCE_MARKET_OPEN === 'true' || process.env?.MARKET_FORCE_OPEN === 'true')) {
     return true
@@ -73,27 +109,12 @@ export function isMarketOpen(date: Date = new Date()): boolean {
   }
 
   // 2. Standard NSE trading hours check (Mon - Fri 09:15 - 15:30 IST)
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Kolkata',
-    hour12: false,
-    weekday: 'long',
-    hour: 'numeric',
-    minute: 'numeric',
-  })
-  const parts = formatter.formatToParts(date)
-
-  const getValue = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
-
-  const weekday = getValue('weekday')
+  const { timeInMinutes, weekday } = getIstMinutesFromMidnight(date)
   if (weekday === 'Saturday' || weekday === 'Sunday') {
     return false
   }
 
-  const hour = parseInt(getValue('hour') || '0', 10)
-  const minute = parseInt(getValue('minute') || '0', 10)
-
   // Market hours: 09:15 AM to 03:30 PM (15:30)
-  const timeInMinutes = hour * 60 + minute
   const marketOpen = 9 * 60 + 15 // 555
   const marketClose = 15 * 60 + 30 // 930
 

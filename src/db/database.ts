@@ -57,7 +57,7 @@ export interface TradesTable {
 export interface TradeAnalyticsTable {
   id: string
   tradeId: string | null
-  eventType: 'ENTRY' | 'EXIT' | 'UPDATE_SL' | 'HOLD'
+  eventType: 'ENTRY' | 'EXIT' | 'UPDATE_SL' | 'HOLD' | 'PARTIAL_EXIT'
   agentType: string | null
   symbol: string
   side: 'BUY' | 'SELL'

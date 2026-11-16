@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { isOpeningBellFilterActive } from '../utils/market-hours.js'
 
 export interface StockScanState {
   token: number
@@ -316,6 +317,7 @@ export class KiteScanner extends EventEmitter {
   }
 
   private evaluateTriggers(state: StockScanState): void {
+    if (isOpeningBellFilterActive()) return
     if (state.lastPrice < this.minPrice) return
     if (this.isSymbolOnCooldown(state.symbol)) return
 

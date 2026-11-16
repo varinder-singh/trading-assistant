@@ -91,7 +91,7 @@ export class TradeRepository {
     exitPrice: number,
     exitReason?: string,
     agentType?: string,
-    metrics?: { peakPrice?: number; maxUnrealizedPnL?: number }
+    metrics?: { peakPrice?: number; maxUnrealizedPnL?: number; totalRealizedPnL?: number }
   ) {
     const now = new Date().toISOString()
     const trade = await this.db.selectFrom('trades').selectAll().where('id', '=', id).executeTakeFirst()
@@ -100,7 +100,9 @@ export class TradeRepository {
       throw new Error(`Trade with ID ${id} not found`)
     }
 
-    const pnl = (exitPrice - Number(trade.entryPrice)) * trade.quantity
+    const pnl = metrics?.totalRealizedPnL !== undefined
+      ? metrics.totalRealizedPnL
+      : (exitPrice - Number(trade.entryPrice)) * trade.quantity
 
     await this.db
       .updateTable('trades')
@@ -128,6 +130,38 @@ export class TradeRepository {
           exitReason: exitReason || null,
           peakPrice: metrics?.peakPrice ?? null,
           maxUnrealizedPnL: metrics?.maxUnrealizedPnL ?? null,
+        }),
+        createdAt: now,
+        updatedAt: now,
+      })
+      .execute()
+  }
+
+  public async recordPartialExit(
+    tradeId: string,
+    symbol: string,
+    exitPrice: number,
+    soldQty: number,
+    remainingQty: number,
+    reason?: string,
+    agentType?: string
+  ): Promise<void> {
+    const now = new Date().toISOString()
+    const analyticsId = crypto.randomUUID()
+    await this.db
+      .insertInto('tradeAnalytics')
+      .values({
+        id: analyticsId,
+        tradeId,
+        eventType: 'PARTIAL_EXIT',
+        agentType: agentType || null,
+        symbol,
+        side: 'SELL',
+        metadata: JSON.stringify({
+          exitReason: reason || null,
+          exitPrice,
+          soldQty,
+          remainingQty,
         }),
         createdAt: now,
         updatedAt: now,

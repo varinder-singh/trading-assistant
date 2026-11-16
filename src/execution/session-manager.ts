@@ -7,7 +7,7 @@ import { candleBuilder } from '../data/candle-builder.js'
 import { gtiTracker } from '../indicators/gti-tracker.js'
 import { runAnalysis } from '../analysis/trade.js'
 import { eventRepo, gtiRepo, userRepo, scannerAlertRepo, analysisSnapshotRepo } from '../db/repositories/container.js'
-import { isMarketOpen } from '../utils/market-hours.js'
+import { isMarketOpen, isOpeningBellFilterActive } from '../utils/market-hours.js'
 import type { Connect as KiteConnect } from 'kiteconnect'
 import type { AIMacroTrend, TradingAgentType } from '../ai/types.js'
 import { getCalendarDaysToExpiry, getExpiryRiskProfile } from './expiry-risk-profile.js'
@@ -227,6 +227,11 @@ export class UserSession extends EventEmitter {
   private onBreakout = async (context: any) => {
     if (this.tokenExpired) {
       console.log(`[UserSession] Token is expired. Aborting breakout analysis for ${this.watchedSymbol}.`)
+      return
+    }
+
+    if (isOpeningBellFilterActive()) {
+      console.log(`[UserSession] Opening bell filter active (09:15–09:30 IST). Skipping breakout for ${this.watchedSymbol}.`)
       return
     }
 
@@ -637,7 +642,7 @@ export class UserSession extends EventEmitter {
   }
 
   private onCandidateSurfaced = async (candidate: any) => {
-    if (this.tokenExpired || !isMarketOpen()) return
+    if (this.tokenExpired || !isMarketOpen() || isOpeningBellFilterActive()) return
 
     try {
       const profile = await userRepo.getUserProfileByUserId(this.userId)
@@ -772,7 +777,8 @@ export class UserSession extends EventEmitter {
 
     const lotSize = option.lotSize || (await getFnoLotSize(this.kc, option.symbol)) || 1
     const maxOptionRisk = Number(process.env.MAX_OPTION_RISK_PER_TRADE || 2000)
-    const estimatedRisk = lotSize * entryPrice * 0.25
+    const optionRiskPct = Number(process.env.STOCK_OPTION_RISK_PCT || 0.20)
+    const estimatedRisk = lotSize * entryPrice * optionRiskPct
 
     if (estimatedRisk > maxOptionRisk && candidate) {
       console.log(
@@ -800,7 +806,7 @@ export class UserSession extends EventEmitter {
         aiReasoning: decision.reason,
         aiConfidence: decision.confidence,
         aiStrike: decision.strike || undefined,
-        aiStopLoss: Number((entryPrice * 0.75).toFixed(2)),
+        aiStopLoss: Number((entryPrice * (1 - optionRiskPct)).toFixed(2)),
         aiTarget: Number((entryPrice * 1.35).toFixed(2)),
       },
     })

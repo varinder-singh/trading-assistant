@@ -978,25 +978,50 @@ export class PaperTrader extends EventEmitter {
     this.todayRealizedPnL += pnl
     existing.quantity -= order.quantity
 
+    await this.syncPositionExitToDb(existing, order, context)
+
+    if (existing.quantity <= 0) {
+      this.positions.delete(order.symbol)
+    }
+  }
+
+  private async syncPositionExitToDb(
+    existing: PaperPosition,
+    order: TradeOrder,
+    context?: TradeContext
+  ): Promise<void> {
     const openTrades = await this.repo.getOpenTrades(this.userId)
     const targetTrade = openTrades
       .filter((t) => t.symbol === order.symbol)
       .sort((a, b) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime())[0]
 
-    if (targetTrade) {
-      await this.repo
-        .closeTrade(targetTrade.id, order.price!, context?.aiReasoning, context?.strategyContext?.agentType, {
-          peakPrice: existing.peakPrice ?? 0,
-          maxUnrealizedPnL: existing.maxUnrealizedPnL ?? 0,
-        })
-        .catch((err) => console.error('❌ Failed to close trade in DB:', err))
-    } else {
+    if (!targetTrade) {
       console.warn(`⚠️ [DB SYNC ISSUE] Could not find OPEN trade in database for ${order.symbol} to close it.`)
+      return
     }
 
-    if (existing.quantity <= 0) {
-      this.positions.delete(order.symbol)
+    if (existing.quantity > 0) {
+      await this.repo
+        .recordPartialExit(
+          targetTrade.id,
+          order.symbol,
+          order.price!,
+          order.quantity,
+          existing.quantity,
+          context?.aiReasoning,
+          context?.strategyContext?.agentType
+        )
+        .catch((err) => console.error('❌ Failed to record partial exit in DB:', err))
+      return
     }
+
+    await this.repo
+      .closeTrade(targetTrade.id, order.price!, context?.aiReasoning, context?.strategyContext?.agentType, {
+        peakPrice: existing.peakPrice ?? 0,
+        maxUnrealizedPnL: existing.maxUnrealizedPnL ?? 0,
+        totalRealizedPnL: existing.realizedPnL,
+      })
+      .catch((err) => console.error('❌ Failed to close trade in DB:', err))
   }
 
   async updatePrice(token: number, price: number) {
@@ -1266,6 +1291,14 @@ export class PaperTrader extends EventEmitter {
   }
 
   private enforcePremiumStopFloor(pos: PaperPosition): void {
+    if (pos.assetClass === 'STOCK_OPTION') {
+      const optionRiskPct = Number(process.env.STOCK_OPTION_RISK_PCT || 0.20)
+      const stockOptionFloor = Number((pos.avgEntryPrice * (1 - optionRiskPct)).toFixed(2))
+      if (pos.aiStopLoss !== undefined && pos.aiStopLoss >= stockOptionFloor) return
+      pos.aiStopLoss = stockOptionFloor
+      return
+    }
+
     const profile = this.getRiskProfile(pos)
     const premiumFloor = getPremiumStopFloor(pos.avgEntryPrice, profile)
     if (pos.aiStopLoss !== undefined && pos.aiStopLoss >= premiumFloor) return

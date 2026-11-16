@@ -103,6 +103,7 @@ describe('PaperTrader Scenario A (MIS) vs Scenario B (CNC)', () => {
     getTodaysTrades: vi.fn().mockResolvedValue([]),
     insertTrade: vi.fn().mockResolvedValue(undefined),
     closeTrade: vi.fn().mockResolvedValue(undefined),
+    recordPartialExit: vi.fn().mockResolvedValue(undefined),
   }
 
   beforeEach(() => {
@@ -305,6 +306,7 @@ describe('Stock Option Enhancements: 4 Active Positions, Ratchets & Stagnation',
     getTodaysTrades: vi.fn().mockResolvedValue([]),
     insertTrade: vi.fn().mockResolvedValue(undefined),
     closeTrade: vi.fn().mockResolvedValue(undefined),
+    recordPartialExit: vi.fn().mockResolvedValue(undefined),
   }
 
   beforeEach(() => {
@@ -361,5 +363,98 @@ describe('Stock Option Enhancements: 4 Active Positions, Ratchets & Stagnation',
 
     const cutoffNotif = notifications.find((n) => n.title.includes('Stagnation Cutoff'))
     expect(cutoffNotif).toBeDefined()
+  })
+
+  it('enforces 20% stop-loss floor on stock options', async () => {
+    await paperTrader.placeOrder({
+      symbol: 'BHARTI26NOV2100CE',
+      token: 888001,
+      side: 'BUY',
+      quantity: 475,
+      price: 50.0,
+      context: {
+        assetClass: 'STOCK_OPTION',
+        product: 'MIS',
+        lotSize: 475,
+        aiStopLoss: 25.0, // Overly loose stop loss (50% risk)
+        aiTarget: 70.0,
+      },
+    })
+
+    const pos = paperTrader.getAllPositions().find((p) => p.symbol === 'BHARTI26NOV2100CE')
+    expect(pos).toBeDefined()
+    // 50 * (1 - 0.20) = 40.00
+    expect(pos?.aiStopLoss).toBe(40.0)
+  })
+
+  it('records partial exit on T1 without closing trade in database', async () => {
+    mockRepo.getOpenTrades.mockResolvedValue([
+      { id: 'trade-123', symbol: 'PARTIAL_TEST', entryPrice: '100', quantity: 100 },
+    ])
+
+    await paperTrader.placeOrder({
+      symbol: 'PARTIAL_TEST',
+      token: 999001,
+      side: 'BUY',
+      quantity: 100,
+      price: 100.0,
+      context: {
+        assetClass: 'EQUITY',
+        product: 'MIS',
+        aiStopLoss: 95.0,
+        aiTarget: 110.0,
+      },
+    })
+
+    const pos = paperTrader.getAllPositions().find((p) => p.symbol === 'PARTIAL_TEST')
+    expect(pos).toBeDefined()
+    pos!.quantity = 100
+    pos!.t1Qty = 35
+
+    // Simulate T1 partial exit
+    await paperTrader.placeOrder({
+      symbol: 'PARTIAL_TEST',
+      token: 999001,
+      side: 'SELL',
+      quantity: 35,
+      price: 105.0,
+      context: { aiReasoning: 'T1 target hit' },
+    })
+
+    // Remaining 65 shares should still be open
+    expect(pos?.quantity).toBe(65)
+    // DB recordPartialExit should be called, but NOT closeTrade!
+    expect(mockRepo.recordPartialExit).toHaveBeenCalledWith(
+      'trade-123',
+      'PARTIAL_TEST',
+      105.0,
+      35,
+      65,
+      'T1 target hit',
+      undefined
+    )
+    expect(mockRepo.closeTrade).not.toHaveBeenCalled()
+
+    // Now sell the remaining 65 shares (final exit)
+    await paperTrader.placeOrder({
+      symbol: 'PARTIAL_TEST',
+      token: 999001,
+      side: 'SELL',
+      quantity: 65,
+      price: 108.0,
+      context: { aiReasoning: 'T2 target hit' },
+    })
+
+    expect(paperTrader.getAllPositions().find((p) => p.symbol === 'PARTIAL_TEST')).toBeUndefined()
+    expect(mockRepo.closeTrade).toHaveBeenCalledWith(
+      'trade-123',
+      108.0,
+      'T2 target hit',
+      undefined,
+      expect.objectContaining({
+        // Total realized PnL: (105-100)*35 + (108-100)*65 = 175 + 520 = 695
+        totalRealizedPnL: 695,
+      })
+    )
   })
 })
