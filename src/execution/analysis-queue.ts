@@ -4,6 +4,7 @@ import type { CandidateAlert } from '../data/kite-scanner.js'
 export interface QueuedCandidate {
   candidate: CandidateAlert
   userId: string
+  processor: CandidateProcessor
   enqueuedAt: number
 }
 
@@ -43,7 +44,7 @@ export class AnalysisQueue extends EventEmitter {
     if (existingIndex !== -1) {
       // If new candidate has higher priority, update it in place
       if (candidate.priorityScore > this.queue[existingIndex]!.candidate.priorityScore) {
-        this.queue[existingIndex] = { candidate, userId, enqueuedAt: Date.now() }
+        this.queue[existingIndex] = { candidate, userId, processor, enqueuedAt: Date.now() }
         this.sortByPriority()
       }
       return false
@@ -57,10 +58,10 @@ export class AnalysisQueue extends EventEmitter {
       this.queue.pop()
     }
 
-    this.queue.push({ candidate, userId, enqueuedAt: Date.now() })
+    this.queue.push({ candidate, userId, processor, enqueuedAt: Date.now() })
     this.sortByPriority()
 
-    this.processNext(processor)
+    this.processNext()
     return true
   }
 
@@ -83,7 +84,7 @@ export class AnalysisQueue extends EventEmitter {
     this.queue = this.queue.filter((q) => now - q.enqueuedAt <= this.candidateTtlMs)
   }
 
-  private async processNext(processor: CandidateProcessor): Promise<void> {
+  private async processNext(): Promise<void> {
     if (this.isProcessing) return
     this.purgeStale()
 
@@ -98,7 +99,7 @@ export class AnalysisQueue extends EventEmitter {
 
     try {
       this.emit('processing_start', item.candidate)
-      await processor(item.candidate, item.userId)
+      await item.processor(item.candidate, item.userId)
       this.emit('processing_complete', item.candidate)
     } catch (err: any) {
       console.error(`[AnalysisQueue] ❌ Error processing candidate ${item.candidate.symbol}:`, err.message || err)
@@ -108,7 +109,7 @@ export class AnalysisQueue extends EventEmitter {
       // Rate-limiting delay between candidate evaluations
       await new Promise((resolve) => setTimeout(resolve, this.delayBetweenJobsMs))
       this.isProcessing = false
-      this.processNext(processor)
+      this.processNext()
     }
   }
 }

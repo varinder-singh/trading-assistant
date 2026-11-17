@@ -21,7 +21,7 @@ import type { Connect as KiteConnect } from 'kiteconnect'
 import { KiteOrderService } from './kite-orders.js'
 import { getGreeksFromPrice } from '../analysis/greeks.js'
 import { computeTieredTargets, computeEquityTieredTargets } from './tier-calculator.js'
-import { isMarketOpen } from '../utils/market-hours.js'
+import { isClosingBellFilterActive, isMarketOpen } from '../utils/market-hours.js'
 import {
   getCalendarDaysToExpiry,
   getExpiryRiskProfile,
@@ -45,14 +45,14 @@ export class PaperTrader extends EventEmitter {
   private initializationPromise: Promise<void> | null = null
   private exitingPositions: Set<string> = new Set()
   private recentExits: Map<string, Date> = new Map()
-  public maxConcurrentPositions = Number(process.env.MAX_ACTIVE_POSITIONS || process.env.MAX_PAPER_POSITIONS || 4)
+  public maxConcurrentPositions = Number(process.env.MAX_ACTIVE_POSITIONS || process.env.MAX_PAPER_POSITIONS || 10)
   public entryCooldownMins = Number(process.env.ENTRY_COOLDOWN_MINS || 15)
   private inFlightOrders: Set<string> = new Set()
 
   private marketMonitorTimer?: NodeJS.Timeout
   private positionManagerTimer?: NodeJS.Timeout
 
-  private maxDailyTrades = 20
+  private maxDailyTrades = Number(process.env.MAX_DAILY_TRADES || 30)
   private maxDailyLoss = Number(process.env.MAX_DAILY_LOSS || -20000)
   private todayRealizedPnL = 0
   private todayTradeCount = 0
@@ -450,7 +450,8 @@ export class PaperTrader extends EventEmitter {
   }
 
   private checkIntradaySquareOff(hours: number, minutes: number): void {
-    if (hours !== 15 || minutes !== 15) return
+    const timeInMinutes = hours * 60 + minutes
+    if (timeInMinutes < 15 * 60 + 15) return
 
     const misPositions = this.getAllPositions().filter((p) => !p.product || p.product === 'MIS')
     if (misPositions.length === 0) return
@@ -460,7 +461,14 @@ export class PaperTrader extends EventEmitter {
   }
 
   private checkMarketClose(hours: number, minutes: number): void {
-    if (hours !== 15 || minutes !== 30) return
+    const timeInMinutes = hours * 60 + minutes
+    if (timeInMinutes < 15 * 60 + 30) return
+
+    const allPositions = this.getAllPositions()
+    if (allPositions.length > 0) {
+      console.log(`[EXIT] 15:30 IST - Market Closed. Squaring off remaining ${allPositions.length} open position(s).`)
+      this.squareOffPositions(allPositions, 'Market Close Square-Off (15:30 Rule)')
+    }
 
     console.log('[EXIT] 15:30 IST - Market Closed. Emitting shutdown signal.')
     this.emit('market_close')
@@ -643,6 +651,11 @@ export class PaperTrader extends EventEmitter {
     valid: boolean
     error?: string | undefined
   } {
+    if (isClosingBellFilterActive()) {
+      console.log(`❌ [PAPER TRADE] Intraday entries blocked: Closing bell filter active (after 15:15 IST). Skipping ${params.symbol}`)
+      return { valid: false, error: 'Intraday entries blocked: Market approaching close (after 15:15 IST)' }
+    }
+
     if (this.todayRealizedPnL <= this.maxDailyLoss) this.tradingHalted = true
     if (this.tradingHalted) {
       console.log(`❌ [PAPER TRADE] Trading halted for the day (Limits reached). Skipping ${params.symbol}`)

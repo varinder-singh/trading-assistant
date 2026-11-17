@@ -315,8 +315,8 @@ describe('Stock Option Enhancements: 4 Active Positions, Ratchets & Stagnation',
     paperTrader = new PaperTrader('test_user', null as any, mockRepo, null as any)
   })
 
-  it('defaults max concurrent active positions to 4', () => {
-    expect(paperTrader.maxConcurrentPositions).toBe(4)
+  it('defaults max concurrent active positions to 10', () => {
+    expect(paperTrader.maxConcurrentPositions).toBe(10)
   })
 
   it('calibrated stock option ratchets lock 70% of profit on +14% peak gain', () => {

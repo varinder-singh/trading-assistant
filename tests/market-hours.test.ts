@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { isMarketOpen, getMarketStatusMessage, isOpeningBellFilterActive } from '../src/utils/market-hours.js'
+import {
+  isMarketOpen,
+  getMarketStatusMessage,
+  isOpeningBellFilterActive,
+  isClosingBellFilterActive,
+} from '../src/utils/market-hours.js'
 
 describe('Market Hours & Special Sessions (Muhurat Trading)', () => {
   const originalEnv = process.env
@@ -90,5 +95,38 @@ describe('Market Hours & Special Sessions (Muhurat Trading)', () => {
     process.env.DISABLE_OPENING_BELL_FILTER = 'true'
     const midOpening = new Date('2026-11-04T03:55:00Z') // 09:25 IST
     expect(isOpeningBellFilterActive(midOpening)).toBe(false)
+  })
+
+  it('activates 15-minute closing bell filter between 15:15 and 15:30 IST on weekdays', () => {
+    // 2026-11-04 Wednesday
+    // 15:14 IST = 09:44 UTC (before closing cutoff)
+    const beforeClosingCutoff = new Date('2026-11-04T09:44:00Z')
+    expect(isClosingBellFilterActive(beforeClosingCutoff)).toBe(false)
+
+    // 15:15 IST = 09:45 UTC (closing cutoff starts)
+    const atClosingCutoff = new Date('2026-11-04T09:45:00Z')
+    expect(isClosingBellFilterActive(atClosingCutoff)).toBe(true)
+
+    // 15:29 IST = 09:59 UTC (within closing window)
+    const midClosing = new Date('2026-11-04T09:59:00Z')
+    expect(isClosingBellFilterActive(midClosing)).toBe(true)
+
+    // 15:30 IST = 10:00 UTC (market close boundary)
+    const atMarketClose = new Date('2026-11-04T10:00:00Z')
+    expect(isClosingBellFilterActive(atMarketClose)).toBe(true)
+
+    // 15:31 IST = 10:01 UTC (after market close)
+    const afterMarketClose = new Date('2026-11-04T10:01:00Z')
+    expect(isClosingBellFilterActive(afterMarketClose)).toBe(false)
+
+    // Weekend check: Sunday at 15:20 IST -> inactive
+    const sundayAfternoon = new Date('2026-11-01T09:50:00Z')
+    expect(isClosingBellFilterActive(sundayAfternoon)).toBe(false)
+  })
+
+  it('honors DISABLE_CLOSING_BELL_FILTER=true override', () => {
+    process.env.DISABLE_CLOSING_BELL_FILTER = 'true'
+    const midClosing = new Date('2026-11-04T09:59:00Z') // 15:29 IST
+    expect(isClosingBellFilterActive(midClosing)).toBe(false)
   })
 })

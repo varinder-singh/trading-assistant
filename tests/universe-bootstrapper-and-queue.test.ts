@@ -163,6 +163,66 @@ describe('AnalysisQueue', () => {
     const duplicateEnqueue = queue.enqueue(cand, 'user1', vi.fn())
     expect(duplicateEnqueue).toBe(false)
   })
+
+  it('binds and executes the correct unique processor per queued candidate to prevent closure leaks', async () => {
+    const queue = new AnalysisQueue({ delayBetweenJobsMs: 20 })
+
+    const cand1 = {
+      id: 'alert-1',
+      token: 101,
+      symbol: 'EICHERMOT',
+      price: 7800,
+      dayHigh: 7900,
+      atp: 7750,
+      volumeSurgeRatio: 4.0,
+      changePct: 2.0,
+      obi: 0.4,
+      priorityScore: 70,
+      timestamp: Date.now(),
+      expiresAt: Date.now() + 45000,
+      isFnoListed: true,
+    }
+
+    const cand2 = {
+      id: 'alert-2',
+      token: 102,
+      symbol: 'KOTAKBANK',
+      price: 1800,
+      dayHigh: 1820,
+      atp: 1790,
+      volumeSurgeRatio: 4.5,
+      changePct: 1.5,
+      obi: 0.2,
+      priorityScore: 80,
+      timestamp: Date.now(),
+      expiresAt: Date.now() + 45000,
+      isFnoListed: true,
+    }
+
+    const executions: { candidateSymbol: string; boundAlertId: string }[] = []
+
+    // Processor 1 closes over alertId 'alert-1'
+    const processor1 = async (cand: any) => {
+      executions.push({ candidateSymbol: cand.symbol, boundAlertId: 'alert-1' })
+    }
+
+    // Processor 2 closes over alertId 'alert-2'
+    const processor2 = async (cand: any) => {
+      executions.push({ candidateSymbol: cand.symbol, boundAlertId: 'alert-2' })
+    }
+
+    queue.enqueue(cand1, 'user1', processor1)
+    queue.enqueue(cand2, 'user1', processor2)
+
+    await new Promise((resolve) => setTimeout(resolve, 150))
+
+    expect(executions).toHaveLength(2)
+    const eichermotExec = executions.find((e) => e.candidateSymbol === 'EICHERMOT')
+    const kotakExec = executions.find((e) => e.candidateSymbol === 'KOTAKBANK')
+
+    expect(eichermotExec?.boundAlertId).toBe('alert-1')
+    expect(kotakExec?.boundAlertId).toBe('alert-2')
+  })
 })
 
 describe('ScannerAlertRepository & AnalysisSnapshotRepository', () => {

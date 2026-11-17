@@ -97,6 +97,23 @@ export function isOpeningBellFilterActive(date: Date = new Date()): boolean {
   return timeInMinutes >= marketOpen && timeInMinutes < openingBellEnd
 }
 
+export function isClosingBellFilterActive(date: Date = new Date()): boolean {
+  if (typeof process !== 'undefined' && process.env?.DISABLE_CLOSING_BELL_FILTER === 'true') {
+    return false
+  }
+
+  const cutoffMinutesBeforeClose = Number(process.env?.CLOSING_BELL_FILTER_MINS ?? 15)
+  if (cutoffMinutesBeforeClose <= 0) return false
+
+  const { timeInMinutes, weekday } = getIstMinutesFromMidnight(date)
+  if (weekday === 'Saturday' || weekday === 'Sunday') return false
+
+  const marketClose = 15 * 60 + 30 // 930 (15:30 IST)
+  const closingCutoffStart = marketClose - cutoffMinutesBeforeClose // 915 (15:15 IST default)
+
+  return timeInMinutes >= closingCutoffStart && timeInMinutes <= marketClose
+}
+
 export function isMarketOpen(date: Date = new Date()): boolean {
   if (typeof process !== 'undefined' && (process.env?.FORCE_MARKET_OPEN === 'true' || process.env?.MARKET_FORCE_OPEN === 'true')) {
     return true

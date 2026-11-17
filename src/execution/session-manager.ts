@@ -7,7 +7,7 @@ import { candleBuilder } from '../data/candle-builder.js'
 import { gtiTracker } from '../indicators/gti-tracker.js'
 import { runAnalysis } from '../analysis/trade.js'
 import { eventRepo, gtiRepo, userRepo, scannerAlertRepo, analysisSnapshotRepo } from '../db/repositories/container.js'
-import { isMarketOpen, isOpeningBellFilterActive } from '../utils/market-hours.js'
+import { isClosingBellFilterActive, isMarketOpen, isOpeningBellFilterActive } from '../utils/market-hours.js'
 import type { Connect as KiteConnect } from 'kiteconnect'
 import type { AIMacroTrend, TradingAgentType } from '../ai/types.js'
 import { getCalendarDaysToExpiry, getExpiryRiskProfile } from './expiry-risk-profile.js'
@@ -232,6 +232,11 @@ export class UserSession extends EventEmitter {
 
     if (isOpeningBellFilterActive()) {
       console.log(`[UserSession] Opening bell filter active (09:15–09:30 IST). Skipping breakout for ${this.watchedSymbol}.`)
+      return
+    }
+
+    if (isClosingBellFilterActive()) {
+      console.log(`[UserSession] Closing bell filter active (15:15–15:30 IST). Skipping breakout for ${this.watchedSymbol}.`)
       return
     }
 
@@ -642,7 +647,7 @@ export class UserSession extends EventEmitter {
   }
 
   private onCandidateSurfaced = async (candidate: any) => {
-    if (this.tokenExpired || !isMarketOpen() || isOpeningBellFilterActive()) return
+    if (this.tokenExpired || !isMarketOpen() || isOpeningBellFilterActive() || isClosingBellFilterActive()) return
 
     try {
       const profile = await userRepo.getUserProfileByUserId(this.userId)
@@ -678,7 +683,7 @@ export class UserSession extends EventEmitter {
           })
 
           const isTraded = result.decision.decision === 'BUY' && result.decision.action !== 'NONE'
-          await scannerAlertRepo.updateStatus(alertId, isTraded ? 'TRADED' : 'ANALYZED', {
+          await scannerAlertRepo.updateStatus(cand.id, isTraded ? 'TRADED' : 'ANALYZED', {
             decision: result.decision,
             assetClass: result.assetClass,
           })
@@ -714,7 +719,7 @@ export class UserSession extends EventEmitter {
           }
         } catch (evalErr: any) {
           console.error(`[UserSession] Failed analysis for candidate ${cand.symbol}:`, evalErr.message || evalErr)
-          await scannerAlertRepo.updateStatus(alertId, 'EXPIRED', { error: evalErr.message })
+          await scannerAlertRepo.updateStatus(cand.id, 'EXPIRED', { error: evalErr.message })
         }
       })
     } catch (err: any) {
@@ -726,6 +731,9 @@ export class UserSession extends EventEmitter {
     console.log(`[UserSession] Executing Equity Trade for ${candidate.symbol} (${decision.holdingMode})...`)
     const livePrice = candidate.price && candidate.price > 0 ? candidate.price : decision.entryPrice
     const entryPrice = Math.abs(decision.entryPrice - livePrice) / livePrice > 0.02 ? livePrice : decision.entryPrice
+
+    this.ticker.subscribe([candidate.token])
+    this.ticker.setMode(this.ticker.modeFull, [candidate.token])
 
     await this.paperTrader.placeOrder({
       symbol: candidate.symbol,
