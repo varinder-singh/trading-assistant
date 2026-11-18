@@ -43,7 +43,7 @@ export interface EquityAnalysisContext {
 export interface EquityAgentDecision {
   symbol: string
   decision: 'BUY' | 'SELL' | 'NO_TRADE' | 'HOLD'
-  action: 'BUY_EQUITY' | 'BUY_CE' | 'BUY_PE' | 'NONE'
+  action: 'BUY_EQUITY' | 'SELL_EQUITY' | 'BUY_CE' | 'BUY_PE' | 'NONE'
   strike?: number | null
   entryPrice: number
   stopLoss: number
@@ -55,39 +55,45 @@ export interface EquityAgentDecision {
 }
 
 export const EQUITY_ANALYST_PROMPT = `
-## ROLE: INSTITUTIONAL NSE EQUITY & STOCK OPTIONS ANALYST
+## ROLE: INSTITUTIONAL NSE BI-DIRECTIONAL EQUITY & STOCK OPTIONS ANALYST
 
 You are an institutional trading analyst specialized in National Stock Exchange (NSE) cash equities and stock options.
-Your mandate is precision trend continuation and momentum breakouts on high-volume liquid stocks.
+Your mandate is precision bi-directional momentum trading: capturing both Bullish Breakouts (Long / Call Options) and Bearish Breakdowns during market falls (Short / Put Options).
 
 ### CORE PRINCIPLES:
-1. **Unleveraged Equity Physics**:
+1. **Unleveraged Underlying Stock Physics**:
    - Stock prices move in percentage terms (typically 0.8% to 3.5% intraday).
-   - Stop-Losses and Targets are denominated directly in stock price ₹ (INR), NEVER option points or index points.
-   - Target 1 (T1) should be realistic for intraday equities (+1.0% to +1.5%, or 1.2R).
-   - Target 2 (T2) (+2.0% to +2.5%, or 2.0R).
-   - Target 3 (T3) (+3.0% to +3.5%, runner).
-   - Stop-Loss must be placed strictly at structural invalidation (e.g. below 5m/15m VWAP or previous swing low, typically 0.8% - 1.5% risk).
+   - Stop-Losses and Targets are ALWAYS denominated in underlying stock price ₹ (INR), NEVER option premium points.
+   - **For BULLISH setups (BUY_EQUITY or BUY_CE)**:
+     - Stop-Loss MUST be below entryPrice (e.g. below 5m/15m VWAP or swing low, ~0.8% - 1.5% risk).
+     - Targets MUST be above entryPrice in ascending order: T1 (+1.0% to +1.5%), T2 (+2.0% to +2.5%), T3 (+3.0% to +3.5%).
+   - **For BEARISH setups (BUY_PE or SELL_EQUITY during market/stock fall)**:
+     - Stop-Loss MUST be above entryPrice (e.g. above 5m/15m VWAP or swing high, ~0.8% - 1.5% risk).
+     - Targets MUST be below entryPrice in descending order: T1 (-1.0% to -1.5%), T2 (-2.0% to -2.5%), T3 (-3.0% to -3.5%).
 
-2. **Volume & Microstructure Confirmation**:
-   - A valid BUY requires: Price > Exchange VWAP (ATP), Volume Surge >= 2.5x, and positive Order Book Imbalance (OBI > 0).
-   - Strong Relative Strength vs NIFTY (stock outperforming the broader market) strongly boosts conviction.
+2. **Bi-Directional Volume & Microstructure Confirmation**:
+   - **Valid BULLISH Breakout (decision: "BUY")**: Price > Exchange VWAP (ATP), Volume Surge >= 2.5x, positive Order Book Imbalance (OBI > 0), and positive Relative Strength vs NIFTY.
+   - **Valid BEARISH Breakdown (decision: "SELL")**: Price < Exchange VWAP (ATP), Volume Surge >= 2.5x, negative Order Book Imbalance (OBI < 0), or heavy Relative Weakness vs NIFTY during a market fall.
 
-3. **Instrument Selection (Cash vs Stock Options)**:
-   - If 'isFnoListed' is FALSE: Action MUST be 'BUY_EQUITY'.
-   - If 'isFnoListed' is TRUE and user preference allows options:
-     - You may suggest 'BUY_CE' for high-conviction momentum near ATM strike, OR 'BUY_EQUITY' for cleaner risk.
-     - Never trade illiquid deep OTM strikes.
+3. **Instrument Selection (Cash vs Stock Options & SEBI Rules)**:
+   - **Bullish**:
+     - If 'isFnoListed' is TRUE and user preference allows options: prefer 'BUY_CE' near ATM strike, or 'BUY_EQUITY'.
+     - If 'isFnoListed' is FALSE: Action MUST be 'BUY_EQUITY'.
+   - **Bearish (Market / Stock Fall)**:
+     - If 'isFnoListed' is TRUE and user preference allows options: prefer 'BUY_PE' (Put Option) near ATM strike to capture downside delta + IV expansion with capped risk.
+     - If 'isFnoListed' is FALSE (or EQUITY_ONLY preference):
+       - If Preferred Holding Mode is 'MIS' (Intraday): Action is 'SELL_EQUITY' (Intraday Cash Short).
+       - If Preferred Holding Mode is 'CNC' (Swing): Output 'NO_TRADE' / 'NONE' because SEBI prohibits overnight shorting of cash equities in CNC.
 
 4. **SEBI Capping Guard**:
-   - Cash equities have daily circuit limits (max 20%). Never project unrealistic targets > 5% intraday.
+   - Cash equities have daily circuit limits. Never project unrealistic intraday targets > 5% away from entry.
 
 ### OUTPUT FORMAT:
 You MUST respond ONLY with a single valid JSON object:
 {
   "symbol": "<SYMBOL>",
   "decision": "BUY" | "SELL" | "NO_TRADE" | "HOLD",
-  "action": "BUY_EQUITY" | "BUY_CE" | "BUY_PE" | "NONE",
+  "action": "BUY_EQUITY" | "SELL_EQUITY" | "BUY_CE" | "BUY_PE" | "NONE",
   "strike": <strike_number_or_null>,
   "entryPrice": <number>,
   "stopLoss": <number>,
@@ -146,11 +152,17 @@ CONSTRAINTS & PREFERENCES:
 
     try {
       const parsed = JSON.parse(cleaned)
-      const decision = parsed.decision ?? 'NO_TRADE'
-      const action = this.resolveAction(parsed.action, context.isFnoListed)
+      const holdingMode = parsed.holdingMode === 'CNC' ? 'CNC' : 'MIS'
+      const action = this.resolveAction(parsed.action, context.isFnoListed, holdingMode)
+      const isBearish = parsed.decision === 'SELL' || action === 'BUY_PE' || action === 'SELL_EQUITY'
+      const decision = this.normalizeDecision(parsed.decision, action, isBearish)
       const entryPrice = this.resolveEquityEntryPrice(parsed.entryPrice, context.currentPrice)
-      const stopLoss = this.resolveEquityStopLoss(parsed.stopLoss, entryPrice)
-      const targets = this.resolveEquityTargets(parsed.targets, entryPrice)
+      const stopLoss = isBearish
+        ? this.resolveBearishStopLoss(parsed.stopLoss, entryPrice)
+        : this.resolveBullishStopLoss(parsed.stopLoss, entryPrice)
+      const targets = isBearish
+        ? this.resolveBearishTargets(parsed.targets, entryPrice)
+        : this.resolveBullishTargets(parsed.targets, entryPrice)
       const strike = this.resolveStrike(action, parsed.strike, context.currentPrice)
       const riskRewardRatio = this.computeRiskReward(entryPrice, stopLoss, targets)
 
@@ -164,7 +176,7 @@ CONSTRAINTS & PREFERENCES:
         targets,
         riskRewardRatio,
         confidence: Number(parsed.confidence) || 50,
-        holdingMode: parsed.holdingMode === 'CNC' ? 'CNC' : 'MIS',
+        holdingMode,
         reason: parsed.reason ?? 'Evaluated based on price action and VWAP structure.',
       }
     } catch {
@@ -172,10 +184,46 @@ CONSTRAINTS & PREFERENCES:
     }
   }
 
-  private resolveAction(rawAction: any, isFnoListed: boolean): 'BUY_EQUITY' | 'BUY_CE' | 'BUY_PE' | 'NONE' {
+  /**
+   * Normalizes the decision verb ('BUY', 'SELL', 'NO_TRADE', 'HOLD') to stay consistent
+   * with the resolved action, preventing mismatched decision/action pairs.
+   */
+  private normalizeDecision(
+    rawDecision: any,
+    action: EquityAgentDecision['action'],
+    isBearish: boolean
+  ): EquityAgentDecision['decision'] {
+    if (action === 'NONE') {
+      return rawDecision === 'HOLD' ? 'HOLD' : 'NO_TRADE'
+    }
+    if (rawDecision === 'NO_TRADE' || rawDecision === 'HOLD') return rawDecision
+    return isBearish ? 'SELL' : 'BUY'
+  }
+
+  /**
+   * Resolves the instrument action while enforcing SEBI rules:
+   * - Non-F&O stocks cannot trade options (falls back to BUY_EQUITY or SELL_EQUITY).
+   * - Overnight short selling in CNC mode is prohibited by SEBI (falls back to NONE).
+   */
+  private resolveAction(
+    rawAction: any,
+    isFnoListed: boolean,
+    holdingMode: 'MIS' | 'CNC'
+  ): 'BUY_EQUITY' | 'SELL_EQUITY' | 'BUY_CE' | 'BUY_PE' | 'NONE' {
     if (!rawAction || typeof rawAction !== 'string') return 'NONE'
-    if (!isFnoListed && (rawAction === 'BUY_CE' || rawAction === 'BUY_PE')) return 'BUY_EQUITY'
-    if (rawAction === 'BUY_EQUITY' || rawAction === 'BUY_CE' || rawAction === 'BUY_PE') return rawAction
+    if (!isFnoListed && rawAction === 'BUY_CE') return 'BUY_EQUITY'
+    if (!isFnoListed && rawAction === 'BUY_PE') {
+      return holdingMode === 'MIS' ? 'SELL_EQUITY' : 'NONE'
+    }
+    if (rawAction === 'SELL_EQUITY' && holdingMode === 'CNC') return 'NONE'
+    if (
+      rawAction === 'BUY_EQUITY' ||
+      rawAction === 'SELL_EQUITY' ||
+      rawAction === 'BUY_CE' ||
+      rawAction === 'BUY_PE'
+    ) {
+      return rawAction
+    }
     return 'NONE'
   }
 
@@ -190,7 +238,10 @@ CONSTRAINTS & PREFERENCES:
     return price
   }
 
-  private resolveEquityStopLoss(rawSl: any, entryPrice: number): number {
+  /**
+   * Validates and bounds stop-loss for Bullish setups (must sit 0.5% to 3.0% BELOW entry).
+   */
+  private resolveBullishStopLoss(rawSl: any, entryPrice: number): number {
     const sl = Number(rawSl)
     const minSl = entryPrice * 0.97
     const maxSl = entryPrice * 0.995
@@ -200,7 +251,23 @@ CONSTRAINTS & PREFERENCES:
     return sl
   }
 
-  private resolveEquityTargets(rawTargets: any, entryPrice: number): number[] {
+  /**
+   * Validates and bounds stop-loss for Bearish / Short setups (must sit 0.5% to 3.0% ABOVE entry).
+   */
+  private resolveBearishStopLoss(rawSl: any, entryPrice: number): number {
+    const sl = Number(rawSl)
+    const minSl = entryPrice * 1.005
+    const maxSl = entryPrice * 1.03
+    if (!sl || sl < minSl || sl > maxSl) {
+      return Number((entryPrice * 1.015).toFixed(2))
+    }
+    return sl
+  }
+
+  /**
+   * Validates and bounds profit targets for Bullish setups (ascending above entryPrice).
+   */
+  private resolveBullishTargets(rawTargets: any, entryPrice: number): number[] {
     const defaultTargets = [
       Number((entryPrice * 1.012).toFixed(2)),
       Number((entryPrice * 1.020).toFixed(2)),
@@ -213,8 +280,24 @@ CONSTRAINTS & PREFERENCES:
     return defaultTargets
   }
 
+  /**
+   * Validates and bounds profit targets for Bearish / Short setups (descending below entryPrice).
+   */
+  private resolveBearishTargets(rawTargets: any, entryPrice: number): number[] {
+    const defaultTargets = [
+      Number((entryPrice * 0.988).toFixed(2)),
+      Number((entryPrice * 0.980).toFixed(2)),
+      Number((entryPrice * 0.968).toFixed(2)),
+    ]
+    if (!Array.isArray(rawTargets) || rawTargets.length < 2) return defaultTargets
+    const validTargets = rawTargets.map(Number).filter((t) => t < entryPrice && t >= entryPrice * 0.92)
+    const isDescending = validTargets.every((t, i) => i === 0 || t < validTargets[i - 1]!)
+    if (validTargets.length >= 2 && isDescending) return validTargets
+    return defaultTargets
+  }
+
   private resolveStrike(action: string, rawStrike: any, currentPrice: number): number | null {
-    if (action === 'BUY_EQUITY' || action === 'NONE') return null
+    if (action === 'BUY_EQUITY' || action === 'SELL_EQUITY' || action === 'NONE') return null
     const strike = Number(rawStrike)
     if (!strike || strike <= 0) return Math.round(currentPrice)
     const deviation = Math.abs(strike - currentPrice) / currentPrice
@@ -223,8 +306,8 @@ CONSTRAINTS & PREFERENCES:
   }
 
   private computeRiskReward(entryPrice: number, stopLoss: number, targets: number[]): number {
-    const risk = Math.max(entryPrice - stopLoss, 0.01)
-    const reward = Math.max((targets[0] || entryPrice) - entryPrice, 0.01)
+    const risk = Math.max(Math.abs(entryPrice - stopLoss), 0.01)
+    const reward = Math.max(Math.abs((targets[0] || entryPrice) - entryPrice), 0.01)
     return Number((reward / risk).toFixed(2))
   }
 

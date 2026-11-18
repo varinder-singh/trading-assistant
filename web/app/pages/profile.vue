@@ -26,6 +26,10 @@ const allowStockOptions = ref(true)
 const stockOptionPreference = ref('PREFER_OPTIONS_IF_LISTED')
 const equityHoldingMode = ref<'MIS' | 'CNC'>('MIS')
 const equityRiskPerTrade = ref(1500)
+const maxActivePositions = ref(10)
+const maxIndexPositions = ref(2)
+const maxDailyTrades = ref(30)
+const enablePullbackEntry = ref(true)
 
 const kiteApiKey = ref('')
 const kiteApiSecret = ref('')
@@ -54,6 +58,18 @@ const fetchProfile = async () => {
       if (data.value.stockOptionPreference) stockOptionPreference.value = data.value.stockOptionPreference
       if (data.value.equityHoldingMode) equityHoldingMode.value = data.value.equityHoldingMode
       if (data.value.equityRiskPerTrade) equityRiskPerTrade.value = Number(data.value.equityRiskPerTrade) || 1500
+      if (data.value.maxActivePositions !== undefined && data.value.maxActivePositions !== null) {
+        maxActivePositions.value = Number(data.value.maxActivePositions) || 10
+      }
+      if (data.value.maxIndexPositions !== undefined && data.value.maxIndexPositions !== null) {
+        maxIndexPositions.value = Number(data.value.maxIndexPositions)
+      }
+      if (data.value.maxDailyTrades !== undefined && data.value.maxDailyTrades !== null) {
+        maxDailyTrades.value = Number(data.value.maxDailyTrades) || 30
+      }
+      if (data.value.enablePullbackEntry !== undefined && data.value.enablePullbackEntry !== null) {
+        enablePullbackEntry.value = Boolean(data.value.enablePullbackEntry)
+      }
     }
   } catch (err: any) {
     console.error('Failed to load profile:', err)
@@ -102,6 +118,10 @@ const saveProfile = async () => {
       stockOptionPreference: stockOptionPreference.value,
       equityHoldingMode: equityHoldingMode.value,
       equityRiskPerTrade: Number(equityRiskPerTrade.value) || 1500,
+      maxActivePositions: Number(maxActivePositions.value) || 10,
+      maxIndexPositions: Number(maxIndexPositions.value) >= 0 ? Number(maxIndexPositions.value) : 2,
+      maxDailyTrades: Number(maxDailyTrades.value) || 30,
+      enablePullbackEntry: Boolean(enablePullbackEntry.value),
     }
 
     if (kiteApiKey.value && kiteApiSecret.value) {
@@ -407,6 +427,68 @@ onMounted(() => {
                     placeholder="1500"
                     class="w-full px-4 py-2 bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-sm"
                   />
+                </div>
+              </div>
+
+              <!-- Pool Allocation: NIFTY vs Stocks & Wave Pullback Entry -->
+              <div class="grid grid-cols-1 md:grid-cols-4 gap-6 pt-2">
+                <div class="space-y-2">
+                  <label class="text-sm font-medium text-gray-700">Total Active Position Pool</label>
+                  <input
+                    v-model.number="maxActivePositions"
+                    type="number"
+                    min="1"
+                    max="25"
+                    step="1"
+                    class="w-full px-4 py-2 bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-sm"
+                  />
+                  <p class="text-[11px] text-gray-500">Total concurrent open positions</p>
+                </div>
+
+                <div class="space-y-2">
+                  <label class="text-sm font-medium text-gray-700">Reserved NIFTY Index Slots</label>
+                  <input
+                    v-model.number="maxIndexPositions"
+                    type="number"
+                    min="0"
+                    :max="maxActivePositions"
+                    step="1"
+                    class="w-full px-4 py-2 bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-sm"
+                  />
+                  <p class="text-[11px] text-gray-500">
+                    Stocks get up to {{ Math.max(0, maxActivePositions - maxIndexPositions) }} slots
+                  </p>
+                </div>
+
+                <div class="space-y-2">
+                  <label class="text-sm font-medium text-gray-700">Daily Trade Pool Cap</label>
+                  <input
+                    v-model.number="maxDailyTrades"
+                    type="number"
+                    min="5"
+                    max="100"
+                    step="5"
+                    class="w-full px-4 py-2 bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-sm"
+                  />
+                  <p class="text-[11px] text-gray-500">Max intraday trades per session</p>
+                </div>
+
+                <div class="space-y-2">
+                  <label class="text-sm font-medium text-gray-700">Wave Pullback Entry</label>
+                  <label
+                    class="flex items-center gap-3 p-2.5 border rounded-xl cursor-pointer hover:bg-gray-50 transition-colors"
+                    :class="enablePullbackEntry ? 'border-indigo-500 bg-indigo-50/30' : 'border-gray-200'"
+                  >
+                    <input
+                      v-model="enablePullbackEntry"
+                      type="checkbox"
+                      class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4"
+                    />
+                    <div>
+                      <span class="text-xs font-medium text-gray-900 block">Enter on Wave Retracement</span>
+                      <span class="text-[10px] text-gray-500">Avoids buying inflated spike tops</span>
+                    </div>
+                  </label>
                 </div>
               </div>
             </div>

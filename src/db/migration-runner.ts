@@ -9,6 +9,7 @@ import * as m012 from './migrations/012_alter_gti_scores_candletime.js'
 import * as m013 from './migrations/013_add_watch_config_to_profiles.js'
 import * as m014 from './migrations/014_add_equity_and_universe_preferences.js'
 import * as m015 from './migrations/015_create_scanner_and_analysis_persistence.js'
+import * as m016 from './migrations/016_add_profile_position_pool_settings.js'
 
 export const staticMigrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
@@ -22,6 +23,7 @@ export const staticMigrationProvider: MigrationProvider = {
       '013_add_watch_config_to_profiles': m013,
       '014_add_equity_and_universe_preferences': m014,
       '015_create_scanner_and_analysis_persistence': m015,
+      '016_add_profile_position_pool_settings': m016,
     }
   },
 }

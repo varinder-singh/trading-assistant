@@ -1,6 +1,7 @@
 import { serverSupabaseUser } from '#supabase/server'
 import { db } from '@core/db/database.js'
 import { encryptSecret } from '@core/utils/crypto.js'
+import { sessionManager } from '@core/execution/session-manager.js'
 
 export default defineEventHandler(async (event) => {
   const user = await serverSupabaseUser(event)
@@ -23,6 +24,10 @@ export default defineEventHandler(async (event) => {
     stockOptionPreference,
     equityHoldingMode,
     equityRiskPerTrade,
+    maxActivePositions,
+    maxIndexPositions,
+    maxDailyTrades,
+    enablePullbackEntry,
   } = body
 
   if (fullName !== undefined && (typeof fullName !== 'string' || fullName.trim() === '')) {
@@ -41,6 +46,10 @@ export default defineEventHandler(async (event) => {
     if (stockOptionPreference !== undefined) profileUpdates.stockOptionPreference = stockOptionPreference
     if (equityHoldingMode !== undefined) profileUpdates.equityHoldingMode = equityHoldingMode
     if (equityRiskPerTrade !== undefined) profileUpdates.equityRiskPerTrade = String(equityRiskPerTrade)
+    if (maxActivePositions !== undefined) profileUpdates.maxActivePositions = Number(maxActivePositions)
+    if (maxIndexPositions !== undefined) profileUpdates.maxIndexPositions = Number(maxIndexPositions)
+    if (maxDailyTrades !== undefined) profileUpdates.maxDailyTrades = Number(maxDailyTrades)
+    if (enablePullbackEntry !== undefined) profileUpdates.enablePullbackEntry = Boolean(enablePullbackEntry)
 
     if (Object.keys(profileUpdates).length > 0) {
       const existing = await db.selectFrom('profiles').select('id').where('id', '=', userId).executeTakeFirst()
@@ -65,6 +74,15 @@ export default defineEventHandler(async (event) => {
             updatedAt: new Date().toISOString(),
           })
           .execute()
+      }
+
+      const activeSession = sessionManager.getExistingSession(userId)
+      if (activeSession) {
+        activeSession.paperTrader.configurePool({
+          maxActivePositions: profileUpdates.maxActivePositions,
+          maxIndexPositions: profileUpdates.maxIndexPositions,
+          maxDailyTrades: profileUpdates.maxDailyTrades,
+        })
       }
     }
 

@@ -43,6 +43,23 @@ describe('Equity Tiered Targets & SEBI Capping', () => {
     expect(targets?.t2Target).toBeLessThanOrEqual(109.45)
     expect(targets?.t3Target).toBeLessThanOrEqual(109.45)
   })
+
+  it('calculates downward R-multiple targets and bounds to lower circuit limit for Bearish Short setups', () => {
+    const targets = computeEquityTieredTargets({
+      entryPrice: 500,
+      stopLoss: 510, // ₹10 risk above entry (Short position)
+      quantity: 100,
+      lowerCircuitPrice: 470,
+    })
+
+    expect(targets).not.toBeNull()
+    // T1: 500 - 1.2 * 10 = 488
+    expect(targets?.t1Target).toBe(488)
+    // T2: 500 - 2.0 * 10 = 480
+    expect(targets?.t2Target).toBe(480)
+    // T3: 500 - 3.0 * 10 = 470, bounded by lowerCircuitPrice * 1.005 = 472.35
+    expect(targets?.t3Target).toBe(472.35)
+  })
 })
 
 describe('Equity Profit Ratchet Tiers', () => {
@@ -297,6 +314,84 @@ describe('EquityAnalystAgent AI Hallucination Sanitization', () => {
     // Strike must be null for BUY_EQUITY
     expect(decision.strike).toBeNull()
   })
+
+  it('validates Bearish Breakdown (BUY_PE / SELL) with stop-loss above entry and descending targets below entry', async () => {
+    const { EquityAnalystAgent } = await import('../src/ai/equity-agent.js')
+    const mockProvider = {
+      chat: vi.fn().mockResolvedValue(`
+        {
+          "symbol": "HDFCBANK",
+          "decision": "SELL",
+          "action": "BUY_PE",
+          "strike": 1600,
+          "entryPrice": 1600,
+          "stopLoss": 1620,
+          "targets": [1580, 1565, 1545],
+          "confidence": 82,
+          "holdingMode": "MIS",
+          "reason": "Heavy distribution below Exchange VWAP with negative OBI"
+        }
+      `),
+    }
+
+    const agent = new EquityAnalystAgent(mockProvider as any)
+    const decision = await agent.evaluate({
+      symbol: 'HDFCBANK',
+      currentPrice: 1600,
+      atp: 1615,
+      changePct: -1.8,
+      volumeSurgeRatio: 4.2,
+      obi: -0.55,
+      tf5m: { price: 1600, rsi: 31, vwap: 1612, trend: 'BEARISH' },
+      tf15m: { price: 1600, rsi: 34, vwap: 1615, trend: 'BEARISH', support: 1580, resistance: 1620 },
+      relativeStrengthVsNifty: -1.2,
+      isFnoListed: true,
+    })
+
+    expect(decision.decision).toBe('SELL')
+    expect(decision.action).toBe('BUY_PE')
+    expect(decision.strike).toBe(1600)
+    expect(decision.stopLoss).toBe(1620)
+    expect(decision.targets).toEqual([1580, 1565, 1545])
+  })
+
+  it('blocks overnight cash shorting in CNC mode per SEBI regulations', async () => {
+    const { EquityAnalystAgent } = await import('../src/ai/equity-agent.js')
+    const mockProvider = {
+      chat: vi.fn().mockResolvedValue(`
+        {
+          "symbol": "NON_FNO_STOCK",
+          "decision": "SELL",
+          "action": "SELL_EQUITY",
+          "strike": null,
+          "entryPrice": 500,
+          "stopLoss": 510,
+          "targets": [490, 480],
+          "confidence": 75,
+          "holdingMode": "CNC",
+          "reason": "Bearish breakdown"
+        }
+      `),
+    }
+
+    const agent = new EquityAnalystAgent(mockProvider as any)
+    const decision = await agent.evaluate({
+      symbol: 'NON_FNO_STOCK',
+      currentPrice: 500,
+      atp: 508,
+      changePct: -2.0,
+      volumeSurgeRatio: 3.5,
+      obi: -0.4,
+      tf5m: { price: 500, rsi: 30, vwap: 506, trend: 'BEARISH' },
+      tf15m: { price: 500, rsi: 33, vwap: 508, trend: 'BEARISH', support: 490, resistance: 510 },
+      relativeStrengthVsNifty: -1.5,
+      isFnoListed: false,
+      equityHoldingMode: 'CNC',
+    })
+
+    expect(decision.action).toBe('NONE')
+    expect(decision.decision).toBe('NO_TRADE')
+  })
 })
 
 describe('Stock Option Enhancements: 4 Active Positions, Ratchets & Stagnation', () => {
@@ -312,6 +407,13 @@ describe('Stock Option Enhancements: 4 Active Positions, Ratchets & Stagnation',
   beforeEach(() => {
     delete process.env.MAX_ACTIVE_POSITIONS
     delete process.env.MAX_PAPER_POSITIONS
+    mockRepo.getOpenTrades.mockReset()
+    mockRepo.getOpenTrades.mockResolvedValue([])
+    mockRepo.getTodaysTrades.mockReset()
+    mockRepo.getTodaysTrades.mockResolvedValue([])
+    mockRepo.insertTrade.mockClear()
+    mockRepo.closeTrade.mockClear()
+    mockRepo.recordPartialExit.mockClear()
     paperTrader = new PaperTrader('test_user', null as any, mockRepo, null as any)
   })
 
@@ -562,6 +664,138 @@ describe('Stock Option Enhancements: 4 Active Positions, Ratchets & Stagnation',
     expect(squareOffSpy).toHaveBeenCalledTimes(1)
     const squaredPositions = squareOffSpy.mock.calls[0]![0]
     expect(squaredPositions).toHaveLength(1)
-    expect(squaredPositions[0].symbol).toBe('MIS_STOCK')
+    expect(squaredPositions[0]!.symbol).toBe('MIS_STOCK')
+  })
+
+  it('executes Intraday Short (SELL) equity trades during market falls and computes short PnL accurately', async () => {
+    await paperTrader.initialize()
+    mockRepo.getOpenTrades.mockResolvedValue([
+      {
+        id: 'short-trade-1',
+        symbol: 'FALLING_STOCK',
+        side: 'SELL',
+        quantity: 200,
+        entryPrice: '500',
+        openedAt: new Date().toISOString(),
+      },
+    ])
+
+    // 1. Place Short Entry Order (SELL at ₹500 with SL at ₹507.50 and T1 at ₹490)
+    const entryRes = await paperTrader.placeOrder({
+      symbol: 'FALLING_STOCK',
+      token: 888001,
+      side: 'SELL',
+      quantity: 1,
+      price: 500.0,
+      context: {
+        assetClass: 'EQUITY',
+        product: 'MIS',
+        isShortEntry: true,
+        aiStopLoss: 507.5,
+        aiTarget: 490.0,
+        aiIndexTargets: [490.0, 482.5, 475.0],
+        vixLevel: 16.5,
+        rsiLevel: 32.0,
+        trend15m: 'BEARISH',
+      },
+    })
+
+    expect(entryRes.success).toBe(true)
+    const pos = paperTrader.getAllPositions().find((p) => p.symbol === 'FALLING_STOCK')
+    expect(pos).toBeDefined()
+    expect(pos?.side).toBe('SELL')
+    // Risk budget 1500 / (507.5 - 500) = 200 shares
+    expect(pos?.quantity).toBe(200)
+    expect(pos?.t1Target).toBe(490.0)
+
+    // 2. Price drops to ₹492: Unrealized PnL should be positive (+₹8 * 200 = +₹1,600)
+    await paperTrader.updatePrice(888001, 492.0)
+    expect(pos?.unrealizedPnL).toBe(1600)
+    expect(pos?.peakPrice).toBe(492.0)
+    // Because ₹492 crossed 50% of T1 (₹495), SL should have ratcheted down to Breakeven (₹500.0)
+    expect(pos?.aiStopLoss).toBe(500.0)
+  })
+
+  it('reserves NIFTY index slots in the user position pool so stocks cannot starve index trades', async () => {
+    paperTrader.configurePool({
+      maxActivePositions: 4,
+      maxIndexPositions: 1,
+      maxDailyTrades: 30,
+    })
+
+    // Fill 3 stock slots (maxStockSlots = 4 - 1 = 3)
+    for (let i = 1; i <= 3; i++) {
+      const res = await paperTrader.placeOrder({
+        symbol: `STOCK_${i}`,
+        token: 7000 + i,
+        side: 'BUY',
+        quantity: 10,
+        price: 100,
+        context: { assetClass: 'EQUITY', product: 'MIS', aiStopLoss: 98, aiTarget: 104 },
+      })
+      expect(res.success).toBe(true)
+    }
+
+    // 4th Stock should be rejected because 1 slot is reserved for NIFTY Index
+    const fourthStock = await paperTrader.placeOrder({
+      symbol: 'STOCK_4',
+      token: 7004,
+      side: 'BUY',
+      quantity: 10,
+      price: 100,
+      context: { assetClass: 'EQUITY', product: 'MIS', aiStopLoss: 98, aiTarget: 104 },
+    })
+    expect(fourthStock.success).toBe(false)
+    expect(fourthStock.error).toContain('reserved for Index')
+
+    // NIFTY Index Option SHOULD succeed using its reserved 4th slot
+    const niftyRes = await paperTrader.placeOrder({
+      symbol: 'NIFTY26NOV25400CE',
+      token: 9999,
+      side: 'BUY',
+      quantity: 65,
+      price: 120,
+      context: { assetClass: 'INDEX_OPTION', product: 'MIS', lotSize: 65, aiStopLoss: 100, aiTarget: 150 },
+    })
+    expect(niftyRes.success).toBe(true)
+  })
+
+  it('queues and fills Wave Pullback Limit Orders on retracement ticks and cancels on invalidation', async () => {
+    await paperTrader.queuePendingOrder({
+      id: 'wave_pullback_1',
+      symbol: 'WAVE_STOCK',
+      token: 666001,
+      side: 'BUY',
+      quantity: 1,
+      triggerPrice: 997.5, // -0.25% pullback below ₹1,000 spike
+      type: 'LIMIT',
+      status: 'PENDING',
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      ttlMs: 15 * 60 * 1000,
+      indexInvalidation: 985.0,
+      currentIndexPrice: 1000.0,
+      context: {
+        assetClass: 'EQUITY',
+        product: 'MIS',
+        aiStopLoss: 985.0,
+        aiTarget: 1020.0,
+        aiIndexTargets: [1020.0, 1030.0, 1045.0],
+      },
+    })
+
+    expect(paperTrader.getPendingOrders()).toHaveLength(1)
+
+    // Price stays at ₹999 (above trigger ₹997.5): still pending
+    await paperTrader.updatePrice(666001, 999.0)
+    expect(paperTrader.getPendingOrders()).toHaveLength(1)
+
+    // Price pulls back to ₹997.0 (<= trigger ₹997.5): order fills at ₹997.0!
+    await paperTrader.updatePrice(666001, 997.0)
+    expect(paperTrader.getPendingOrders()).toHaveLength(0)
+
+    const filledPos = paperTrader.getAllPositions().find((p) => p.symbol === 'WAVE_STOCK')
+    expect(filledPos).toBeDefined()
+    expect(filledPos?.avgEntryPrice).toBe(997.0)
   })
 })

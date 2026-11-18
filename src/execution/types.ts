@@ -36,6 +36,7 @@ export interface TradeContext {
   baseSignalPrice?: number | undefined
   triggerPrice?: number | undefined
   isTriggerOrder?: boolean | undefined
+  isShortEntry?: boolean | undefined
   product?: 'MIS' | 'CNC' | undefined
   assetClass?: 'INDEX_OPTION' | 'EQUITY' | 'STOCK_OPTION' | undefined
 }

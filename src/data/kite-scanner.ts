@@ -29,6 +29,8 @@ export interface CandidateAlert {
   symbol: string
   price: number
   dayHigh: number
+  dayLow?: number
+  direction?: 'BULLISH' | 'BEARISH'
   atp: number
   volumeSurgeRatio: number
   changePct: number
@@ -316,6 +318,11 @@ export class KiteScanner extends EventEmitter {
       : 1.0
   }
 
+  /**
+   * Evaluates bi-directional institutional volume triggers:
+   * - BULLISH: Surging volume near Day High (>= 99.8%) and trading above Exchange VWAP (ATP).
+   * - BEARISH: Surging volume near Day Low (<= 100.2%) and trading below Exchange VWAP (ATP).
+   */
   private evaluateTriggers(state: StockScanState): void {
     if (isOpeningBellFilterActive() || isClosingBellFilterActive()) return
     if (state.lastPrice < this.minPrice) return
@@ -324,14 +331,28 @@ export class KiteScanner extends EventEmitter {
     const current1mVolume = state.minuteBuckets[state.currentBucketIndex] || 0
     const current1mTurnover = state.lastPrice * current1mVolume
     if (current1mTurnover < this.minMinuteTurnover) return
+    if (state.volumeSurgeRatio < this.surgeThreshold) return
 
-    const isSurging = state.volumeSurgeRatio >= this.surgeThreshold
+    const direction = this.resolveBreakoutDirection(state)
+    if (!direction) return
+
+    this.triggerCandidateAlert(state, direction)
+  }
+
+  /**
+   * Resolves whether the current price action represents a Bullish Day-High breakout
+   * or a Bearish Day-Low breakdown relative to Exchange VWAP (ATP).
+   */
+  private resolveBreakoutDirection(state: StockScanState): 'BULLISH' | 'BEARISH' | null {
     const isNearDayHigh = state.high > 0 && state.lastPrice >= state.high * 0.998
     const isAboveVwap = state.atp > 0 ? state.lastPrice >= state.atp : true
+    if (isNearDayHigh && isAboveVwap) return 'BULLISH'
 
-    if (!isSurging || !isNearDayHigh || !isAboveVwap) return
+    const isNearDayLow = state.low > 0 && state.lastPrice <= state.low * 1.002
+    const isBelowVwap = state.atp > 0 ? state.lastPrice <= state.atp : true
+    if (isNearDayLow && isBelowVwap) return 'BEARISH'
 
-    this.triggerCandidateAlert(state)
+    return null
   }
 
   private isSymbolOnCooldown(symbol: string): boolean {
@@ -339,9 +360,9 @@ export class KiteScanner extends EventEmitter {
     return Date.now() - lastCooldown < this.cooldownMs
   }
 
-  private triggerCandidateAlert(state: StockScanState): void {
+  private triggerCandidateAlert(state: StockScanState, direction: 'BULLISH' | 'BEARISH' = 'BULLISH'): void {
     const now = Date.now()
-    const priorityScore = this.calculatePriorityScore(state)
+    const priorityScore = this.calculatePriorityScore(state, direction)
 
     const alert: CandidateAlert = {
       id: `cand_${state.symbol}_${now}`,
@@ -349,6 +370,8 @@ export class KiteScanner extends EventEmitter {
       symbol: state.symbol,
       price: state.lastPrice,
       dayHigh: state.high,
+      dayLow: state.low,
+      direction,
       atp: state.atp,
       volumeSurgeRatio: state.volumeSurgeRatio,
       changePct: state.changePct,
@@ -367,7 +390,23 @@ export class KiteScanner extends EventEmitter {
     this.emit('candidate_surfaced', alert)
   }
 
-  private calculatePriorityScore(state: StockScanState): number {
+  /**
+   * Computes a directional priority score weighting volume surge, price displacement,
+   * order book imbalance (positive for Bullish, negative for Bearish), and proximity to day extreme.
+   */
+  private calculatePriorityScore(state: StockScanState, direction: 'BULLISH' | 'BEARISH' = 'BULLISH'): number {
+    if (direction === 'BEARISH') {
+      const dayLowProximity = state.low > 0 && state.lastPrice > 0 ? Math.min(1.0, state.low / state.lastPrice) : 1.0
+      return parseFloat(
+        (
+          state.volumeSurgeRatio * 0.5 +
+          Math.abs(Math.min(0, state.changePct)) * 0.3 +
+          (1 - state.obi) * 0.2 +
+          dayLowProximity * 0.5
+        ).toFixed(2)
+      )
+    }
+
     const dayHighProximity = state.high > 0 ? Math.min(1.0, state.lastPrice / state.high) : 1.0
     return parseFloat(
       (

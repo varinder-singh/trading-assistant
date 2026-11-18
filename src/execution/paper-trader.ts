@@ -46,13 +46,14 @@ export class PaperTrader extends EventEmitter {
   private exitingPositions: Set<string> = new Set()
   private recentExits: Map<string, Date> = new Map()
   public maxConcurrentPositions = Number(process.env.MAX_ACTIVE_POSITIONS || process.env.MAX_PAPER_POSITIONS || 10)
+  public maxIndexPositions = Number(process.env.MAX_INDEX_POSITIONS || 2)
   public entryCooldownMins = Number(process.env.ENTRY_COOLDOWN_MINS || 15)
   private inFlightOrders: Set<string> = new Set()
 
   private marketMonitorTimer?: NodeJS.Timeout
   private positionManagerTimer?: NodeJS.Timeout
 
-  private maxDailyTrades = Number(process.env.MAX_DAILY_TRADES || 30)
+  public maxDailyTrades = Number(process.env.MAX_DAILY_TRADES || 30)
   private maxDailyLoss = Number(process.env.MAX_DAILY_LOSS || -20000)
   private todayRealizedPnL = 0
   private todayTradeCount = 0
@@ -69,6 +70,26 @@ export class PaperTrader extends EventEmitter {
   ) {
     super()
     this.kiteOrderService = kc ? new KiteOrderService(kc) : null
+  }
+
+  /**
+   * Dynamically updates the user's position & trade pool allocation from their Profile settings.
+   * Ensures NIFTY index slots and stock slots stay balanced according to user preferences.
+   */
+  public configurePool(config: {
+    maxActivePositions?: number | null | undefined
+    maxIndexPositions?: number | null | undefined
+    maxDailyTrades?: number | null | undefined
+  }): void {
+    if (config.maxActivePositions && config.maxActivePositions > 0) {
+      this.maxConcurrentPositions = Number(config.maxActivePositions)
+    }
+    if (config.maxIndexPositions !== undefined && config.maxIndexPositions !== null && config.maxIndexPositions >= 0) {
+      this.maxIndexPositions = Number(config.maxIndexPositions)
+    }
+    if (config.maxDailyTrades && config.maxDailyTrades > 0) {
+      this.maxDailyTrades = Number(config.maxDailyTrades)
+    }
   }
 
   public setKiteClient(kc: KiteConnect) {
@@ -146,7 +167,7 @@ export class PaperTrader extends EventEmitter {
     const pos: PaperPosition = {
       symbol: trade.symbol,
       token: trade.instrumentToken || 0,
-      side: trade.side,
+      side: trade.side || 'BUY',
       quantity: trade.quantity,
       avgEntryPrice: Number(trade.entryPrice),
       currentPrice: Number(trade.entryPrice),
@@ -485,13 +506,14 @@ export class PaperTrader extends EventEmitter {
 
   async squareOffPositions(positions: PaperPosition[], reason: string = 'Market Square-off') {
     await forEachSequentially(positions, async (pos) => {
-      // Re-checked per position: an earlier sell in this loop may change what is already exiting.
+      // Re-checked per position: an earlier exit in this loop may change what is already exiting.
       if (this.exitingPositions.has(pos.symbol)) return
 
+      const exitSide: OrderSide = pos.side === 'SELL' ? 'BUY' : 'SELL'
       await this.placeOrder({
         symbol: pos.symbol,
         token: pos.token,
-        side: 'SELL',
+        side: exitSide,
         quantity: pos.quantity,
         price: pos.currentPrice,
         context: { aiReasoning: reason, product: pos.product, assetClass: pos.assetClass },
@@ -501,6 +523,18 @@ export class PaperTrader extends EventEmitter {
 
   async squareOffAll(reason: string = 'Market Square-off') {
     await this.squareOffPositions(this.getAllPositions(), reason)
+  }
+
+  /**
+   * Determines whether an incoming order is opening a new position (either Long BUY or Intraday Short SELL)
+   * versus closing/reducing an existing open position.
+   */
+  private isOpeningOrder(params: { symbol: string; side: OrderSide; context?: TradeContext | undefined }): boolean {
+    const existing = this.positions.get(params.symbol)
+    if (params.side === 'BUY') {
+      return existing?.side !== 'SELL'
+    }
+    return Boolean(params.context?.isShortEntry) && existing?.side !== 'BUY'
   }
 
   async placeOrder(params: {
@@ -521,15 +555,15 @@ export class PaperTrader extends EventEmitter {
     }
     this.inFlightOrders.add(lockKey)
 
+    const isOpening = this.isOpeningOrder(params)
+
     try {
-      if (params.side === 'BUY') {
+      if (isOpening) {
         const validation = this.validateBuyOrder(params)
         if (!validation.valid) return { success: false, error: validation.error }
         params.quantity = this.calculateBuyQuantity(params)
         this.todayTradeCount++
-      }
-
-      if (params.side === 'SELL') {
+      } else {
         if (this.exitingPositions.has(params.symbol)) {
           console.log(`⚠️ [PAPER TRADE] Exit already in progress for ${params.symbol}. Skipping duplicate exit.`)
           return { success: false, error: 'Exit already in progress' }
@@ -551,7 +585,7 @@ export class PaperTrader extends EventEmitter {
 
         if (!liveOrder.success) {
           console.error(`❌ [LIVE TRADE] Failed to place order: ${liveOrder.error}`)
-          if (params.side === 'SELL') this.exitingPositions.delete(params.symbol)
+          if (!isOpening) this.exitingPositions.delete(params.symbol)
           return { success: false, error: liveOrder.error }
         }
         console.log(`✅ [LIVE TRADE] Order Placed! ID: ${liveOrder.orderId}`)
@@ -683,6 +717,14 @@ export class PaperTrader extends EventEmitter {
       return { valid: false, error: 'Maximum concurrent positions reached' }
     }
 
+    if (this.isStockPoolFull(params.context)) {
+      const maxStockSlots = this.maxConcurrentPositions - this.maxIndexPositions
+      console.log(
+        `❌ [PAPER TRADE] Stock pool limit reached (${maxStockSlots}/${this.maxConcurrentPositions} slots; ${this.maxIndexPositions} reserved for NIFTY Index). Skipping ${params.symbol}`
+      )
+      return { valid: false, error: 'Maximum stock pool positions reached (slots reserved for Index)' }
+    }
+
     if (this.positions.has(params.symbol)) {
       console.log(`❌ [PAPER TRADE] Position already exists for ${params.symbol}. Skipping duplicate entry.`)
       return { valid: false, error: 'Position already exists for this symbol' }
@@ -711,6 +753,23 @@ export class PaperTrader extends EventEmitter {
     }
 
     return { valid: true }
+  }
+
+  /**
+   * Enforces the user's balanced position pool between NIFTY Index Options and Stocks/Stock Options.
+   * Reserves `maxIndexPositions` slots exclusively for Index Options when total pool > maxIndexPositions.
+   */
+  private isStockPoolFull(context?: TradeContext): boolean {
+    const isStockAsset = context?.assetClass === 'EQUITY' || context?.assetClass === 'STOCK_OPTION'
+    if (!isStockAsset) return false
+    if (this.maxIndexPositions <= 0 || this.maxConcurrentPositions <= this.maxIndexPositions) return false
+
+    const maxStockSlots = this.maxConcurrentPositions - this.maxIndexPositions
+    const activeStockCount = this.getAllPositions().filter(
+      (p) => p.assetClass === 'EQUITY' || p.assetClass === 'STOCK_OPTION'
+    ).length
+
+    return activeStockCount >= maxStockSlots
   }
 
   private resolveCappedDeltaLots(optionDelta: number | undefined): number {
@@ -813,7 +872,12 @@ export class PaperTrader extends EventEmitter {
     order: TradeOrder,
     params: { side?: OrderSide | undefined; symbol?: string | undefined; context?: TradeContext | undefined }
   ): void {
-    if (order.side === 'BUY') {
+    const activePos = this.positions.get(order.symbol)
+    const isEntryOrder =
+      (order.side === 'BUY' && (!activePos || activePos.side === 'BUY')) ||
+      (order.side === 'SELL' && Boolean(params.context?.isShortEntry))
+
+    if (isEntryOrder) {
       this.persistBuyTrade(order, params.context)
     }
 
@@ -839,7 +903,7 @@ export class PaperTrader extends EventEmitter {
     this.emit('order_update', order)
     this.emit('portfolio_update', this.getAllPositions())
 
-    if (params.side === 'SELL' && params.symbol) {
+    if (!isEntryOrder && params.symbol) {
       this.exitingPositions.delete(params.symbol)
     }
   }
@@ -864,9 +928,14 @@ export class PaperTrader extends EventEmitter {
 
   private sanitizeTradeLevels(order: TradeOrder, context?: TradeContext): void {
     const pos = this.positions.get(order.symbol)
-    if (!pos || pos.side !== 'BUY') return
+    if (!pos) return
 
     if (pos.assetClass === 'EQUITY') {
+      if (pos.side === 'SELL') {
+        if (pos.aiStopLoss !== undefined && pos.aiStopLoss <= order.price!) delete pos.aiStopLoss
+        if (pos.aiTarget !== undefined && pos.aiTarget >= order.price!) delete pos.aiTarget
+        return
+      }
       if (pos.aiStopLoss !== undefined && pos.aiStopLoss >= order.price!) {
         delete pos.aiStopLoss
       }
@@ -875,6 +944,8 @@ export class PaperTrader extends EventEmitter {
       }
       return
     }
+
+    if (pos.side !== 'BUY') return
 
     if (pos.assetClass === 'INDEX_OPTION') {
       if (pos.aiStopLoss !== undefined && pos.aiStopLoss > 1000) {
@@ -897,7 +968,11 @@ export class PaperTrader extends EventEmitter {
 
   private async updatePosition(order: TradeOrder, context?: TradeContext) {
     const existing = this.positions.get(order.symbol)
-    if (order.side === 'BUY') {
+    const isOpeningOrAdding =
+      (order.side === 'BUY' && (!existing || existing.side === 'BUY')) ||
+      (order.side === 'SELL' && Boolean(context?.isShortEntry) && (!existing || existing.side === 'SELL'))
+
+    if (isOpeningOrAdding) {
       this.openOrAddBuyPosition(existing, order, context)
       return
     }
@@ -926,7 +1001,7 @@ export class PaperTrader extends EventEmitter {
     const pos: PaperPosition = {
       symbol: order.symbol,
       token: order.token,
-      side: 'BUY',
+      side: order.side,
       quantity: order.quantity,
       avgEntryPrice: order.price!,
       currentPrice: order.price!,
@@ -995,7 +1070,8 @@ export class PaperTrader extends EventEmitter {
     order: TradeOrder,
     context?: TradeContext
   ): Promise<void> {
-    const pnl = (order.price! - existing.avgEntryPrice) * order.quantity
+    const directionMultiplier = existing.side === 'SELL' ? -1 : 1
+    const pnl = (order.price! - existing.avgEntryPrice) * order.quantity * directionMultiplier
     existing.realizedPnL += pnl
     this.todayRealizedPnL += pnl
     existing.quantity -= order.quantity
@@ -1105,7 +1181,26 @@ export class PaperTrader extends EventEmitter {
       return false
     }
 
-    if (price > order.triggerPrice || price <= 0) return false
+    if (price <= 0) return false
+
+    // Structural invalidation check for wave pullback orders: cancel if price breaks stop-loss before filling
+    if (order.context?.assetClass === 'EQUITY' && order.indexInvalidation !== undefined) {
+      const isInvalidated =
+        order.side === 'SELL' ? price >= order.indexInvalidation : price <= order.indexInvalidation
+      if (isInvalidated) {
+        this.cancelPendingTriggerOrder(
+          orderId,
+          order,
+          '🧭 Wave Setup Invalidated',
+          `${order.symbol} crossed structural stop ₹${order.indexInvalidation.toFixed(2)} before pullback entry.`,
+          'warning'
+        )
+        return false
+      }
+    }
+
+    const isTriggerTouched = order.side === 'SELL' ? price >= order.triggerPrice : price <= order.triggerPrice
+    if (!isTriggerTouched) return false
 
     if (this.todayRealizedPnL <= this.maxDailyLoss) this.tradingHalted = true
     if (this.tradingHalted) {
@@ -1143,10 +1238,60 @@ export class PaperTrader extends EventEmitter {
 
   private async fillPendingTriggerOrder(orderId: string, order: PendingTriggerOrder, fillPrice: number): Promise<void> {
     console.log(
-      `🎯 [PAPER TRADE] Trigger entry filled for ${order.symbol}: CMP ₹${fillPrice.toFixed(2)} <= trigger ₹${order.triggerPrice.toFixed(2)}`
+      `🎯 [PAPER TRADE] Wave Pullback Trigger filled for ${order.symbol} (${order.side}): CMP ₹${fillPrice.toFixed(2)} (trigger ₹${order.triggerPrice.toFixed(2)})`
     )
     order.status = 'COMPLETE'
     this.pendingTriggerOrders.delete(orderId)
+
+    const tradeContext = this.buildFilledTriggerContext(order, fillPrice)
+    const filledQuantity =
+      tradeContext.assetClass === 'EQUITY'
+        ? this.calculateBuyQuantity({ price: fillPrice, context: tradeContext })
+        : order.quantity
+
+    const tradeOrder: TradeOrder = {
+      id: order.id,
+      symbol: order.symbol,
+      token: order.token,
+      side: order.side,
+      quantity: filledQuantity,
+      price: fillPrice,
+      type: 'LIMIT',
+      status: 'COMPLETE',
+      timestamp: new Date(),
+      ...(order.strike !== undefined ? { strike: order.strike } : {}),
+    }
+
+    const existingOrderRecord = this.orders.find((o) => o.id === order.id)
+    if (existingOrderRecord) {
+      existingOrderRecord.status = 'COMPLETE'
+      existingOrderRecord.price = fillPrice
+      existingOrderRecord.quantity = filledQuantity
+      existingOrderRecord.timestamp = tradeOrder.timestamp
+    } else {
+      this.orders = [...this.orders, tradeOrder]
+    }
+
+    this.todayTradeCount++
+    await this.updatePosition(tradeOrder, tradeContext)
+    this.emitOrderEvents(tradeOrder, { side: order.side, symbol: order.symbol, context: tradeContext })
+  }
+
+  private buildFilledTriggerContext(order: PendingTriggerOrder, fillPrice: number): TradeContext {
+    if (order.context?.assetClass === 'EQUITY') {
+      return {
+        ...order.context,
+      }
+    }
+
+    if (order.context?.assetClass === 'STOCK_OPTION') {
+      const optionRiskPct = Number(process.env.STOCK_OPTION_RISK_PCT || 0.20)
+      return {
+        ...order.context,
+        aiStopLoss: Number((fillPrice * (1 - optionRiskPct)).toFixed(2)),
+        aiTarget: Number((fillPrice * 1.35).toFixed(2)),
+      }
+    }
 
     const optionRiskPoints = order.optionRiskPoints ?? 15
     const newSl = fillPrice - optionRiskPoints
@@ -1161,39 +1306,13 @@ export class PaperTrader extends EventEmitter {
     const rrr = order.riskRewardRatio ?? order.context?.strategyContext?.riskRewardRatio ?? 1.5
     const recalculatedTarget = fillPrice + optionRiskPoints * rrr
 
-    const tradeContext: TradeContext = {
+    return {
       ...order.context,
       aiStopLoss: recalculatedSl,
       aiTarget: recalculatedTarget,
       currentIndexPrice: order.currentIndexPrice,
       optionRiskPoints,
     }
-
-    const tradeOrder: TradeOrder = {
-      id: order.id,
-      symbol: order.symbol,
-      token: order.token,
-      side: order.side,
-      quantity: order.quantity,
-      price: fillPrice,
-      type: 'LIMIT',
-      status: 'COMPLETE',
-      timestamp: new Date(),
-      ...(order.strike !== undefined ? { strike: order.strike } : {}),
-    }
-
-    const existingOrderRecord = this.orders.find((o) => o.id === order.id)
-    if (existingOrderRecord) {
-      existingOrderRecord.status = 'COMPLETE'
-      existingOrderRecord.price = fillPrice
-      existingOrderRecord.timestamp = tradeOrder.timestamp
-    } else {
-      this.orders = [...this.orders, tradeOrder]
-    }
-
-    this.todayTradeCount++
-    await this.updatePosition(tradeOrder, tradeContext)
-    this.emitOrderEvents(tradeOrder, { context: tradeContext })
   }
 
   private async updateActivePositionsForToken(token: number, price: number): Promise<boolean> {
@@ -1202,7 +1321,20 @@ export class PaperTrader extends EventEmitter {
 
     await forEachSequentially(matchingEntries, async ([symbol, pos]) => {
       pos.currentPrice = price
-      pos.unrealizedPnL = (price - pos.avgEntryPrice) * pos.quantity
+      const directionMultiplier = pos.side === 'SELL' ? -1 : 1
+      pos.unrealizedPnL = (price - pos.avgEntryPrice) * pos.quantity * directionMultiplier
+
+      if (pos.side === 'SELL') {
+        if (!pos.peakPrice || price < pos.peakPrice) pos.peakPrice = price
+        const currentPeakPnL = (pos.avgEntryPrice - pos.peakPrice) * pos.quantity
+        if (pos.maxUnrealizedPnL === undefined || currentPeakPnL > pos.maxUnrealizedPnL) {
+          pos.maxUnrealizedPnL = currentPeakPnL
+        }
+        if (!this.exitingPositions.has(symbol)) {
+          await this.processShortPriceTickExits(symbol, pos, price)
+        }
+        return
+      }
 
       if (!pos.peakPrice || price > pos.peakPrice) pos.peakPrice = price
       const currentPeakPnL = (pos.peakPrice - pos.avgEntryPrice) * pos.quantity
@@ -1295,6 +1427,13 @@ export class PaperTrader extends EventEmitter {
    */
   private applyEntryRiskGuards(pos: PaperPosition, context?: TradeContext): void {
     if (pos.assetClass === 'EQUITY') {
+      if (pos.side === 'SELL') {
+        const maxShortSl = pos.avgEntryPrice * 1.03
+        if (pos.aiStopLoss === undefined || pos.aiStopLoss > maxShortSl || pos.aiStopLoss <= pos.avgEntryPrice) {
+          pos.aiStopLoss = Number((pos.avgEntryPrice * 1.015).toFixed(2))
+        }
+        return
+      }
       const minEquitySl = pos.avgEntryPrice * 0.97
       if (pos.aiStopLoss === undefined || pos.aiStopLoss < minEquitySl) {
         pos.aiStopLoss = Number((pos.avgEntryPrice * 0.985).toFixed(2))
@@ -1334,6 +1473,7 @@ export class PaperTrader extends EventEmitter {
   private async exitOnPeakRetract(pos: PaperPosition, price: number): Promise<void> {
     const peakPrice = pos.peakPrice ?? price
     const bucket = this.getRiskProfile(pos).bucket
+    const exitSide: OrderSide = pos.side === 'SELL' ? 'BUY' : 'SELL'
     console.log(
       `[EXIT] 🛡️ Peak Retract Guard (${bucket}) triggered for ${pos.symbol} @ ₹${price.toFixed(2)} (Peak: ₹${peakPrice.toFixed(2)})`
     )
@@ -1345,7 +1485,7 @@ export class PaperTrader extends EventEmitter {
     await this.placeOrder({
       symbol: pos.symbol,
       token: pos.token,
-      side: 'SELL',
+      side: exitSide,
       quantity: pos.quantity,
       price: price,
       context: {
@@ -1355,7 +1495,8 @@ export class PaperTrader extends EventEmitter {
   }
 
   private async exitOnStopLossHit(pos: PaperPosition, price: number, entryPrice: number): Promise<void> {
-    const isProfitable = price >= entryPrice
+    const isProfitable = pos.side === 'SELL' ? price <= entryPrice : price >= entryPrice
+    const exitSide: OrderSide = pos.side === 'SELL' ? 'BUY' : 'SELL'
     const title = isProfitable ? '🔒 Trailing Stop Hit (Profit Locked)' : '⛔ Stop-Loss Hit'
     const reason = isProfitable ? 'Trailing Stop Hit (Locked Profit)' : 'Stop-Loss hit'
     const type = isProfitable ? 'info' : 'error'
@@ -1369,7 +1510,7 @@ export class PaperTrader extends EventEmitter {
     await this.placeOrder({
       symbol: pos.symbol,
       token: pos.token,
-      side: 'SELL',
+      side: exitSide,
       quantity: pos.quantity,
       price: price,
       context: { aiReasoning: reason },
@@ -1399,7 +1540,8 @@ export class PaperTrader extends EventEmitter {
     const maxHoldMs = Number(process.env.INTRADAY_EQUITY_STAGNATION_MINS || 90) * 60 * 1000
     if (holdMs < maxHoldMs) return false
 
-    const gainPct = (price - pos.avgEntryPrice) / pos.avgEntryPrice
+    const directionMultiplier = pos.side === 'SELL' ? -1 : 1
+    const gainPct = ((price - pos.avgEntryPrice) / pos.avgEntryPrice) * directionMultiplier
     return gainPct < 0.0025
   }
 
@@ -1423,6 +1565,7 @@ export class PaperTrader extends EventEmitter {
 
   private async exitOnEquityStagnation(pos: PaperPosition, price: number): Promise<void> {
     const holdMins = Math.round((Date.now() - pos.timestamp.getTime()) / 60000)
+    const exitSide: OrderSide = pos.side === 'SELL' ? 'BUY' : 'SELL'
     console.log(`[EXIT] ⏱️ Intraday Equity Stagnation Timeout (${holdMins}m Rule) for ${pos.symbol} @ ₹${price.toFixed(2)}`)
     this.emit('notification', {
       title: '⏱️ Equity Stagnation Cutoff',
@@ -1432,7 +1575,7 @@ export class PaperTrader extends EventEmitter {
     await this.placeOrder({
       symbol: pos.symbol,
       token: pos.token,
-      side: 'SELL',
+      side: exitSide,
       quantity: pos.quantity,
       price: price,
       context: { aiReasoning: `Intraday Equity Stagnation Timeout (${holdMins}m Rule)` },
@@ -1441,6 +1584,19 @@ export class PaperTrader extends EventEmitter {
 
   private applyEquityHalfTargetRatchet(pos: PaperPosition, peakPrice: number, entryPrice: number): void {
     if (pos.assetClass !== 'EQUITY' || pos.t1Hit || !pos.t1Target || pos.aiStopLoss === undefined) return
+    if (pos.side === 'SELL') {
+      const halfTargetDistance = (entryPrice - pos.t1Target) * 0.5
+      if (halfTargetDistance <= 0) return
+      if (peakPrice <= entryPrice - halfTargetDistance && pos.aiStopLoss > entryPrice) {
+        pos.aiStopLoss = entryPrice
+        pos.trailingSlLocked = entryPrice
+        console.log(
+          `[PaperTrader] 🛡️ Short Half-Target Breakeven Ratchet for ${pos.symbol}: Low ₹${peakPrice.toFixed(2)} reached 50% of T1. SL ratcheted to Breakeven ₹${entryPrice.toFixed(2)}`
+        )
+      }
+      return
+    }
+
     const halfTargetDistance = (pos.t1Target - entryPrice) * 0.5
     if (halfTargetDistance <= 0) return
     if (peakPrice >= entryPrice + halfTargetDistance && pos.aiStopLoss < entryPrice) {
@@ -1454,6 +1610,46 @@ export class PaperTrader extends EventEmitter {
         message: `${pos.symbol}: Reached 50% of T1. SL moved to Breakeven ₹${entryPrice.toFixed(2)}.`,
         type: 'info',
       })
+    }
+  }
+
+  /**
+   * Evaluates price-tick exits for Short (SELL) cash equity positions:
+   * - Half-target breakeven ratchet (when price drops 50% toward T1)
+   * - 90m intraday stagnation timeout
+   * - Stop-loss hit (price >= aiStopLoss)
+   * - Downward tiered targets (price <= t1Target, t2Target, t3Target)
+   */
+  private async processShortPriceTickExits(symbol: string, pos: PaperPosition, price: number): Promise<void> {
+    const entryPrice = pos.avgEntryPrice
+    const peakLowPrice = pos.peakPrice ?? pos.currentPrice
+
+    this.applyEquityHalfTargetRatchet(pos, peakLowPrice, entryPrice)
+
+    if (this.isIntradayEquityStagnant(pos, price)) {
+      await this.exitOnEquityStagnation(pos, price)
+      return
+    }
+
+    if (pos.aiStopLoss && price >= pos.aiStopLoss) {
+      await this.exitOnStopLossHit(pos, price, entryPrice)
+      return
+    }
+
+    if (pos.t1Target && !pos.t1Hit && price <= pos.t1Target) {
+      await this.handleT1TargetHit(symbol, pos, price)
+      return
+    }
+    if (pos.t2Target && pos.t1Hit && !pos.t2Hit && price <= pos.t2Target) {
+      await this.handleT2TargetHit(symbol, pos, price)
+      return
+    }
+    if (pos.t3Target && pos.t2Hit && price <= pos.t3Target) {
+      await this.handleT3TargetHit(symbol, pos, price)
+      return
+    }
+    if (!pos.t1Target && pos.aiTarget && price <= pos.aiTarget) {
+      await this.handleSingleTargetHit(symbol, pos, price)
     }
   }
 
@@ -1524,20 +1720,24 @@ export class PaperTrader extends EventEmitter {
   private async handleT1TargetHit(symbol: string, pos: PaperPosition, price: number): Promise<void> {
     pos.t1Hit = true
     const prevSl = pos.aiStopLoss?.toFixed(2) ?? '—'
+    const exitSide: OrderSide = pos.side === 'SELL' ? 'BUY' : 'SELL'
 
     if (pos.t1Qty && pos.t1Qty > 0) {
-      pos.aiStopLoss = Math.max(pos.aiStopLoss || 0, pos.avgEntryPrice)
+      pos.aiStopLoss =
+        pos.side === 'SELL'
+          ? Math.min(pos.aiStopLoss || Infinity, pos.avgEntryPrice)
+          : Math.max(pos.aiStopLoss || 0, pos.avgEntryPrice)
       pos.trailingSlLocked = pos.aiStopLoss
-      console.log(`[EXIT] 🥇 T1 hit for ${symbol} @ ₹${price} — selling ${pos.t1Qty}qty, SL→breakeven`)
+      console.log(`[EXIT] 🥇 T1 hit for ${symbol} @ ₹${price} — exiting ${pos.t1Qty}qty, SL→breakeven`)
       this.emit('notification', {
         title: `🥇 T1 Hit — Partial Booked`,
-        message: `${symbol}: Sold ${pos.t1Qty}qty @ ₹${price.toFixed(2)}. SL moved to breakeven (was ₹${prevSl})`,
+        message: `${symbol}: Closed ${pos.t1Qty}qty @ ₹${price.toFixed(2)}. SL moved to breakeven (was ₹${prevSl})`,
         type: 'success',
       })
       await this.placeOrder({
         symbol: pos.symbol,
         token: pos.token,
-        side: 'SELL',
+        side: exitSide,
         quantity: pos.t1Qty,
         price,
         context: { aiReasoning: `T1 target hit @ ₹${pos.t1Target}` },
@@ -1547,7 +1747,8 @@ export class PaperTrader extends EventEmitter {
 
     // 1-lot position: no partial exit possible, lock 50% of the T1 gain cushion
     const cushionedSl = parseFloat((pos.avgEntryPrice + 0.5 * (price - pos.avgEntryPrice)).toFixed(2))
-    pos.aiStopLoss = Math.max(pos.aiStopLoss || 0, cushionedSl)
+    pos.aiStopLoss =
+      pos.side === 'SELL' ? Math.min(pos.aiStopLoss || Infinity, cushionedSl) : Math.max(pos.aiStopLoss || 0, cushionedSl)
     pos.trailingSlLocked = pos.aiStopLoss
     console.log(
       `[T1] 🥇 T1 hit for ${symbol} @ ₹${price} — SL moved to ₹${cushionedSl.toFixed(2)} (1-lot: 50% gain cushion)`
@@ -1563,22 +1764,26 @@ export class PaperTrader extends EventEmitter {
   private async handleT2TargetHit(symbol: string, pos: PaperPosition, price: number): Promise<void> {
     pos.t2Hit = true
     const prevSl = pos.aiStopLoss?.toFixed(2) ?? '—'
+    const exitSide: OrderSide = pos.side === 'SELL' ? 'BUY' : 'SELL'
     if (pos.t1Target) {
-      pos.aiStopLoss = Math.max(pos.aiStopLoss || 0, pos.t1Target)
+      pos.aiStopLoss =
+        pos.side === 'SELL'
+          ? Math.min(pos.aiStopLoss || Infinity, pos.t1Target)
+          : Math.max(pos.aiStopLoss || 0, pos.t1Target)
       pos.trailingSlLocked = pos.aiStopLoss
     }
 
     if (pos.t2Qty && pos.t2Qty > 0) {
-      console.log(`[EXIT] 🥈 T2 hit for ${symbol} @ ₹${price} — selling ${pos.t2Qty}qty, SL→T1`)
+      console.log(`[EXIT] 🥈 T2 hit for ${symbol} @ ₹${price} — exiting ${pos.t2Qty}qty, SL→T1`)
       this.emit('notification', {
         title: `🥈 T2 Hit — Profit Locked`,
-        message: `${symbol}: Sold ${pos.t2Qty}qty @ ₹${price.toFixed(2)}. SL locked at T1 ₹${pos.t1Target?.toFixed(2)} (was ₹${prevSl})`,
+        message: `${symbol}: Closed ${pos.t2Qty}qty @ ₹${price.toFixed(2)}. SL locked at T1 ₹${pos.t1Target?.toFixed(2)} (was ₹${prevSl})`,
         type: 'success',
       })
       await this.placeOrder({
         symbol: pos.symbol,
         token: pos.token,
-        side: 'SELL',
+        side: exitSide,
         quantity: pos.t2Qty,
         price,
         context: { aiReasoning: `T2 target hit @ ₹${pos.t2Target}` },
@@ -1596,6 +1801,7 @@ export class PaperTrader extends EventEmitter {
   }
 
   private async handleT3TargetHit(symbol: string, pos: PaperPosition, price: number): Promise<void> {
+    const exitSide: OrderSide = pos.side === 'SELL' ? 'BUY' : 'SELL'
     console.log(`[EXIT] 🏆 T3 hit for ${symbol} @ ₹${price} — exiting remaining ${pos.quantity}qty`)
     this.emit('notification', {
       title: `🏆 Full Target Booked!`,
@@ -1605,7 +1811,7 @@ export class PaperTrader extends EventEmitter {
     await this.placeOrder({
       symbol: pos.symbol,
       token: pos.token,
-      side: 'SELL',
+      side: exitSide,
       quantity: pos.quantity,
       price,
       context: { aiReasoning: `T3 hard exit @ ₹${pos.t3Target}` },
@@ -1613,6 +1819,7 @@ export class PaperTrader extends EventEmitter {
   }
 
   private async handleSingleTargetHit(symbol: string, pos: PaperPosition, price: number): Promise<void> {
+    const exitSide: OrderSide = pos.side === 'SELL' ? 'BUY' : 'SELL'
     console.log(`[EXIT] 🎯 Target reached for ${symbol} @ ${price} (Target: ${pos.aiTarget})`)
     this.emit('notification', {
       title: `🎯 Target Booked!`,
@@ -1622,7 +1829,7 @@ export class PaperTrader extends EventEmitter {
     await this.placeOrder({
       symbol: pos.symbol,
       token: pos.token,
-      side: 'SELL',
+      side: exitSide,
       quantity: pos.quantity,
       price,
       context: { aiReasoning: 'Target reached' },

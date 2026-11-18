@@ -16,6 +16,10 @@ export class UserRepository {
         'stockOptionPreference',
         'equityHoldingMode',
         'equityRiskPerTrade',
+        'maxActivePositions',
+        'maxIndexPositions',
+        'maxDailyTrades',
+        'enablePullbackEntry',
       ])
       .where('id', '=', userId)
       .executeTakeFirst()

@@ -44,6 +44,10 @@ export class LiveAnalyzer extends EventEmitter {
     this.levels = levels
   }
 
+  public hasLevels(): boolean {
+    return this.levels !== null && (this.levels.resistance > 0 || this.levels.support > 0)
+  }
+
   public setLastAnalysisPrice(price: number): void {
     this.lastAnalysisPrice = price
   }

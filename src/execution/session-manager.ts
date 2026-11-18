@@ -155,68 +155,106 @@ export class UserSession extends EventEmitter {
 
   // ── Watch: Configure session-level analysis for a symbol ────────────────
   async watch(symbol: string, levels?: AnalysisLevels, mode?: 'intraday' | 'swing') {
-    const token = await getInstrumentToken(this.kc, symbol)
+    const upperSymbol = symbol.toUpperCase().trim()
+    const token = await getInstrumentToken(this.kc, upperSymbol)
 
     if (!token) {
-      console.error(`[UserSession] Token not found for ${symbol}`)
-      this.emit('watch_error', { message: `Token not found for ${symbol}` })
+      console.error(`[UserSession] Token not found for ${upperSymbol}`)
+      this.emit('watch_error', { message: `Token not found for ${upperSymbol}` })
       return
     }
 
     await candleBuilder.seedFromKite(this.kc, token)
+
+    // Pinning Guard: If NIFTY/BANKNIFTY is actively watched as the autonomous index engine,
+    // clicking a stock in the UI subscribes its ticks for chart display without unhooking NIFTY.
+    const isCurrentIndex = this.watchedSymbol === 'NIFTY' || this.watchedSymbol === 'BANKNIFTY'
+    const isRequestedIndex = upperSymbol === 'NIFTY' || upperSymbol === 'BANKNIFTY'
+    if (isCurrentIndex && !isRequestedIndex && this.watchedToken) {
+      this.ticker.subscribe([token])
+      this.ticker.setMode(this.ticker.modeFull, [token])
+      this.emit('watching', { symbol: upperSymbol, token })
+      return
+    }
+
+    // Idempotent Reconnect Guard: If already watching this exact symbol, preserve LiveAnalyzer
+    // cooldowns and dynamic levels instead of resetting on browser wakeup/reconnect.
+    if (this.watchedSymbol === upperSymbol && this.watchedToken === token) {
+      if (levels && !this.analyzer.hasLevels()) {
+        this.analyzer.setLevels(levels)
+      }
+      this.subscribeActiveTokens(token)
+      this.emit('watching', { symbol: upperSymbol, token })
+      this.emit('portfolio_sync', this.paperTrader.getAllPositions())
+      return
+    }
 
     // Cleanup previous analyzer listeners
     this.analyzer.off('breakout', this.onBreakout)
 
     const prevAnalysisPrice = this.analyzer?.getLastAnalysisPrice() || 0
 
-    // Reset analyzer with fresh state
+    // Reset analyzer with fresh state for newly watched index symbol
     this.analyzer = new LiveAnalyzer()
     if (prevAnalysisPrice > 0) {
       this.analyzer.setLastAnalysisPrice(prevAnalysisPrice)
     }
-    this.watchedSymbol = symbol
+    this.watchedSymbol = upperSymbol
     this.watchedToken = token
     this.watchMode = mode || 'intraday'
 
     if (!isMarketOpen()) {
-      console.log(`[UserSession] Market is closed. Watch registered for ${symbol} in read-only mode.`)
+      console.log(`[UserSession] Market is closed. Watch registered for ${upperSymbol} in read-only mode.`)
       this.emit('market_closed', { message: 'Market is closed. Operating in read-only mode.' })
     } else {
       if (levels) {
         this.analyzer.setLevels(levels)
       }
       this.analyzer.on('breakout', this.onBreakout)
-      console.log(`[UserSession] 🔭 Watching ${symbol} (token: ${token}, mode: ${this.watchMode})`)
+      console.log(`[UserSession] 🔭 Watching ${upperSymbol} (token: ${token}, mode: ${this.watchMode})`)
     }
 
-    // Subscribe ticker to watched symbol + open position tokens
+    this.subscribeActiveTokens(token)
+
+    // Persist watch config to DB
+    try {
+      await userRepo.updateWatchConfig(this.userId, upperSymbol, this.watchMode)
+    } catch (err) {
+      console.error(`[UserSession] Failed to persist watch config for ${upperSymbol}:`, err)
+    }
+
+    this.emit('watching', { symbol: upperSymbol, token })
+    this.emit('portfolio_sync', this.paperTrader.getAllPositions())
+  }
+
+  private subscribeActiveTokens(primaryToken: number): void {
     const positionTokens = this.paperTrader
       .getAllPositions()
       .map((p) => p.token)
       .filter((t) => !!t)
-    const tokensToSubscribe = Array.from(new Set([token, ...positionTokens]))
+    const pendingTokens = this.paperTrader
+      .getPendingOrders()
+      .map((o) => o.token)
+      .filter((t) => !!t)
+    const tokensToSubscribe = Array.from(new Set([primaryToken, ...positionTokens, ...pendingTokens]))
 
     this.ticker.subscribe(tokensToSubscribe)
     this.ticker.setMode(this.ticker.modeFull, tokensToSubscribe)
-
-    // Persist watch config to DB
-    try {
-      await userRepo.updateWatchConfig(this.userId, symbol, this.watchMode)
-    } catch (err) {
-      console.error(`[UserSession] Failed to persist watch config for ${symbol}:`, err)
-    }
-
-    this.emit('watching', { symbol, token })
-    this.emit('portfolio_sync', this.paperTrader.getAllPositions())
   }
 
   async autoWatch() {
     try {
-      const config = await userRepo.getWatchConfig(this.userId)
-      if (config?.watchedSymbol && isMarketOpen()) {
-        console.log(`[UserSession] Auto-watching ${config.watchedSymbol} on initialization...`)
-        await this.watch(config.watchedSymbol, undefined, (config.watchedMode as 'intraday' | 'swing') || 'intraday')
+      const profile = await userRepo.getUserProfileByUserId(this.userId)
+      if (profile) {
+        this.paperTrader.configurePool(profile)
+      }
+
+      const allowsIndex = (profile?.allowedUniverses ?? 'INDEX_OPTIONS,EQUITY,STOCK_OPTIONS').includes('INDEX_OPTIONS')
+      const targetSymbol = profile?.watchedSymbol || (allowsIndex ? 'NIFTY' : null)
+
+      if (targetSymbol && isMarketOpen()) {
+        console.log(`[UserSession] Auto-watching ${targetSymbol} on initialization...`)
+        await this.watch(targetSymbol, undefined, (profile?.watchedMode as 'intraday' | 'swing') || 'intraday')
       }
     } catch (err) {
       console.error(`[UserSession] Failed to auto-watch on initialization:`, err)
@@ -651,6 +689,10 @@ export class UserSession extends EventEmitter {
 
     try {
       const profile = await userRepo.getUserProfileByUserId(this.userId)
+      if (profile) {
+        this.paperTrader.configurePool(profile)
+      }
+
       const allowedUniverses = profile?.allowedUniverses || 'INDEX_OPTIONS,EQUITY,STOCK_OPTIONS'
       const allowsEquity = allowedUniverses.includes('EQUITY')
       const allowsStockOptions = allowedUniverses.includes('STOCK_OPTIONS')
@@ -668,7 +710,7 @@ export class UserSession extends EventEmitter {
         priorityScore: candidate.priorityScore,
         status: 'PENDING',
         tradingDate,
-        metadata: { isFnoListed: candidate.isFnoListed },
+        metadata: { isFnoListed: candidate.isFnoListed, direction: candidate.direction },
       })
       candidate.id = alertId
 
@@ -682,7 +724,10 @@ export class UserSession extends EventEmitter {
             equityRiskPerTrade: Number(profile?.equityRiskPerTrade) || 1500,
           })
 
-          const isTraded = result.decision.decision === 'BUY' && result.decision.action !== 'NONE'
+          const isDirectionalDecision =
+            result.decision.decision === 'BUY' || result.decision.decision === 'SELL'
+          const isTraded = isDirectionalDecision && result.decision.action !== 'NONE'
+
           await scannerAlertRepo.updateStatus(cand.id, isTraded ? 'TRADED' : 'ANALYZED', {
             decision: result.decision,
             assetClass: result.assetClass,
@@ -692,30 +737,43 @@ export class UserSession extends EventEmitter {
             userId: uId,
             symbol: cand.symbol,
             timeframe: '15m',
-            support: null,
-            resistance: null,
-            vwap: null,
-            atr: null,
+            support: result.context?.tf15m.support ?? null,
+            resistance: result.context?.tf15m.resistance ?? null,
+            vwap: result.context?.tf15m.vwap ?? null,
+            atr: result.context?.tf5m.atr14 ?? null,
             levels: {
               entry: result.decision.entryPrice,
               stopLoss: result.decision.stopLoss,
               targets: result.decision.targets,
+              support: result.context?.tf15m.support,
+              resistance: result.context?.tf15m.resistance,
+              vwap: result.context?.tf15m.vwap,
             },
             decision: result.decision,
             agentDeliberations: {
               assetClass: result.assetClass,
               confidence: result.decision.confidence,
               reason: result.decision.reason,
+              vix: result.vix,
+              rsi: result.context?.tf15m.rsi,
+              trend15m: result.context?.tf15m.trend,
             },
             tradingDate,
           })
 
           if (!isTraded) return
 
+          const telemetry = {
+            context: result.context,
+            vix: result.vix,
+            usePullbackQueue:
+              profile?.enablePullbackEntry === true || process.env.ENABLE_WAVE_PULLBACK_ENTRY === 'true',
+          }
+
           if (result.assetClass === 'EQUITY' && allowsEquity) {
-            await this.executeSurfacedEquityOrder(cand, result.decision)
+            await this.executeSurfacedEquityOrder(cand, result.decision, telemetry)
           } else if (result.assetClass === 'STOCK_OPTION' && allowsStockOptions && result.optionDetails) {
-            await this.executeSurfacedOptionOrder(result.optionDetails, result.decision, cand)
+            await this.executeSurfacedOptionOrder(result.optionDetails, result.decision, cand, telemetry)
           }
         } catch (evalErr: any) {
           console.error(`[UserSession] Failed analysis for candidate ${cand.symbol}:`, evalErr.message || evalErr)
@@ -727,28 +785,98 @@ export class UserSession extends EventEmitter {
     }
   }
 
-  private async executeSurfacedEquityOrder(candidate: any, decision: any): Promise<void> {
-    console.log(`[UserSession] Executing Equity Trade for ${candidate.symbol} (${decision.holdingMode})...`)
+  /**
+   * Executes a surfaced Cash Equity trade (supporting both Long BUY and Intraday MIS Short SELL).
+   * Populates full VIX, RSI, and 15m Trend telemetry, and optionally queues a Wave Pullback Limit Order
+   * slightly below the impulse spike top to improve entry price and avoid bull/bear traps.
+   */
+  private async executeSurfacedEquityOrder(
+    candidate: any,
+    decision: any,
+    telemetry?: { context?: any; vix?: any; usePullbackQueue?: boolean }
+  ): Promise<void> {
+    const isShort = decision.action === 'SELL_EQUITY' || decision.decision === 'SELL'
+    if (isShort && decision.holdingMode === 'CNC') {
+      console.warn(`[UserSession] Skipping short equity trade for ${candidate.symbol}: SEBI prohibits CNC overnight shorting.`)
+      return
+    }
+
+    const side = isShort ? 'SELL' : 'BUY'
+    console.log(`[UserSession] Executing Equity ${side} Trade for ${candidate.symbol} (${decision.holdingMode})...`)
     const livePrice = candidate.price && candidate.price > 0 ? candidate.price : decision.entryPrice
     const entryPrice = Math.abs(decision.entryPrice - livePrice) / livePrice > 0.02 ? livePrice : decision.entryPrice
 
     this.ticker.subscribe([candidate.token])
     this.ticker.setMode(this.ticker.modeFull, [candidate.token])
 
+    const tradeContext: TradeContext = {
+      assetClass: 'EQUITY',
+      product: decision.holdingMode,
+      isShortEntry: isShort,
+      aiReasoning: decision.reason,
+      aiConfidence: decision.confidence,
+      aiSetup: decision.action,
+      vixLevel: telemetry?.vix?.current,
+      rsiLevel: telemetry?.context?.tf15m?.rsi,
+      trend15m: telemetry?.context?.tf15m?.trend,
+      aiStopLoss: decision.stopLoss,
+      aiTarget: decision.targets[0],
+      aiIndexTargets: decision.targets,
+    }
+
+    if (telemetry?.usePullbackQueue) {
+      await this.queueEquityWavePullbackOrder(candidate, side, entryPrice, decision, tradeContext)
+      return
+    }
+
     await this.paperTrader.placeOrder({
       symbol: candidate.symbol,
       token: candidate.token,
-      side: 'BUY',
+      side,
       quantity: 1,
       price: entryPrice,
+      context: tradeContext,
+    })
+  }
+
+  /**
+   * Queues a Wave Pullback Limit Trigger Order for an equity candidate (-0.25% below spike for Long,
+   * +0.25% above breakdown for Short) with structural stop-loss invalidation protection.
+   */
+  private async queueEquityWavePullbackOrder(
+    candidate: any,
+    side: 'BUY' | 'SELL',
+    entryPrice: number,
+    decision: any,
+    tradeContext: TradeContext
+  ): Promise<void> {
+    const pullbackPct = Number(process.env.EQUITY_WAVE_PULLBACK_PCT || 0.0025)
+    const triggerPrice =
+      side === 'SELL'
+        ? Number((entryPrice * (1 + pullbackPct)).toFixed(2))
+        : Number((entryPrice * (1 - pullbackPct)).toFixed(2))
+    const ttlMs = 15 * 60 * 1000
+
+    await this.paperTrader.queuePendingOrder({
+      id: `pending_${Math.random().toString(36).substr(2, 9)}`,
+      symbol: candidate.symbol,
+      token: candidate.token,
+      side,
+      quantity: 1,
+      triggerPrice,
+      type: 'LIMIT',
+      status: 'PENDING',
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + ttlMs),
+      ttlMs,
+      indexInvalidation: decision.stopLoss,
+      currentIndexPrice: entryPrice,
+      riskRewardRatio: decision.riskRewardRatio || 1.5,
+      baseSignalPrice: triggerPrice,
       context: {
-        assetClass: 'EQUITY',
-        product: decision.holdingMode,
-        aiReasoning: decision.reason,
-        aiConfidence: decision.confidence,
-        aiStopLoss: decision.stopLoss,
-        aiTarget: decision.targets[0],
-        aiIndexTargets: decision.targets,
+        ...tradeContext,
+        triggerPrice,
+        isTriggerOrder: true,
       },
     })
   }
@@ -771,7 +899,8 @@ export class UserSession extends EventEmitter {
   private async executeSurfacedOptionOrder(
     option: { symbol: string; token: number; expiry?: Date; lotSize?: number },
     decision: any,
-    candidate?: any
+    candidate?: any,
+    telemetry?: { context?: any; vix?: any; usePullbackQueue?: boolean }
   ): Promise<void> {
     console.log(`[UserSession] Validating & Executing Stock Option Trade for ${option.symbol}...`)
     const quoteMap = await this.kc.getQuote([`NFO:${option.symbol}`])
@@ -792,12 +921,33 @@ export class UserSession extends EventEmitter {
       console.log(
         `⚖️ [UserSession] Option ${option.symbol} 1-lot risk (₹${estimatedRisk.toFixed(2)}) exceeds max risk cap (₹${maxOptionRisk}). Routing to Cash Equity.`
       )
-      await this.executeSurfacedEquityOrder(candidate, decision)
+      await this.executeSurfacedEquityOrder(candidate, decision, telemetry)
       return
     }
 
     this.ticker.subscribe([option.token])
     this.ticker.setMode(this.ticker.modeFull, [option.token])
+
+    const tradeContext: TradeContext = {
+      assetClass: 'STOCK_OPTION',
+      product: 'MIS',
+      lotSize,
+      optionExpiry: option.expiry,
+      aiReasoning: decision.reason,
+      aiConfidence: decision.confidence,
+      aiSetup: decision.action,
+      vixLevel: telemetry?.vix?.current,
+      rsiLevel: telemetry?.context?.tf15m?.rsi,
+      trend15m: telemetry?.context?.tf15m?.trend,
+      aiStrike: decision.strike || undefined,
+      aiStopLoss: Number((entryPrice * (1 - optionRiskPct)).toFixed(2)),
+      aiTarget: Number((entryPrice * 1.35).toFixed(2)),
+    }
+
+    if (telemetry?.usePullbackQueue) {
+      await this.queueStockOptionWavePullbackOrder(option, decision, entryPrice, lotSize, tradeContext)
+      return
+    }
 
     await this.paperTrader.placeOrder({
       symbol: option.symbol,
@@ -806,16 +956,46 @@ export class UserSession extends EventEmitter {
       side: 'BUY',
       quantity: 1,
       price: entryPrice,
+      context: tradeContext,
+    })
+  }
+
+  /**
+   * Queues a Wave Pullback Limit Trigger Order for a Stock Option (-3% discount below the spike ask)
+   * so the system buys the retracement dip rather than chasing inflated option premiums.
+   */
+  private async queueStockOptionWavePullbackOrder(
+    option: { symbol: string; token: number; expiry?: Date; lotSize?: number },
+    decision: any,
+    entryPrice: number,
+    lotSize: number,
+    tradeContext: TradeContext
+  ): Promise<void> {
+    const pullbackPct = Number(process.env.STOCK_OPTION_PULLBACK_PCT || 0.03)
+    const triggerPrice = Math.max(0.05, Number((entryPrice * (1 - pullbackPct)).toFixed(2)))
+    const ttlMs = 15 * 60 * 1000
+
+    await this.paperTrader.queuePendingOrder({
+      id: `pending_${Math.random().toString(36).substr(2, 9)}`,
+      symbol: option.symbol,
+      token: option.token,
+      strike: decision.strike || undefined,
+      side: 'BUY',
+      quantity: lotSize,
+      triggerPrice,
+      type: 'LIMIT',
+      status: 'PENDING',
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + ttlMs),
+      ttlMs,
+      indexInvalidation: decision.stopLoss,
+      currentIndexPrice: decision.entryPrice,
+      riskRewardRatio: decision.riskRewardRatio || 1.5,
+      baseSignalPrice: triggerPrice,
       context: {
-        assetClass: 'STOCK_OPTION',
-        product: 'MIS',
-        lotSize,
-        optionExpiry: option.expiry,
-        aiReasoning: decision.reason,
-        aiConfidence: decision.confidence,
-        aiStrike: decision.strike || undefined,
-        aiStopLoss: Number((entryPrice * (1 - optionRiskPct)).toFixed(2)),
-        aiTarget: Number((entryPrice * 1.35).toFixed(2)),
+        ...tradeContext,
+        triggerPrice,
+        isTriggerOrder: true,
       },
     })
   }

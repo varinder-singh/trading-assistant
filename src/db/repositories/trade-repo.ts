@@ -100,9 +100,10 @@ export class TradeRepository {
       throw new Error(`Trade with ID ${id} not found`)
     }
 
+    const directionMultiplier = trade.side === 'SELL' ? -1 : 1
     const pnl = metrics?.totalRealizedPnL !== undefined
       ? metrics.totalRealizedPnL
-      : (exitPrice - Number(trade.entryPrice)) * trade.quantity
+      : (exitPrice - Number(trade.entryPrice)) * trade.quantity * directionMultiplier
 
     await this.db
       .updateTable('trades')

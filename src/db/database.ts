@@ -14,6 +14,10 @@ export interface ProfilesTable {
   stockOptionPreference?: 'PREFER_OPTIONS_IF_LISTED' | 'EQUITY_ONLY' | 'OPTIONS_ONLY' | string | null
   equityHoldingMode?: 'MIS' | 'CNC' | string | null
   equityRiskPerTrade?: string | number | null
+  maxActivePositions?: number | null
+  maxIndexPositions?: number | null
+  maxDailyTrades?: number | null
+  enablePullbackEntry?: boolean | null
   createdAt: string
   updatedAt: string
 }

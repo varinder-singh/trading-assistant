@@ -5,11 +5,14 @@ import { classifyInstrument, isNearMonthlyExpiry } from '../data/instrument-clas
 import { globalKiteScanner } from '../data/kite-scanner.js'
 import { EquityAnalystAgent, type EquityAnalysisContext, type EquityAgentDecision } from '../ai/equity-agent.js'
 import { getOptionToken } from '../data/kite.js'
+import { getIndiaVix, type VixData } from '../data/vix.js'
 import type { Candle } from '../types/analysis.js'
 
 export interface EquityAnalysisPipelineResult {
   decision: EquityAgentDecision
   assetClass: 'EQUITY' | 'STOCK_OPTION'
+  context?: EquityAnalysisContext
+  vix?: VixData
   optionDetails?: {
     symbol: string
     token: number
@@ -21,6 +24,10 @@ export interface EquityAnalysisPipelineResult {
 export class EquityAnalysisService {
   constructor(private readonly agent: EquityAnalystAgent = new EquityAnalystAgent()) {}
 
+  /**
+   * Executes the full multi-timeframe technical, VIX, and AI deliberation pipeline
+   * for a surfaced NSE stock candidate (supporting both Bullish and Bearish setups).
+   */
   public async analyzeCandidate(
     kc: KiteConnectInstance,
     symbol: string,
@@ -35,9 +42,10 @@ export class EquityAnalysisService {
     const classification = await classifyInstrument(kc, s)
     const scanState = globalKiteScanner.getStockState(s)
 
-    const [stockCandles, niftyCandles] = await Promise.all([
+    const [stockCandles, niftyCandles, vix] = await Promise.all([
       getMultiTimeframeCandles(s, kc).catch(() => null),
       getMultiTimeframeCandles('NIFTY', kc).catch(() => null),
+      getIndiaVix().catch(() => ({ current: 15, change: 0, sentiment: 'normal' as const })),
     ])
 
     if (!stockCandles || stockCandles.candles15m.length === 0) {
@@ -54,8 +62,13 @@ export class EquityAnalysisService {
     })
 
     const decision = await this.agent.evaluate(context)
+    const routed = await this.resolveOptionRouting(kc, s, decision, classification.isFnoListed)
 
-    return this.resolveOptionRouting(kc, s, decision, classification.isFnoListed)
+    return {
+      ...routed,
+      context,
+      vix,
+    }
   }
 
   private assembleContext(params: {
@@ -132,19 +145,25 @@ export class EquityAnalysisService {
     return parseFloat((stockPct - niftyPct).toFixed(2))
   }
 
+  /**
+   * Routes F&O option actions (BUY_CE / BUY_PE) to their corresponding NFO option contract,
+   * or safely falls back to Cash Equity (BUY_EQUITY for bullish, SELL_EQUITY for MIS bearish)
+   * when options are unavailable or within the 4-day SEBI physical settlement window.
+   */
   private async resolveOptionRouting(
     kc: KiteConnectInstance,
     symbol: string,
     decision: EquityAgentDecision,
     isFnoListed: boolean
   ): Promise<EquityAnalysisPipelineResult> {
-    const isOptionAction = decision.decision === 'BUY' && (decision.action === 'BUY_CE' || decision.action === 'BUY_PE')
+    const isDirectionalTrade = decision.decision === 'BUY' || decision.decision === 'SELL'
+    const isOptionAction = isDirectionalTrade && (decision.action === 'BUY_CE' || decision.action === 'BUY_PE')
     if (!isOptionAction) {
       return { decision, assetClass: 'EQUITY' }
     }
 
     if (!isFnoListed || !decision.strike) {
-      decision.action = 'BUY_EQUITY'
+      this.applyCashEquityFallback(decision)
       return { decision, assetClass: 'EQUITY' }
     }
 
@@ -157,8 +176,23 @@ export class EquityAnalysisService {
     }
 
     console.warn(`[EquityAnalysis] Stock option near expiry or unavailable for ${symbol}. Falling back to equity cash.`)
-    decision.action = 'BUY_EQUITY'
+    this.applyCashEquityFallback(decision)
     return { decision, assetClass: 'EQUITY' }
+  }
+
+  private applyCashEquityFallback(decision: EquityAgentDecision): void {
+    const isBearish = decision.action === 'BUY_PE' || decision.decision === 'SELL'
+    if (!isBearish) {
+      decision.action = 'BUY_EQUITY'
+      return
+    }
+    if (decision.holdingMode === 'MIS') {
+      decision.action = 'SELL_EQUITY'
+      decision.decision = 'SELL'
+      return
+    }
+    decision.action = 'NONE'
+    decision.decision = 'NO_TRADE'
   }
 }
 

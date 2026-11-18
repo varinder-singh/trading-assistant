@@ -187,10 +187,11 @@ export interface EquityTieredTargetInput {
   quantity: number
   riskRewardRatio?: number | undefined
   upperCircuitPrice?: number | undefined
+  lowerCircuitPrice?: number | undefined
   aiTargets?: number[] | undefined
 }
 
-function resolveEquityTargetLevels(
+function resolveBullishEquityTargetLevels(
   input: EquityTieredTargetInput,
   risk: number,
   circuitLimit: number
@@ -209,23 +210,52 @@ function resolveEquityTargetLevels(
   }
 }
 
+function resolveBearishEquityTargetLevels(
+  input: EquityTieredTargetInput,
+  risk: number,
+  lowerCircuitLimit: number
+): { t1Target: number; t2Target: number; t3Target: number } {
+  if (input.aiTargets && input.aiTargets.length >= 2 && input.aiTargets[0]! < input.entryPrice) {
+    const t1 = roundToPaise(Math.max(input.aiTargets[0]!, lowerCircuitLimit))
+    const t2 = roundToPaise(Math.max(input.aiTargets[1] || t1 - risk * 1.5, lowerCircuitLimit))
+    const t3 = roundToPaise(Math.max(input.aiTargets[2] || t2 - risk * 2.0, lowerCircuitLimit))
+    return { t1Target: t1, t2Target: t2, t3Target: t3 }
+  }
+
+  return {
+    t1Target: roundToPaise(Math.max(input.entryPrice - 1.2 * risk, lowerCircuitLimit)),
+    t2Target: roundToPaise(Math.max(input.entryPrice - 2.0 * risk, lowerCircuitLimit)),
+    t3Target: roundToPaise(Math.max(input.entryPrice - 3.0 * risk, lowerCircuitLimit)),
+  }
+}
+
 /**
- * Computes tiered profit targets specifically calibrated for unleveraged cash equities.
- * Strictly respects SEBI 20% max price capping and circuit boundaries.
+ * Computes bi-directional tiered profit targets for unleveraged cash equities (Long & Short).
+ * Strictly respects SEBI 20% max daily price bands and upper/lower circuit boundaries.
  */
 export function computeEquityTieredTargets(input: EquityTieredTargetInput): TieredTargetResult | null {
-  const { entryPrice, stopLoss, quantity, upperCircuitPrice } = input
-  if (!stopLoss || stopLoss >= entryPrice || entryPrice <= 0) return null
+  const { entryPrice, stopLoss, quantity, upperCircuitPrice, lowerCircuitPrice } = input
+  if (!stopLoss || stopLoss === entryPrice || entryPrice <= 0) return null
 
-  const risk = entryPrice - stopLoss
-  const circuitLimit = upperCircuitPrice ? upperCircuitPrice * 0.995 : entryPrice * 1.18
-  const { t1Target, t2Target, t3Target } = resolveEquityTargetLevels(input, risk, circuitLimit)
+  const isBearish = stopLoss > entryPrice
+  const risk = Math.abs(entryPrice - stopLoss)
+  const circuitLimit = isBearish
+    ? lowerCircuitPrice
+      ? lowerCircuitPrice * 1.005
+      : entryPrice * 0.82
+    : upperCircuitPrice
+      ? upperCircuitPrice * 0.995
+      : entryPrice * 1.18
+
+  const { t1Target, t2Target, t3Target } = isBearish
+    ? resolveBearishEquityTargetLevels(input, risk, circuitLimit)
+    : resolveBullishEquityTargetLevels(input, risk, circuitLimit)
 
   const t1Qty = Math.floor(quantity * 0.35)
   const t2Qty = Math.floor(quantity * 0.35)
 
   console.log(
-    `[TierCalc:Equity] T1=₹${t1Target} (${t1Qty} shares) | T2=₹${t2Target} (${t2Qty} shares) | T3=₹${t3Target} (runner, ceiling: ₹${circuitLimit.toFixed(2)})`
+    `[TierCalc:Equity] (${isBearish ? 'SHORT' : 'LONG'}) T1=₹${t1Target} (${t1Qty} shares) | T2=₹${t2Target} (${t2Qty} shares) | T3=₹${t3Target} (runner, bound: ₹${circuitLimit.toFixed(2)})`
   )
 
   return {

@@ -202,4 +202,39 @@ describe('KiteScanner', () => {
     // Even if surge ratio triggered or near high, turnover < ₹25 Lakhs prevents false alert
     expect(triggeredCandidate).toBeNull()
   })
+
+  it('surfaces BEARISH breakdown candidate when stock surges in volume near Day Low below VWAP', () => {
+    let triggeredCandidate: CandidateAlert | null = null
+    scanner.on('candidate_surfaced', (candidate: CandidateAlert) => {
+      triggeredCandidate = candidate
+    })
+
+    scanner.registerStock(3333, 'CRASHING_STOCK', true)
+
+    // Tick 1: Baseline volume (10,000 shares @ ₹1,500)
+    scanner.processTick({
+      instrument_token: 3333,
+      last_price: 1500,
+      average_traded_price: 1510,
+      ohlc: { open: 1520, high: 1530, low: 1495, close: 1525 },
+      volume_traded: 10000,
+    })
+
+    // Tick 2: Heavy selling volume (+50,000 shares @ ₹1,480 = ₹7.4 Cr turnover) breaking to new Day Low ₹1,480 below VWAP ₹1,505
+    scanner.processTick({
+      instrument_token: 3333,
+      last_price: 1480,
+      average_traded_price: 1505,
+      ohlc: { open: 1520, high: 1530, low: 1480, close: 1525 },
+      volume_traded: 60000,
+      buy_quantity: 20000,
+      sell_quantity: 80000, // negative OBI (-0.6)
+    })
+
+    expect(triggeredCandidate).not.toBeNull()
+    const alert = triggeredCandidate as unknown as CandidateAlert
+    expect(alert.symbol).toBe('CRASHING_STOCK')
+    expect(alert.direction).toBe('BEARISH')
+    expect(alert.price).toBe(1480)
+  })
 })
