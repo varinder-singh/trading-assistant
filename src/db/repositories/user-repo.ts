@@ -57,6 +57,10 @@ export class UserRepository {
       stockOptionPreference?: string
       equityHoldingMode?: string
       equityRiskPerTrade?: number
+      maxActivePositions?: number
+      maxIndexPositions?: number
+      maxDailyTrades?: number
+      enablePullbackEntry?: boolean
     }
   ) {
     await this.db
@@ -71,6 +75,16 @@ export class UserRepository {
           : {}),
         ...(preferences.equityRiskPerTrade !== undefined
           ? { equityRiskPerTrade: preferences.equityRiskPerTrade.toString() }
+          : {}),
+        ...(preferences.maxActivePositions !== undefined
+          ? { maxActivePositions: preferences.maxActivePositions }
+          : {}),
+        ...(preferences.maxIndexPositions !== undefined
+          ? { maxIndexPositions: preferences.maxIndexPositions }
+          : {}),
+        ...(preferences.maxDailyTrades !== undefined ? { maxDailyTrades: preferences.maxDailyTrades } : {}),
+        ...(preferences.enablePullbackEntry !== undefined
+          ? { enablePullbackEntry: preferences.enablePullbackEntry }
           : {}),
       })
       .where('id', '=', userId)

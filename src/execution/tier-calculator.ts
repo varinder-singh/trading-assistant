@@ -251,8 +251,8 @@ export function computeEquityTieredTargets(input: EquityTieredTargetInput): Tier
     ? resolveBearishEquityTargetLevels(input, risk, circuitLimit)
     : resolveBullishEquityTargetLevels(input, risk, circuitLimit)
 
-  const t1Qty = Math.floor(quantity * 0.35)
-  const t2Qty = Math.floor(quantity * 0.35)
+  const t1Qty = Math.floor(quantity * 0.50)
+  const t2Qty = Math.floor(quantity * 0.30)
 
   console.log(
     `[TierCalc:Equity] (${isBearish ? 'SHORT' : 'LONG'}) T1=₹${t1Target} (${t1Qty} shares) | T2=₹${t2Target} (${t2Qty} shares) | T3=₹${t3Target} (runner, bound: ₹${circuitLimit.toFixed(2)})`

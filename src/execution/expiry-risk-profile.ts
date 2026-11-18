@@ -123,11 +123,13 @@ export const PEAK_PROFIT_RATCHET_TIERS: readonly PeakRatchetTier[] = [
 /**
  * Equity Profit Ratchet Tiers:
  * Calibrated for unleveraged cash equities (SEBI 20% max daily price band, typical intraday range 0.8% - 3.5%).
+ * Intermediate +1.3% tier locks 45% of peak profit so stocks stalling between T1 (+0.9%) and T2 (+1.8%) protect gains automatically.
  */
 export const EQUITY_PROFIT_RATCHET_TIERS: readonly PeakRatchetTier[] = [
   { minPeakGainPct: 0.028, lockPeakGainRatio: 0.70 }, // +2.8%+ peak gain -> lock 70% of peak gain
-  { minPeakGainPct: 0.018, lockPeakGainRatio: 0.50 }, // +1.8%+ peak gain -> lock 50% of peak gain
-  { minPeakGainPct: 0.010, lockPeakGainRatio: 0.10 }, // +1.0%+ peak gain -> lock breakeven (entry + 10% of gain to cover costs)
+  { minPeakGainPct: 0.018, lockPeakGainRatio: 0.55 }, // +1.8%+ peak gain -> lock 55% of peak gain
+  { minPeakGainPct: 0.013, lockPeakGainRatio: 0.45 }, // +1.3%+ peak gain -> lock 45% of peak gain
+  { minPeakGainPct: 0.010, lockPeakGainRatio: 0.15 }, // +1.0%+ peak gain -> lock breakeven (+15% of gain to cover costs)
 ]
 
 /**
@@ -159,6 +161,26 @@ export function getRatchetedStopLoss(
   if (!matchedTier) return undefined
 
   const targetSl = entryPrice + matchedTier.lockPeakGainRatio * peakGainPoints
+  return { targetSl, peakGainPct, tier: matchedTier }
+}
+
+/**
+ * Computes the ratcheted stop-loss price for a Short (SELL) position where profit increases as price falls,
+ * locking a percentage of the downward gain below entryPrice.
+ */
+export function getShortRatchetedStopLoss(
+  entryPrice: number,
+  peakLowPrice: number,
+  tiers: readonly PeakRatchetTier[] = EQUITY_PROFIT_RATCHET_TIERS
+): { targetSl: number; peakGainPct: number; tier: PeakRatchetTier } | undefined {
+  if (entryPrice <= 0 || peakLowPrice >= entryPrice) return undefined
+
+  const peakGainPoints = entryPrice - peakLowPrice
+  const peakGainPct = peakGainPoints / entryPrice
+  const matchedTier = tiers.find((t) => peakGainPct >= t.minPeakGainPct)
+  if (!matchedTier) return undefined
+
+  const targetSl = Number((entryPrice - matchedTier.lockPeakGainRatio * peakGainPoints).toFixed(2))
   return { targetSl, peakGainPct, tier: matchedTier }
 }
 

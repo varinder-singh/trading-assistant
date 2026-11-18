@@ -145,7 +145,8 @@ export class TradeRepository {
     soldQty: number,
     remainingQty: number,
     reason?: string,
-    agentType?: string
+    agentType?: string,
+    exitSide: 'BUY' | 'SELL' = 'SELL'
   ): Promise<void> {
     const now = new Date().toISOString()
     const analyticsId = crypto.randomUUID()
@@ -157,7 +158,7 @@ export class TradeRepository {
         eventType: 'PARTIAL_EXIT',
         agentType: agentType || null,
         symbol,
-        side: 'SELL',
+        side: exitSide,
         metadata: JSON.stringify({
           exitReason: reason || null,
           exitPrice,

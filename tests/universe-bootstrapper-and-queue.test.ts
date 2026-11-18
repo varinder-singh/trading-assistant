@@ -355,4 +355,59 @@ describe('ScannerAlertRepository & AnalysisSnapshotRepository', () => {
     expect(retrieved?.resistance).toBe(24650)
     expect(retrieved?.decision?.decision).toBe('BUY')
   })
+
+  it('persists and retrieves user profile pool settings (maxActivePositions, maxIndexPositions, maxDailyTrades, enablePullbackEntry)', async () => {
+    const { UserRepository } = await import('../src/db/repositories/user-repo.js')
+    let savedProfile: any = {
+      id: 'user_123',
+      tradeMode: 'PAPER',
+      watchedSymbol: 'NIFTY',
+      watchedMode: 'intraday',
+      allowedUniverses: 'INDEX_OPTIONS,EQUITY,STOCK_OPTIONS',
+      stockOptionPreference: 'PREFER_OPTIONS_IF_LISTED',
+      equityHoldingMode: 'MIS',
+      equityRiskPerTrade: '1500',
+      maxActivePositions: 10,
+      maxIndexPositions: 2,
+      maxDailyTrades: 30,
+      enablePullbackEntry: true,
+    }
+
+    const mockDb: any = {
+      updateTable: vi.fn().mockReturnValue({
+        set: vi.fn().mockImplementation((updates) => {
+          savedProfile = { ...savedProfile, ...updates }
+          return {
+            where: vi.fn().mockReturnValue({
+              execute: vi.fn().mockResolvedValue({}),
+            }),
+          }
+        }),
+      }),
+      selectFrom: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            executeTakeFirst: vi.fn().mockImplementation(async () => savedProfile),
+          }),
+        }),
+      }),
+    }
+
+    const userRepo = new UserRepository(mockDb)
+
+    await userRepo.updateUniversePreferences('user_123', {
+      equityHoldingMode: 'CNC',
+      maxActivePositions: 12,
+      maxIndexPositions: 8,
+      maxDailyTrades: 35,
+      enablePullbackEntry: false,
+    })
+
+    const profile = await userRepo.getUserProfileByUserId('user_123')
+    expect(profile?.equityHoldingMode).toBe('CNC')
+    expect(profile?.maxActivePositions).toBe(12)
+    expect(profile?.maxIndexPositions).toBe(8)
+    expect(profile?.maxDailyTrades).toBe(35)
+    expect(profile?.enablePullbackEntry).toBe(false)
+  })
 })

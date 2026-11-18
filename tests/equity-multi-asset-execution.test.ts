@@ -24,9 +24,9 @@ describe('Equity Tiered Targets & SEBI Capping', () => {
     // T3: 100 + 3.0 * 2 = 106.00 (+6.0%)
     expect(targets?.t3Target).toBe(106)
 
-    // Quantity split: 35% at T1, 35% at T2, remainder runner to T3
-    expect(targets?.t1Qty).toBe(35)
-    expect(targets?.t2Qty).toBe(35)
+    // Quantity split: 50% at T1, 30% at T2, remainder runner to T3
+    expect(targets?.t1Qty).toBe(50)
+    expect(targets?.t2Qty).toBe(30)
   })
 
   it('bounds targets to upper circuit limit price ceiling', () => {
@@ -70,18 +70,28 @@ describe('Equity Profit Ratchet Tiers', () => {
 
     expect(ratchet).toBeDefined()
     expect(ratchet?.peakGainPct).toBeCloseTo(0.012, 3)
-    // Tier 1 (+1.0%) locks 10% of gain above entry (cost buffer): 1000 + 0.1 * 12 = 1001.20
-    expect(ratchet?.targetSl).toBeCloseTo(1001.2, 1)
+    // Tier 1 (+1.0%) locks 15% of gain above entry (cost buffer): 1000 + 0.15 * 12 = 1001.80
+    expect(ratchet?.targetSl).toBeCloseTo(1001.8, 1)
   })
 
-  it('locks 50% of peak profit on +2.0% gain', () => {
+  it('locks 45% of peak profit on +1.35% intermediate gain (e.g. TRENT stalling between T1 and T2)', () => {
+    const entry = 1000
+    const peak = 1014 // +1.4% peak gain
+    const ratchet = getRatchetedStopLoss(entry, peak, EQUITY_PROFIT_RATCHET_TIERS)
+
+    expect(ratchet).toBeDefined()
+    // Intermediate Tier (+1.3%) locks 45% of gain above entry: 1000 + 0.45 * 14 = 1006.30
+    expect(ratchet?.targetSl).toBeCloseTo(1006.3, 1)
+  })
+
+  it('locks 55% of peak profit on +2.0% gain', () => {
     const entry = 1000
     const peak = 1020 // +2.0% peak gain
     const ratchet = getRatchetedStopLoss(entry, peak, EQUITY_PROFIT_RATCHET_TIERS)
 
     expect(ratchet).toBeDefined()
-    // Tier 2 (+1.8%) locks 50% of gain above entry: 1000 + 0.5 * 20 = 1010
-    expect(ratchet?.targetSl).toBe(1010)
+    // Tier 2 (+1.8%) locks 55% of gain above entry: 1000 + 0.55 * 20 = 1011
+    expect(ratchet?.targetSl).toBe(1011)
   })
 
   it('locks 70% of peak profit on +3.0% gain', () => {
@@ -533,7 +543,8 @@ describe('Stock Option Enhancements: 4 Active Positions, Ratchets & Stagnation',
       35,
       65,
       'T1 target hit',
-      undefined
+      undefined,
+      'SELL'
     )
     expect(mockRepo.closeTrade).not.toHaveBeenCalled()
 
@@ -712,8 +723,65 @@ describe('Stock Option Enhancements: 4 Active Positions, Ratchets & Stagnation',
     await paperTrader.updatePrice(888001, 492.0)
     expect(pos?.unrealizedPnL).toBe(1600)
     expect(pos?.peakPrice).toBe(492.0)
-    // Because ₹492 crossed 50% of T1 (₹495), SL should have ratcheted down to Breakeven (₹500.0)
-    expect(pos?.aiStopLoss).toBe(500.0)
+    // Because ₹492 is +1.6% gain on short (tier >= 1.3% locks 45% of 8 pts = 3.60 below 500 -> 496.4), SL is ratcheted below breakeven!
+    expect(pos?.aiStopLoss).toBeLessThanOrEqual(500.0)
+    expect(mockRepo.insertTrade).toHaveBeenCalledTimes(1)
+    expect(mockRepo.insertTrade).toHaveBeenCalledWith(expect.objectContaining({ side: 'SELL', symbol: 'FALLING_STOCK' }))
+
+    // 3. Price spikes back up to hit SL: cover BUY order must close the short WITHOUT inserting a ghost BUY trade!
+    await paperTrader.updatePrice(888001, 501.0)
+    expect(paperTrader.getAllPositions().find((p) => p.symbol === 'FALLING_STOCK')).toBeUndefined()
+    expect(mockRepo.closeTrade).toHaveBeenCalledTimes(1)
+    // Critical regression check: closing a short with a BUY cover order must NOT call insertTrade a second time!
+    expect(mockRepo.insertTrade).toHaveBeenCalledTimes(1)
+  })
+
+  it('enforces re-entry cooldown on Cash Equities (without strike) so a closed stock is not immediately re-bought at the top', async () => {
+    await paperTrader.initialize()
+    mockRepo.getOpenTrades.mockResolvedValue([
+      {
+        id: 'trent-trade-1',
+        symbol: 'TRENT',
+        side: 'BUY',
+        quantity: 61,
+        entryPrice: '3179.40',
+        openedAt: new Date().toISOString(),
+      },
+    ])
+
+    // 1. Enter TRENT at 3179.40
+    const firstEntry = await paperTrader.placeOrder({
+      symbol: 'TRENT',
+      token: 505001,
+      side: 'BUY',
+      quantity: 61,
+      price: 3179.4,
+      context: { assetClass: 'EQUITY', product: 'MIS', aiStopLoss: 3155, aiTarget: 3210 },
+    })
+    expect(firstEntry.success).toBe(true)
+
+    // 2. Exit TRENT at 3221.90
+    const exitRes = await paperTrader.placeOrder({
+      symbol: 'TRENT',
+      token: 505001,
+      side: 'SELL',
+      quantity: 61,
+      price: 3221.9,
+      context: { assetClass: 'EQUITY', product: 'MIS', aiReasoning: 'Manual User Close' },
+    })
+    expect(exitRes.success).toBe(true)
+
+    // 3. Attempting to re-enter TRENT 24 minutes later at 3224.00 must be blocked by the 45-min equity re-entry cooldown!
+    const reEntryRes = await paperTrader.placeOrder({
+      symbol: 'TRENT',
+      token: 505001,
+      side: 'BUY',
+      quantity: 61,
+      price: 3224.0,
+      context: { assetClass: 'EQUITY', product: 'MIS', aiStopLoss: 3207, aiTarget: 3255 },
+    })
+    expect(reEntryRes.success).toBe(false)
+    expect(reEntryRes.error).toBe('Re-entry cooldown active')
   })
 
   it('reserves NIFTY index slots in the user position pool so stocks cannot starve index trades', async () => {

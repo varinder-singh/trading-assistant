@@ -28,6 +28,7 @@ import {
   getOptionType,
   getPremiumStopFloor,
   getRatchetedStopLoss,
+  getShortRatchetedStopLoss,
   isIndexInvalidated,
   isRetractGuardTriggered,
   resolveIndexInvalidation,
@@ -292,13 +293,14 @@ export class PaperTrader extends EventEmitter {
       this.syncAgentType(pos, agentType)
 
       if (decision.decision === 'EXIT') {
+        const exitSide: OrderSide = pos.side === 'SELL' ? 'BUY' : 'SELL'
         console.log(
           `[Risk Manager] AI (${agentType} Agent) signaled EXIT for ${pos.symbol}. Reason: ${decision.reason}`
         )
         await this.placeOrder({
           symbol: pos.symbol,
           token: pos.token,
-          side: 'SELL',
+          side: exitSide,
           quantity: pos.quantity,
           price: pos.currentPrice,
           context: { aiReasoning: decision.reason },
@@ -570,7 +572,8 @@ export class PaperTrader extends EventEmitter {
         }
         this.exitingPositions.add(params.symbol)
         const strike = params.strike || this.positions.get(params.symbol)?.strike
-        if (strike) this.recentExits.set(`${params.symbol}_${strike}`, new Date())
+        const cooldownKey = strike ? `${params.symbol}_${strike}` : params.symbol
+        this.recentExits.set(cooldownKey, new Date())
       }
 
       if (this.tradeMode === 'REAL' && this.kiteOrderService) {
@@ -609,7 +612,7 @@ export class PaperTrader extends EventEmitter {
       this.orders = [...this.orders, order]
       await this.updatePosition(order, params.context)
 
-      this.emitOrderEvents(order, params)
+      this.emitOrderEvents(order, { ...params, isOpening })
 
       return { success: true, orderId }
     } finally {
@@ -739,16 +742,18 @@ export class PaperTrader extends EventEmitter {
         )
         return { valid: false, error: `Position already exists for strike ${strike}` }
       }
+    }
 
-      const lastExit = this.recentExits.get(`${params.symbol}_${strike}`)
-      if (lastExit) {
-        const diffMins = (Date.now() - lastExit.getTime()) / (60 * 1000)
-        if (diffMins < this.entryCooldownMins) {
-          console.log(
-            `⏳ [PAPER TRADE] Re-entry blocked for ${params.symbol} (Strike: ${strike}). Cooldown: ${diffMins.toFixed(1)}/${this.entryCooldownMins} mins.`
-          )
-          return { valid: false, error: 'Re-entry cooldown active' }
-        }
+    const cooldownKey = strike ? `${params.symbol}_${strike}` : params.symbol
+    const lastExit = this.recentExits.get(cooldownKey)
+    if (lastExit) {
+      const diffMins = (Date.now() - lastExit.getTime()) / (60 * 1000)
+      const requiredCooldownMins = params.context?.assetClass === 'EQUITY' ? Math.max(this.entryCooldownMins, 45) : this.entryCooldownMins
+      if (diffMins < requiredCooldownMins) {
+        console.log(
+          `⏳ [PAPER TRADE] Re-entry blocked for ${params.symbol}${strike ? ` (Strike: ${strike})` : ''}. Cooldown: ${diffMins.toFixed(1)}/${requiredCooldownMins} mins.`
+        )
+        return { valid: false, error: 'Re-entry cooldown active' }
       }
     }
 
@@ -832,7 +837,7 @@ export class PaperTrader extends EventEmitter {
         userId: this.userId,
         symbol: order.symbol,
         token: order.token,
-        side: 'BUY',
+        side: order.side,
         quantity: order.quantity,
         entry_price: order.price!,
         strike_price: order.strike || null,
@@ -852,8 +857,11 @@ export class PaperTrader extends EventEmitter {
       .catch((err) => console.error('❌ Failed to save paper trade to DB:', err))
   }
 
-  private getOrderNotificationMeta(order: TradeOrder): { title: string; type: 'success' | 'info' | 'error' } {
-    if (order.side === 'BUY') return { title: '🚀 Trade Executed', type: 'success' }
+  private getOrderNotificationMeta(
+    order: TradeOrder,
+    isEntryOrder: boolean
+  ): { title: string; type: 'success' | 'info' | 'error' } {
+    if (isEntryOrder) return { title: '🚀 Trade Executed', type: 'success' }
 
     const existing = this.positions.get(order.symbol)
     if (existing?.aiStopLoss && order.price! <= existing.aiStopLoss) {
@@ -870,12 +878,19 @@ export class PaperTrader extends EventEmitter {
 
   private emitOrderEvents(
     order: TradeOrder,
-    params: { side?: OrderSide | undefined; symbol?: string | undefined; context?: TradeContext | undefined }
+    params: {
+      side?: OrderSide | undefined
+      symbol?: string | undefined
+      context?: TradeContext | undefined
+      isOpening?: boolean | undefined
+    }
   ): void {
     const activePos = this.positions.get(order.symbol)
     const isEntryOrder =
-      (order.side === 'BUY' && (!activePos || activePos.side === 'BUY')) ||
-      (order.side === 'SELL' && Boolean(params.context?.isShortEntry))
+      params.isOpening !== undefined
+        ? params.isOpening
+        : (order.side === 'BUY' && (!activePos || activePos.side === 'BUY')) ||
+          (order.side === 'SELL' && Boolean(params.context?.isShortEntry))
 
     if (isEntryOrder) {
       this.persistBuyTrade(order, params.context)
@@ -885,7 +900,7 @@ export class PaperTrader extends EventEmitter {
 
     this.sanitizeTradeLevels(order, params.context)
 
-    const { title, type } = this.getOrderNotificationMeta(order)
+    const { title, type } = this.getOrderNotificationMeta(order, isEntryOrder)
 
     this.emit('notification', {
       title,
@@ -1107,7 +1122,8 @@ export class PaperTrader extends EventEmitter {
           order.quantity,
           existing.quantity,
           context?.aiReasoning,
-          context?.strategyContext?.agentType
+          context?.strategyContext?.agentType,
+          order.side
         )
         .catch((err) => console.error('❌ Failed to record partial exit in DB:', err))
       return
@@ -1274,7 +1290,7 @@ export class PaperTrader extends EventEmitter {
 
     this.todayTradeCount++
     await this.updatePosition(tradeOrder, tradeContext)
-    this.emitOrderEvents(tradeOrder, { side: order.side, symbol: order.symbol, context: tradeContext })
+    this.emitOrderEvents(tradeOrder, { side: order.side, symbol: order.symbol, context: tradeContext, isOpening: true })
   }
 
   private buildFilledTriggerContext(order: PendingTriggerOrder, fillPrice: number): TradeContext {
@@ -1623,6 +1639,17 @@ export class PaperTrader extends EventEmitter {
   private async processShortPriceTickExits(symbol: string, pos: PaperPosition, price: number): Promise<void> {
     const entryPrice = pos.avgEntryPrice
     const peakLowPrice = pos.peakPrice ?? pos.currentPrice
+    const ratchet = getShortRatchetedStopLoss(entryPrice, peakLowPrice, EQUITY_PROFIT_RATCHET_TIERS)
+
+    if (ratchet && (pos.aiStopLoss === undefined || ratchet.targetSl < pos.aiStopLoss)) {
+      const { targetSl, peakGainPct } = ratchet
+      const oldSl = pos.aiStopLoss?.toFixed(2) ?? '—'
+      pos.aiStopLoss = targetSl
+      pos.trailingSlLocked = targetSl
+      console.log(
+        `[PaperTrader] 📉 Short Peak Profit Ratchet: ${symbol} low ₹${peakLowPrice.toFixed(2)} (+${(peakGainPct * 100).toFixed(1)}%). SL ratcheted down from ₹${oldSl} to ₹${targetSl.toFixed(2)}`
+      )
+    }
 
     this.applyEquityHalfTargetRatchet(pos, peakLowPrice, entryPrice)
 

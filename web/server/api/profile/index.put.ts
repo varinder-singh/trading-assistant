@@ -30,7 +30,7 @@ export default defineEventHandler(async (event) => {
     enablePullbackEntry,
   } = body
 
-  if (fullName !== undefined && (typeof fullName !== 'string' || fullName.trim() === '')) {
+  if (fullName !== undefined && fullName !== null && typeof fullName !== 'string') {
     throw createError({ statusCode: 400, statusMessage: 'Invalid full name' })
   }
 
@@ -39,9 +39,11 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    // Upsert logic for profile
+    // Upsert logic for profile: allow saving trading/pool preferences even when fullName is empty
     const profileUpdates: any = {}
-    if (fullName !== undefined) profileUpdates.fullName = fullName.trim()
+    if (typeof fullName === 'string' && fullName.trim().length > 0) {
+      profileUpdates.fullName = fullName.trim()
+    }
     if (allowedUniverses !== undefined) profileUpdates.allowedUniverses = allowedUniverses
     if (stockOptionPreference !== undefined) profileUpdates.stockOptionPreference = stockOptionPreference
     if (equityHoldingMode !== undefined) profileUpdates.equityHoldingMode = equityHoldingMode

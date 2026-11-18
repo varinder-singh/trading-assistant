@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watchEffect } from 'vue'
 import { ArrowLeft, Save, User, Link as LinkIcon, ShieldCheck, CheckCircle2 } from '@lucide/vue'
 
 const user = useSupabaseUser()
@@ -113,7 +113,7 @@ const saveProfile = async () => {
     if (allowStockOptions.value) universes.push('STOCK_OPTIONS')
 
     const payload: any = {
-      fullName: fullName.value,
+      ...(fullName.value.trim().length > 0 ? { fullName: fullName.value.trim() } : {}),
       allowedUniverses: universes.join(','),
       stockOptionPreference: stockOptionPreference.value,
       equityHoldingMode: equityHoldingMode.value,
@@ -136,12 +136,18 @@ const saveProfile = async () => {
       return
     }
 
-    const { error } = await useFetch('/api/profile', {
-      method: 'PUT',
-      body: payload,
-    })
-
-    if (error.value) throw error.value
+    if (typeof $fetch === 'function') {
+      await $fetch('/api/profile', {
+        method: 'PUT',
+        body: payload,
+      })
+    } else {
+      const { error } = await useFetch('/api/profile', {
+        method: 'PUT',
+        body: payload,
+      })
+      if (error.value) throw error.value
+    }
 
     if (kiteApiSecret.value) {
       hasSavedApiSecret.value = true
@@ -212,7 +218,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50 text-gray-900 font-sans">
+  <div
+    data-test="profile-scroll-container"
+    class="h-screen overflow-y-auto bg-gray-50 text-gray-900 font-sans pb-16"
+  >
     <!-- Header -->
     <header class="bg-white border-b border-gray-200 sticky top-0 z-20">
       <div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
@@ -436,6 +445,7 @@ onMounted(() => {
                   <label class="text-sm font-medium text-gray-700">Total Active Position Pool</label>
                   <input
                     v-model.number="maxActivePositions"
+                    data-test="max-active-positions-input"
                     type="number"
                     min="1"
                     max="25"
@@ -449,6 +459,7 @@ onMounted(() => {
                   <label class="text-sm font-medium text-gray-700">Reserved NIFTY Index Slots</label>
                   <input
                     v-model.number="maxIndexPositions"
+                    data-test="max-index-positions-input"
                     type="number"
                     min="0"
                     :max="maxActivePositions"
@@ -464,6 +475,7 @@ onMounted(() => {
                   <label class="text-sm font-medium text-gray-700">Daily Trade Pool Cap</label>
                   <input
                     v-model.number="maxDailyTrades"
+                    data-test="max-daily-trades-input"
                     type="number"
                     min="5"
                     max="100"
@@ -481,6 +493,7 @@ onMounted(() => {
                   >
                     <input
                       v-model="enablePullbackEntry"
+                      data-test="enable-pullback-checkbox"
                       type="checkbox"
                       class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4"
                     />
@@ -496,7 +509,8 @@ onMounted(() => {
             <div class="flex justify-end pt-4">
               <button
                 type="submit"
-                :disabled="savingProfile || !fullName"
+                data-test="save-profile-btn"
+                :disabled="savingProfile"
                 class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm shadow-indigo-200"
               >
                 <span
