@@ -159,6 +159,15 @@ export class PaperTrader extends EventEmitter {
       timestamp: new Date(trade.openedAt),
     }
     if (trade.strikePrice) pos.strike = Number(trade.strikePrice)
+    if (trade.entryMetadata?.aiStopLoss) pos.aiStopLoss = Number(trade.entryMetadata.aiStopLoss)
+    if (trade.entryMetadata?.aiTarget) pos.aiTarget = Number(trade.entryMetadata.aiTarget)
+    if (pos.aiStopLoss && pos.aiTarget) {
+      this.applyTieredTargets(pos, trade.quantity, {
+        aiStopLoss: pos.aiStopLoss,
+        aiTarget: pos.aiTarget,
+        aiIndexTargets: trade.entryMetadata?.aiIndexTargets,
+      })
+    }
     this.positions.set(trade.symbol, pos)
   }
 
@@ -464,10 +473,10 @@ export class PaperTrader extends EventEmitter {
     const timeInMinutes = hours * 60 + minutes
     if (timeInMinutes < 15 * 60 + 30) return
 
-    const allPositions = this.getAllPositions()
-    if (allPositions.length > 0) {
-      console.log(`[EXIT] 15:30 IST - Market Closed. Squaring off remaining ${allPositions.length} open position(s).`)
-      this.squareOffPositions(allPositions, 'Market Close Square-Off (15:30 Rule)')
+    const misPositions = this.getAllPositions().filter((p) => !p.product || p.product === 'MIS')
+    if (misPositions.length > 0) {
+      console.log(`[EXIT] 15:30 IST - Market Closed. Squaring off remaining ${misPositions.length} open MIS position(s).`)
+      this.squareOffPositions(misPositions, 'Market Close Square-Off (15:30 Rule)')
     }
 
     console.log('[EXIT] 15:30 IST - Market Closed. Emitting shutdown signal.')
@@ -1382,6 +1391,18 @@ export class PaperTrader extends EventEmitter {
     return gainPct < 0.04
   }
 
+  private isIntradayEquityStagnant(pos: PaperPosition, price: number): boolean {
+    if (pos.assetClass !== 'EQUITY') return false
+    if (pos.product === 'CNC') return false
+
+    const holdMs = Date.now() - pos.timestamp.getTime()
+    const maxHoldMs = Number(process.env.INTRADAY_EQUITY_STAGNATION_MINS || 90) * 60 * 1000
+    if (holdMs < maxHoldMs) return false
+
+    const gainPct = (price - pos.avgEntryPrice) / pos.avgEntryPrice
+    return gainPct < 0.0025
+  }
+
   private async exitOnOptionStagnation(pos: PaperPosition, price: number): Promise<void> {
     const holdMins = Math.round((Date.now() - pos.timestamp.getTime()) / 60000)
     console.log(`[EXIT] ⏱️ Stagnant Option Timeout (${holdMins}m Rule) for ${pos.symbol} @ ₹${price.toFixed(2)}`)
@@ -1398,6 +1419,42 @@ export class PaperTrader extends EventEmitter {
       price: price,
       context: { aiReasoning: `Stagnant Option Timeout (${holdMins}m Rule - Theta Protection)` },
     })
+  }
+
+  private async exitOnEquityStagnation(pos: PaperPosition, price: number): Promise<void> {
+    const holdMins = Math.round((Date.now() - pos.timestamp.getTime()) / 60000)
+    console.log(`[EXIT] ⏱️ Intraday Equity Stagnation Timeout (${holdMins}m Rule) for ${pos.symbol} @ ₹${price.toFixed(2)}`)
+    this.emit('notification', {
+      title: '⏱️ Equity Stagnation Cutoff',
+      message: `${pos.symbol} exited @ ₹${price.toFixed(2)}: Intraday momentum stalled after ${holdMins}m. Freeing capital.`,
+      type: 'info',
+    })
+    await this.placeOrder({
+      symbol: pos.symbol,
+      token: pos.token,
+      side: 'SELL',
+      quantity: pos.quantity,
+      price: price,
+      context: { aiReasoning: `Intraday Equity Stagnation Timeout (${holdMins}m Rule)` },
+    })
+  }
+
+  private applyEquityHalfTargetRatchet(pos: PaperPosition, peakPrice: number, entryPrice: number): void {
+    if (pos.assetClass !== 'EQUITY' || pos.t1Hit || !pos.t1Target || pos.aiStopLoss === undefined) return
+    const halfTargetDistance = (pos.t1Target - entryPrice) * 0.5
+    if (halfTargetDistance <= 0) return
+    if (peakPrice >= entryPrice + halfTargetDistance && pos.aiStopLoss < entryPrice) {
+      pos.aiStopLoss = entryPrice
+      pos.trailingSlLocked = entryPrice
+      console.log(
+        `[PaperTrader] 🛡️ Half-Target Breakeven Ratchet for ${pos.symbol}: Peak ₹${peakPrice.toFixed(2)} reached 50% of T1. SL ratcheted to Breakeven ₹${entryPrice.toFixed(2)}`
+      )
+      this.emit('notification', {
+        title: '🛡️ Breakeven SL Ratchet',
+        message: `${pos.symbol}: Reached 50% of T1. SL moved to Breakeven ₹${entryPrice.toFixed(2)}.`,
+        type: 'info',
+      })
+    }
   }
 
   private async processPriceTickExits(symbol: string, pos: PaperPosition, price: number): Promise<void> {
@@ -1421,8 +1478,15 @@ export class PaperTrader extends EventEmitter {
       })
     }
 
+    this.applyEquityHalfTargetRatchet(pos, peakPrice, entryPrice)
+
     if (this.isOptionStagnant(pos, price)) {
       await this.exitOnOptionStagnation(pos, price)
+      return
+    }
+
+    if (this.isIntradayEquityStagnant(pos, price)) {
+      await this.exitOnEquityStagnation(pos, price)
       return
     }
 

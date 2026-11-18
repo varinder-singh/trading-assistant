@@ -170,7 +170,29 @@ export class TradeRepository {
   }
 
   public async getOpenTrades(userId: string) {
-    return this.db.selectFrom('trades').selectAll().where('userId', '=', userId).where('status', '=', 'OPEN').execute()
+    const openTrades = await this.db.selectFrom('trades').selectAll().where('userId', '=', userId).where('status', '=', 'OPEN').execute()
+    if (openTrades.length === 0) return []
+
+    const analyticsMap = await this.getEntryAnalyticsMap(openTrades.map((t) => t.id))
+    return openTrades.map((t) => ({
+      ...t,
+      entryMetadata: analyticsMap.get(t.id),
+    }))
+  }
+
+  private async getEntryAnalyticsMap(tradeIds: string[]): Promise<Map<string, any>> {
+    const analytics = await this.db
+      .selectFrom('tradeAnalytics')
+      .selectAll()
+      .where('tradeId', 'in', tradeIds)
+      .where('eventType', '=', 'ENTRY')
+      .execute()
+
+    return new Map(
+      analytics
+        .filter((a) => a.tradeId && a.metadata)
+        .map((a) => [a.tradeId!, typeof a.metadata === 'string' ? JSON.parse(a.metadata) : a.metadata])
+    )
   }
 
   public async getTodaysTrades(userId: string) {

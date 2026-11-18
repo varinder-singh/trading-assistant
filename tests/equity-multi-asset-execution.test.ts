@@ -457,4 +457,111 @@ describe('Stock Option Enhancements: 4 Active Positions, Ratchets & Stagnation',
       })
     )
   })
+
+  it('moves equity stop loss to breakeven when price reaches 50% of T1 distance (Half-Target Ratchet)', async () => {
+    // Entry: 100, SL: 98, T1: 101.4. Half-target distance = (101.4-100)*0.5 = 0.7. Threshold = 100.7.
+    const pos: any = {
+      symbol: 'RATCHET_TEST',
+      token: 999002,
+      side: 'BUY',
+      quantity: 100,
+      avgEntryPrice: 100.0,
+      currentPrice: 100.0,
+      peakPrice: 100.0,
+      assetClass: 'EQUITY',
+      product: 'MIS',
+      aiStopLoss: 98.0,
+      t1Target: 101.4,
+      t1Hit: false,
+      timestamp: new Date(),
+    }
+    ;(paperTrader as any).positions.set('RATCHET_TEST', pos)
+
+    // Tick reaches 100.5 (below 100.7 threshold): SL remains 98
+    await (paperTrader as any).processPriceTickExits('RATCHET_TEST', pos, 100.5)
+    expect(pos.aiStopLoss).toBe(98.0)
+
+    // Tick reaches 100.8 (touches 50% of T1, below 1% full ratchet tier): SL should ratchet to entry price (100.0)
+    pos.peakPrice = 100.8
+    await (paperTrader as any).processPriceTickExits('RATCHET_TEST', pos, 100.8)
+    expect(pos.aiStopLoss).toBe(100.0)
+  })
+
+  it('enforces 90m Intraday Momentum Timeout on MIS equities but keeps CNC Swing positions alive', async () => {
+    const twoHoursAgo = new Date(Date.now() - 120 * 60 * 1000)
+
+    // MIS (Intraday) position held 120m with 0.1% gain (<0.25% threshold)
+    const misPos: any = {
+      symbol: 'MIS_STAGNANT',
+      token: 999003,
+      side: 'BUY',
+      quantity: 100,
+      avgEntryPrice: 100.0,
+      currentPrice: 100.1,
+      peakPrice: 100.2,
+      assetClass: 'EQUITY',
+      product: 'MIS',
+      timestamp: twoHoursAgo,
+    }
+
+    // CNC (Swing) position held 120m with 0.1% gain
+    const cncPos: any = {
+      symbol: 'CNC_SWING',
+      token: 999004,
+      side: 'BUY',
+      quantity: 100,
+      avgEntryPrice: 100.0,
+      currentPrice: 100.1,
+      peakPrice: 100.2,
+      assetClass: 'EQUITY',
+      product: 'CNC',
+      timestamp: twoHoursAgo,
+    }
+
+    // MIS position should be flagged stagnant
+    expect((paperTrader as any).isIntradayEquityStagnant(misPos, 100.1)).toBe(true)
+
+    // CNC (Swing) position MUST NOT be flagged stagnant (kept alive across days)
+    expect((paperTrader as any).isIntradayEquityStagnant(cncPos, 100.1)).toBe(false)
+  })
+
+  it('squares off MIS positions at 15:30 Market Close but carries CNC Swing positions overnight', async () => {
+    const squareOffSpy = vi.spyOn(paperTrader, 'squareOffPositions').mockResolvedValue(undefined)
+
+    const misPos: any = {
+      symbol: 'MIS_STOCK',
+      token: 999005,
+      side: 'BUY',
+      quantity: 100,
+      avgEntryPrice: 100.0,
+      currentPrice: 100.0,
+      product: 'MIS',
+      assetClass: 'EQUITY',
+      timestamp: new Date(),
+    }
+
+    const cncPos: any = {
+      symbol: 'CNC_SWING_STOCK',
+      token: 999006,
+      side: 'BUY',
+      quantity: 100,
+      avgEntryPrice: 100.0,
+      currentPrice: 100.0,
+      product: 'CNC',
+      assetClass: 'EQUITY',
+      timestamp: new Date(),
+    }
+
+    ;(paperTrader as any).positions.set('MIS_STOCK', misPos)
+    ;(paperTrader as any).positions.set('CNC_SWING_STOCK', cncPos)
+
+    // Trigger checkMarketClose at 15:30
+    ;(paperTrader as any).checkMarketClose(15, 30)
+
+    // Should only square off MIS_STOCK, preserving CNC_SWING_STOCK
+    expect(squareOffSpy).toHaveBeenCalledTimes(1)
+    const squaredPositions = squareOffSpy.mock.calls[0]![0]
+    expect(squaredPositions).toHaveLength(1)
+    expect(squaredPositions[0].symbol).toBe('MIS_STOCK')
+  })
 })
