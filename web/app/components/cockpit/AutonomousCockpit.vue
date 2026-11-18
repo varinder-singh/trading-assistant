@@ -122,11 +122,14 @@
           />
         </div>
 
-        <!-- Mobile Tab 2: Positions View -->
-        <div v-show="mobileTab === 'positions'" class="flex-1 min-h-0 flex flex-col h-full">
+        <!-- Mobile Tab 2: Positions, Closed Trades & Forensics, or Logs View (Single optimized instance) -->
+        <div
+          v-show="mobileTab === 'positions' || mobileTab === 'history' || mobileTab === 'events'"
+          class="flex-1 min-h-0 flex flex-col h-full w-full overflow-hidden"
+        >
           <CockpitDock
-            class="flex-1 min-h-0 flex flex-col overflow-hidden h-full"
-            active-tab="positions"
+            class="flex-1 min-h-0 flex flex-col overflow-hidden h-full w-full"
+            :active-tab="mobileTab === 'positions' ? 'positions' : (mobileTab === 'history' ? 'history' : 'events')"
             :market-state="marketState"
             :positions="portfolio"
             :trade-history="tradeHistory"
@@ -136,20 +139,7 @@
           />
         </div>
 
-        <!-- Mobile Tab 3: Today's Closed Trades & Forensic Logs View -->
-        <div v-show="mobileTab === 'history'" class="flex-1 min-h-0 flex flex-col h-full">
-          <CockpitDock
-            class="flex-1 min-h-0 flex flex-col overflow-hidden h-full"
-            active-tab="history"
-            :market-state="marketState"
-            :positions="portfolio"
-            :trade-history="tradeHistory"
-            :event-logs="eventLogs"
-            :mobile-view="true"
-          />
-        </div>
-
-        <!-- Mobile Tab 4: AI Agents & Deliberation View -->
+        <!-- Mobile Tab 3: AI Agents & Deliberation View -->
         <div v-show="mobileTab === 'agents'" class="flex-1 min-h-0 flex flex-col h-full overflow-hidden">
           <AgentPipelineHud
             class="shrink-0"
@@ -172,19 +162,6 @@
             :last-analysis-time="effectiveLastRun"
             @update:active-tab="rightPanelTab = $event"
             @select-stock="$emit('selectStock', $event)"
-          />
-        </div>
-
-        <!-- Mobile Tab 5: System Health & Engine Logs View -->
-        <div v-show="mobileTab === 'events'" class="flex-1 min-h-0 flex flex-col h-full">
-          <CockpitDock
-            class="flex-1 min-h-0 flex flex-col overflow-hidden h-full"
-            active-tab="events"
-            :market-state="marketState"
-            :positions="portfolio"
-            :trade-history="tradeHistory"
-            :event-logs="eventLogs"
-            :mobile-view="true"
           />
         </div>
       </div>
@@ -363,11 +340,32 @@ onMounted(() => {
   }
 })
 
+function parseDate(dateInput: any): Date | null {
+  if (!dateInput) return null
+  if (dateInput instanceof Date) return isNaN(dateInput.getTime()) ? null : dateInput
+  if (typeof dateInput === 'number') {
+    const ms = dateInput < 1e11 ? dateInput * 1000 : dateInput
+    const d = new Date(ms)
+    return isNaN(d.getTime()) ? null : d
+  }
+  if (typeof dateInput === 'string') {
+    let s = dateInput.trim()
+    if (s.includes(' ') && !s.includes('T')) {
+      s = s.replace(' ', 'T')
+    }
+    if (s.includes('T') && !s.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(s)) {
+      s = s + 'Z'
+    }
+    const d = new Date(s)
+    return isNaN(d.getTime()) ? null : d
+  }
+  return null
+}
+
 function getISTDateStr(dateInput: any): string {
-  if (!dateInput) return ''
-  const date = new Date(typeof dateInput === 'string' && dateInput.includes('T') && !dateInput.endsWith('Z') ? dateInput + 'Z' : dateInput)
-  if (isNaN(date.getTime())) return ''
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(date)
+  const d = parseDate(dateInput)
+  if (!d) return ''
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d)
 }
 
 const todayIST = computed(() => {
@@ -376,18 +374,24 @@ const todayIST = computed(() => {
 
 const todaysTradesCount = computed(() => {
   return (props.tradeHistory || []).filter((t: any) => {
-    const d = t.closedAt || t.openedAt || ''
+    const d = t.closedAt || t.istClose || t.updatedAt || t.openedAt || t.istOpen || t.createdAt || ''
     return getISTDateStr(d) === todayIST.value
   }).length
 })
 
+// Track previous position count to ONLY switch on 0 -> 1 transition (new entry)
+// and NEVER hijack when live price ticks or position updates occur
+let prevPositionCount = props.portfolio ? props.portfolio.length : 0
+
 watch(
   () => props.portfolio,
   (newVal) => {
-    if (newVal && newVal.length > 0) {
+    const currentCount = newVal ? newVal.length : 0
+    if (prevPositionCount === 0 && currentCount > 0) {
       if (dockTab.value === 'history') dockTab.value = 'positions'
       if (mobileTab.value === 'history') mobileTab.value = 'positions'
     }
+    prevPositionCount = currentCount
   },
   { deep: true }
 )

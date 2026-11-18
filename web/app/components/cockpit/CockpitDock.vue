@@ -223,7 +223,7 @@
               <td class="py-2 text-slate-400">
                 <span class="inline-flex items-center gap-1">
                   <span class="text-[10px] text-slate-500">{{ expandedTradeId === t.id ? '▼' : '▶' }}</span>
-                  {{ formatTimestamp(t.closedAt || t.openedAt) }}
+                  {{ formatTimestamp(t.closedAt || t.istClose || t.updatedAt || t.openedAt || t.istOpen) }}
                 </span>
               </td>
               <td class="text-indigo-400">{{ t.id?.slice(0, 8) }}</td>
@@ -244,7 +244,7 @@
                   class="font-bold"
                   :class="(Number(t.pnl) || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'"
                 >
-                  {{ t.exitReason || t.status }}
+                  {{ getTradeExitReason(t) }}
                 </span>
               </td>
               <td
@@ -254,7 +254,7 @@
                 {{ t.pnl !== null && t.pnl !== undefined ? ((Number(t.pnl) || 0) >= 0 ? '+' : '') + '₹' + Number(t.pnl).toFixed(2) : '—' }}
               </td>
               <td class="text-slate-400">
-                {{ t.aiConfidence ? t.aiConfidence + '%' : (t.aiReasoning ? 'Analyzed' : '—') }}
+                {{ getTradeAiConfidence(t) ? getTradeAiConfidence(t) + '%' : (getTradeAiReasoning(t) ? 'Analyzed' : '—') }}
               </td>
             </tr>
 
@@ -271,22 +271,22 @@
                   <div class="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
                     <div>
                       <span class="text-slate-500 block text-[10px] uppercase">Strategy Setup</span>
-                      <span class="text-slate-200 font-bold">{{ t.setup || t.strategyContext || 'Autonomous MAS Execution' }}</span>
+                      <span class="text-slate-200 font-bold">{{ getTradeSetup(t) }}</span>
                     </div>
                     <div>
                       <span class="text-slate-500 block text-[10px] uppercase">Market Regime & VIX</span>
-                      <span class="text-slate-200">VIX: {{ t.vixLevel || '—' }} | RSI: {{ t.rsiLevel || '—' }} | Trend: {{ t.trend15m || '—' }}</span>
+                      <span class="text-slate-200">VIX: {{ getTradeVix(t) }} | RSI: {{ getTradeRsi(t) }} | Trend: {{ getTradeTrend(t) }}</span>
                     </div>
                     <div>
                       <span class="text-slate-500 block text-[10px] uppercase">Exit Reason & Protection</span>
                       <span :class="(Number(t.pnl) || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'" class="font-bold">
-                        {{ t.exitReason || t.forensicVerdict || t.status }}
+                        {{ getTradeExitReason(t) }}
                       </span>
                     </div>
                   </div>
-                  <div v-if="t.aiReasoning || t.forensicVerdict" class="p-2.5 bg-slate-950 rounded border border-slate-800 text-slate-300 text-[11px] leading-relaxed">
+                  <div v-if="getTradeAiReasoning(t)" class="p-2.5 bg-slate-950 rounded border border-slate-800 text-slate-300 text-[11px] leading-relaxed">
                     <span class="text-indigo-400 font-bold">AI Reasoning: </span>
-                    {{ t.aiReasoning || t.forensicVerdict }}
+                    {{ getTradeAiReasoning(t) }}
                   </div>
                 </div>
               </td>
@@ -473,9 +473,9 @@
     <div
       v-else-if="activeTab === 'history'"
       data-test="dock-history-content"
-      class="flex-1 min-h-0 flex flex-col overflow-hidden text-xs font-mono"
+      class="flex-1 min-h-0 flex flex-col overflow-hidden text-xs font-mono h-full w-full"
     >
-      <!-- Filter Bar & Net P&L Summary -->
+      <!-- Filter Bar & Net P&L Summary (Sticky Top) -->
       <div class="shrink-0 p-3 border-b border-slate-800 bg-slate-900/90 space-y-2">
         <div class="flex items-center justify-between">
           <span class="text-xs font-bold text-white flex items-center gap-1.5">
@@ -513,7 +513,7 @@
         </div>
       </div>
 
-      <!-- Trade Cards List -->
+      <!-- Trade Cards List (Scrollable Center) -->
       <div class="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
         <div
           v-for="t in paginatedTrades"
@@ -536,7 +536,7 @@
                 <span class="font-bold text-white font-mono text-sm">{{ t.symbol }}</span>
               </div>
               <div class="text-[11px] text-slate-500 font-mono">
-                {{ formatTimestamp(t.closedAt || t.openedAt) }} • ID: {{ t.id?.slice(0, 8) }}
+                {{ formatTimestamp(t.closedAt || t.istClose || t.updatedAt || t.openedAt || t.istOpen) }} • ID: {{ t.id?.slice(0, 8) }}
               </div>
             </div>
             <div
@@ -559,7 +559,7 @@
             </div>
             <div>
               <div class="text-[10px] text-slate-500">CONFIDENCE</div>
-              <div class="text-indigo-300 font-semibold">{{ t.aiConfidence ? t.aiConfidence + '%' : (t.aiReasoning ? 'Analyzed' : '—') }}</div>
+              <div class="text-indigo-300 font-semibold">{{ getTradeAiConfidence(t) ? getTradeAiConfidence(t) + '%' : (getTradeAiReasoning(t) ? 'Analyzed' : '—') }}</div>
             </div>
           </div>
 
@@ -571,7 +571,7 @@
                 class="font-bold"
                 :class="(Number(t.pnl) || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'"
               >
-                {{ t.exitReason || t.status }}
+                {{ getTradeExitReason(t) }}
               </span>
             </div>
             <div class="text-indigo-400 font-medium text-[11px] flex items-center gap-1">
@@ -587,53 +587,72 @@
             <div class="space-y-1.5 bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px]">
               <div>
                 <span class="text-slate-500 block text-[10px] uppercase">Strategy Setup</span>
-                <span class="text-slate-200 font-bold">{{ t.setup || t.strategyContext || 'Autonomous MAS Execution' }}</span>
+                <span class="text-slate-200 font-bold">{{ getTradeSetup(t) }}</span>
               </div>
               <div>
                 <span class="text-slate-500 block text-[10px] uppercase">Market Regime & VIX</span>
-                <span class="text-slate-200">VIX: {{ t.vixLevel || '—' }} | RSI: {{ t.rsiLevel || '—' }} | Trend: {{ t.trend15m || '—' }}</span>
+                <span class="text-slate-200">VIX: {{ getTradeVix(t) }} | RSI: {{ getTradeRsi(t) }} | Trend: {{ getTradeTrend(t) }}</span>
               </div>
               <div>
                 <span class="text-slate-500 block text-[10px] uppercase">Exit Verdict & Protection</span>
                 <span :class="(Number(t.pnl) || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'" class="font-bold">
-                  {{ t.exitReason || t.forensicVerdict || t.status }}
+                  {{ getTradeExitReason(t) }}
                 </span>
               </div>
-              <div v-if="t.aiReasoning || t.forensicVerdict" class="pt-1.5 border-t border-slate-800/80 text-slate-300 leading-relaxed">
+              <div v-if="getTradeAiReasoning(t)" class="pt-1.5 border-t border-slate-800/80 text-slate-300 leading-relaxed">
                 <span class="text-indigo-400 font-bold">AI Reasoning: </span>
-                {{ t.aiReasoning || t.forensicVerdict }}
+                {{ getTradeAiReasoning(t) }}
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Pagination Controls -->
-        <div v-if="totalPages > 1" class="pt-2 flex items-center justify-between text-xs text-slate-400 font-mono">
-          <button
-            type="button"
-            data-test="prev-page-btn"
-            @click.stop="currentPage--"
-            :disabled="currentPage === 1"
-            class="px-3 py-1.5 rounded bg-slate-800 border border-slate-700 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition"
-          >
-            ◀ Prev
-          </button>
-          <span>Page {{ currentPage }} of {{ totalPages }}</span>
-          <button
-            type="button"
-            data-test="next-page-btn"
-            @click.stop="currentPage++"
-            :disabled="currentPage === totalPages"
-            class="px-3 py-1.5 rounded bg-slate-800 border border-slate-700 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition"
-          >
-            Next ▶
-          </button>
-        </div>
-
         <!-- Empty State -->
-        <div v-if="displayedTrades.length === 0" class="py-12 text-center text-slate-500">
-          No {{ historyFilter === 'today' ? "trades recorded today." : "trades recorded in database yet for this account." }}
+        <div v-if="displayedTrades.length === 0" class="py-12 text-center text-slate-400 px-4 space-y-3">
+          <div class="text-sm font-bold text-slate-300">
+            {{ historyFilter === 'today' ? "No trades recorded today." : "No trades recorded in database yet for this account." }}
+          </div>
+          <p class="text-xs text-slate-500">
+            {{ historyFilter === 'today' ? "No closed intraday positions have been executed today." : "Historical trade logs will appear here once executed." }}
+          </p>
+          <button
+            v-if="historyFilter === 'today' && tradeHistory.length > 0"
+            type="button"
+            @click="historyFilter = 'all'"
+            class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition shadow-sm inline-flex items-center gap-1.5"
+          >
+            <span>📜</span> View All {{ tradeHistory.length }} Historical Trades
+          </button>
         </div>
+      </div>
+
+      <!-- Sticky Pagination Controls (ALWAYS VISIBLE when trades exist) -->
+      <div
+        v-if="displayedTrades.length > 0"
+        data-test="mobile-pagination-bar"
+        class="shrink-0 px-3 py-2 border-t border-slate-800 bg-slate-900/95 flex items-center justify-between text-xs text-slate-400 font-mono"
+      >
+        <button
+          type="button"
+          data-test="prev-page-btn"
+          @click.stop="currentPage--"
+          :disabled="currentPage <= 1"
+          class="px-3 py-1.5 rounded bg-slate-800 border border-slate-700 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition"
+        >
+          ◀ Prev
+        </button>
+        <span class="text-slate-300 font-mono">
+          Page {{ currentPage }} of {{ totalPages }} <span class="text-slate-500">({{ displayedTrades.length }} trades)</span>
+        </span>
+        <button
+          type="button"
+          data-test="next-page-btn"
+          @click.stop="currentPage++"
+          :disabled="currentPage >= totalPages"
+          class="px-3 py-1.5 rounded bg-slate-800 border border-slate-700 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition"
+        >
+          Next ▶
+        </button>
       </div>
     </div>
 
@@ -702,11 +721,38 @@ function toggleExpand(id: string) {
   expandedTradeId.value = expandedTradeId.value === id ? null : id
 }
 
+function parseDate(dateInput: any): Date | null {
+  if (!dateInput) return null
+  if (dateInput instanceof Date) return isNaN(dateInput.getTime()) ? null : dateInput
+  if (typeof dateInput === 'number') {
+    const ms = dateInput < 1e11 ? dateInput * 1000 : dateInput
+    const d = new Date(ms)
+    return isNaN(d.getTime()) ? null : d
+  }
+  if (typeof dateInput === 'string') {
+    let s = dateInput.trim()
+    if (s.includes(' ') && !s.includes('T')) {
+      s = s.replace(' ', 'T')
+    }
+    if (s.includes('T') && !s.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(s)) {
+      s = s + 'Z'
+    }
+    const d = new Date(s)
+    return isNaN(d.getTime()) ? null : d
+  }
+  return null
+}
+
 function getISTDateStr(dateInput: any): string {
-  if (!dateInput) return ''
-  const date = new Date(typeof dateInput === 'string' && dateInput.includes('T') && !dateInput.endsWith('Z') ? dateInput + 'Z' : dateInput)
-  if (isNaN(date.getTime())) return ''
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(date)
+  const d = parseDate(dateInput)
+  if (!d) return ''
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d)
+}
+
+function formatTimestamp(timestamp?: any): string {
+  const d = parseDate(timestamp)
+  if (!d) return '—'
+  return d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })
 }
 
 const todayIST = computed(() => {
@@ -715,10 +761,49 @@ const todayIST = computed(() => {
 
 const todaysTrades = computed(() => {
   return props.tradeHistory.filter((t) => {
-    const d = t.closedAt || t.openedAt || ''
+    const d = t.closedAt || t.istClose || t.updatedAt || t.openedAt || t.istOpen || t.createdAt || ''
     return getISTDateStr(d) === todayIST.value
   })
 })
+
+// Auto-switch to 'all' if today has 0 trades but historical trades exist
+watch(
+  () => [todaysTrades.value.length, props.tradeHistory.length],
+  ([todayCount, allCount]) => {
+    if (todayCount === 0 && allCount > 0 && historyFilter.value === 'today') {
+      historyFilter.value = 'all'
+    }
+  },
+  { immediate: true }
+)
+
+function getTradeExitReason(t: any): string {
+  return t.exitReason || t.exitMetadata?.exitReason || t.forensicVerdict || t.status || 'CLOSED'
+}
+
+function getTradeAiReasoning(t: any): string {
+  return t.aiReasoning || t.entryMetadata?.aiReasoning || t.forensicVerdict || ''
+}
+
+function getTradeAiConfidence(t: any): string | number {
+  return t.aiConfidence || t.entryMetadata?.aiConfidence || ''
+}
+
+function getTradeSetup(t: any): string {
+  return t.setup || t.entryMetadata?.setup || t.strategyContext || t.entryMetadata?.strategyContext?.agentType || 'Autonomous MAS Execution'
+}
+
+function getTradeVix(t: any): string | number {
+  return t.vixLevel || t.entryMetadata?.vixLevel || '—'
+}
+
+function getTradeRsi(t: any): string | number {
+  return t.rsiLevel || t.entryMetadata?.rsiLevel || '—'
+}
+
+function getTradeTrend(t: any): string {
+  return t.trend15m || t.entryMetadata?.trend15m || t.entryMetadata?.strategyContext?.macroTrend || '—'
+}
 
 const displayedTrades = computed(() => {
   return historyFilter.value === 'today' ? todaysTrades.value : props.tradeHistory
@@ -740,10 +825,4 @@ const totalPnl = computed(() => {
 const totalUnrealizedPnl = computed(() => {
   return props.positions.reduce((acc, p) => acc + (Number(p.unrealizedPnL) || 0), 0)
 })
-
-function formatTimestamp(timestamp?: string) {
-  if (!timestamp) return '—'
-  const date = new Date(timestamp.includes('T') && !timestamp.endsWith('Z') ? timestamp + 'Z' : timestamp)
-  return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })
-}
 </script>

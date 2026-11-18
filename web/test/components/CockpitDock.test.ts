@@ -219,5 +219,13 @@ describe('CockpitDock.vue', () => {
     expect(wrapper.text()).toContain('FORENSIC AUDIT & DECISION TRACE')
     expect(wrapper.text()).toContain('Wave 3 exhaustion detected.')
     expect(wrapper.text()).toContain('Hide Forensic Trace ▲')
+
+    // Mobile pagination bar is visible even with 1 trade
+    const paginationBar = wrapper.find('[data-test="mobile-pagination-bar"]')
+    expect(paginationBar.exists()).toBe(true)
+    expect(paginationBar.text()).toContain('Page 1 of 1')
+    expect(paginationBar.text()).toContain('(1 trades)')
+    expect(wrapper.find('[data-test="prev-page-btn"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-test="next-page-btn"]').attributes('disabled')).toBeDefined()
   })
 })

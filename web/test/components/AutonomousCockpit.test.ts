@@ -77,4 +77,54 @@ describe('AutonomousCockpit.vue', () => {
     await historyTab.trigger('click')
     expect(wrapper.text()).toContain('CLOSED TRADES & FORENSICS')
   })
+
+  it('does not hijack focus to positions when portfolio tick updates occur while user is viewing history', async () => {
+    const wrapper = mount(AutonomousCockpit, {
+      props: {
+        symbol: 'NIFTY',
+        portfolio: [
+          {
+            id: 'pos-1',
+            symbol: 'NIFTY24O1924200CE',
+            quantity: 50,
+            buyPrice: 100,
+            currentPrice: 110,
+            unrealizedPnL: 500,
+          },
+        ],
+        tradeHistory: [
+          {
+            id: 'TRD-HIST-01',
+            symbol: 'NIFTY24O1924150CE',
+            side: 'BUY',
+            quantity: 50,
+            pnl: 1000,
+            closedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    })
+
+    // User explicitly switches to Forensics / History tab
+    const historyTab = wrapper.find('[data-test="mobile-tab-history"]')
+    await historyTab.trigger('click')
+    expect(wrapper.text()).toContain('CLOSED TRADES & FORENSICS')
+
+    // Simulate incoming live price tick updating portfolio PnL
+    await wrapper.setProps({
+      portfolio: [
+        {
+          id: 'pos-1',
+          symbol: 'NIFTY24O1924200CE',
+          quantity: 50,
+          buyPrice: 100,
+          currentPrice: 115,
+          unrealizedPnL: 750,
+        },
+      ],
+    })
+
+    // User should STILL be on Forensics tab, NOT kicked back to Active Positions!
+    expect(wrapper.text()).toContain('CLOSED TRADES & FORENSICS')
+  })
 })
