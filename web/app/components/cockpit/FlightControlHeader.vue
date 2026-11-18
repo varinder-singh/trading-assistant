@@ -62,9 +62,9 @@
           </span>
           <span
             class="font-bold"
-            :class="(positions[0].unrealizedPnL || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'"
+            :class="(Number(positions[0].unrealizedPnL) || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'"
           >
-            {{ (positions[0].unrealizedPnL || 0) >= 0 ? '+' : '' }}₹{{ Number(positions[0].unrealizedPnL || 0).toFixed(2) }}
+            {{ (Number(positions[0].unrealizedPnL) || 0) >= 0 ? '+' : '' }}₹{{ Number(positions[0].unrealizedPnL || 0).toFixed(2) }}
           </span>
           <span
             v-if="positions[0].t1Hit"
@@ -155,9 +155,9 @@
         </div>
         <div
           class="text-sm font-bold leading-tight"
-          :class="(dailyPnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'"
+          :class="numDailyPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'"
         >
-          {{ (dailyPnl || 0) >= 0 ? '+' : '' }}₹{{ (dailyPnl || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 }) }}
+          {{ numDailyPnl >= 0 ? '+' : '' }}₹{{ numDailyPnl.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
         </div>
       </div>
 
@@ -207,7 +207,9 @@
 </template>
 
 <script setup lang="ts">
-withDefaults(
+import { computed } from 'vue'
+
+const props = withDefaults(
   defineProps<{
     symbol?: string
     livePrice?: number | null
@@ -215,7 +217,7 @@ withDefaults(
     priceChangePct?: number | null
     marketState?: 'open' | 'closed'
     flightMode?: 'auto' | 'supervised' | 'halt'
-    dailyPnl?: number
+    dailyPnl?: number | string
     regime?: string
     vix?: number | null
     tokenExpiryHours?: number
@@ -235,6 +237,8 @@ withDefaults(
     positions: () => [],
   }
 )
+
+const numDailyPnl = computed(() => Number(props.dailyPnl) || 0)
 
 defineEmits<{
   (e: 'update:flightMode', mode: 'auto' | 'supervised' | 'halt'): void

@@ -92,4 +92,16 @@ describe('FlightControlHeader.vue', () => {
     expect(pill.text()).toContain('65x @ ₹34.00')
     expect(pill.text()).toContain('T1 LOCKED 🥇')
   })
+
+  it('correctly parses and formats string dailyPnl to number instead of string concatenation', () => {
+    const wrapper = mount(FlightControlHeader, {
+      props: {
+        symbol: 'NIFTY',
+        dailyPnl: '2450.50' as any,
+        marketState: 'open',
+      },
+    })
+
+    expect(wrapper.text()).toContain('+₹2,450.50')
+  })
 })

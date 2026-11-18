@@ -275,7 +275,7 @@ const props = withDefaults(
     livePrice?: number | null
     priceChange?: number | null
     priceChangePct?: number | null
-    dailyPnl?: number
+    dailyPnl?: number | string
     portfolio?: any[]
     tradeHistory?: any[]
     eventLogs?: any[]

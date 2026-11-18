@@ -110,16 +110,47 @@ const activeSpecialist = computed(() => {
 
 const selectedAgentForDetail = ref<string | null>(null)
 
+function parseTradeDate(dateInput: any): Date | null {
+  if (!dateInput) return null
+  if (dateInput instanceof Date) return isNaN(dateInput.getTime()) ? null : dateInput
+  if (typeof dateInput === 'number') {
+    const ms = dateInput < 1e11 ? dateInput * 1000 : dateInput
+    const d = new Date(ms)
+    return isNaN(d.getTime()) ? null : d
+  }
+  if (typeof dateInput === 'string') {
+    let s = dateInput.trim()
+    if (s.includes(' ') && !s.includes('T')) {
+      s = s.replace(' ', 'T')
+    }
+    if (s.includes('T') && !s.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(s)) {
+      s = s + 'Z'
+    }
+    const d = new Date(s)
+    return isNaN(d.getTime()) ? null : d
+  }
+  return null
+}
+
+function getTradeISTDateStr(dateInput: any): string {
+  const d = parseTradeDate(dateInput)
+  if (!d) return ''
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d)
+}
+
 const dailyPnl = computed(() => {
+  const todayIST = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date())
+
   const realized = tradeHistory.value
     .filter((t) => {
-      const today = new Date().toISOString().split('T')[0]
-      return t.status === 'CLOSED' && t.closedAt?.startsWith(today)
+      const isClosed = !t.status || t.status.toUpperCase() === 'CLOSED'
+      const dateStr = getTradeISTDateStr(t.closedAt || t.istClose || t.updatedAt || t.openedAt || t.istOpen || t.createdAt)
+      return isClosed && dateStr === todayIST
     })
-    .reduce((acc, t) => acc + (t.pnl || 0), 0)
+    .reduce((acc, t) => acc + (Number(t.pnl) || 0), 0)
 
-  const unrealized = portfolio.value.reduce((acc, p) => acc + (p.unrealizedPnL || 0), 0)
-  return realized + unrealized
+  const unrealized = portfolio.value.reduce((acc, p) => acc + (Number(p.unrealizedPnL) || 0), 0)
+  return Number((realized + unrealized).toFixed(2))
 })
 
 function addNotification(notif: any) {
