@@ -42,33 +42,39 @@ const connections = ref<any[]>([])
 const fetchProfile = async () => {
   try {
     loadingProfile.value = true
-    const { data, error } = await useFetch<any>('/api/profile')
-    if (error.value) throw error.value
+    let data: any = null
+    if (typeof $fetch === 'function') {
+      data = await $fetch<any>('/api/profile')
+    } else {
+      const response = await useFetch<any>('/api/profile')
+      if (response.error.value) throw response.error.value
+      data = response.data.value
+    }
 
-    if (data.value) {
-      fullName.value = data.value.fullName || ''
-      email.value = data.value.email || user.value?.email || ''
-      tradeMode.value = data.value.tradeMode || 'PAPER'
+    if (data) {
+      fullName.value = data.fullName || ''
+      email.value = data.email || user.value?.email || ''
+      tradeMode.value = data.tradeMode || 'PAPER'
 
-      if (data.value.allowedUniverses) {
-        allowIndexOptions.value = data.value.allowedUniverses.includes('INDEX_OPTIONS')
-        allowEquity.value = data.value.allowedUniverses.includes('EQUITY')
-        allowStockOptions.value = data.value.allowedUniverses.includes('STOCK_OPTIONS')
+      if (data.allowedUniverses) {
+        allowIndexOptions.value = data.allowedUniverses.includes('INDEX_OPTIONS')
+        allowEquity.value = data.allowedUniverses.includes('EQUITY')
+        allowStockOptions.value = data.allowedUniverses.includes('STOCK_OPTIONS')
       }
-      if (data.value.stockOptionPreference) stockOptionPreference.value = data.value.stockOptionPreference
-      if (data.value.equityHoldingMode) equityHoldingMode.value = data.value.equityHoldingMode
-      if (data.value.equityRiskPerTrade) equityRiskPerTrade.value = Number(data.value.equityRiskPerTrade) || 1500
-      if (data.value.maxActivePositions !== undefined && data.value.maxActivePositions !== null) {
-        maxActivePositions.value = Number(data.value.maxActivePositions) || 10
+      if (data.stockOptionPreference) stockOptionPreference.value = data.stockOptionPreference
+      if (data.equityHoldingMode) equityHoldingMode.value = data.equityHoldingMode
+      if (data.equityRiskPerTrade) equityRiskPerTrade.value = Number(data.equityRiskPerTrade) || 1500
+      if (data.maxActivePositions !== undefined && data.maxActivePositions !== null) {
+        maxActivePositions.value = Number(data.maxActivePositions) || 10
       }
-      if (data.value.maxIndexPositions !== undefined && data.value.maxIndexPositions !== null) {
-        maxIndexPositions.value = Number(data.value.maxIndexPositions)
+      if (data.maxIndexPositions !== undefined && data.maxIndexPositions !== null) {
+        maxIndexPositions.value = Number(data.maxIndexPositions)
       }
-      if (data.value.maxDailyTrades !== undefined && data.value.maxDailyTrades !== null) {
-        maxDailyTrades.value = Number(data.value.maxDailyTrades) || 30
+      if (data.maxDailyTrades !== undefined && data.maxDailyTrades !== null) {
+        maxDailyTrades.value = Number(data.maxDailyTrades) || 30
       }
-      if (data.value.enablePullbackEntry !== undefined && data.value.enablePullbackEntry !== null) {
-        enablePullbackEntry.value = Boolean(data.value.enablePullbackEntry)
+      if (data.enablePullbackEntry !== undefined && data.enablePullbackEntry !== null) {
+        enablePullbackEntry.value = Boolean(data.enablePullbackEntry)
       }
     }
   } catch (err: any) {
@@ -83,12 +89,18 @@ const fetchProfile = async () => {
 const fetchConnections = async () => {
   try {
     loadingConnections.value = true
-    const { data, error } = await useFetch<any[]>('/api/profile/connections')
-    if (error.value) throw error.value
+    let data: any[] | null = null
+    if (typeof $fetch === 'function') {
+      data = await $fetch<any[]>('/api/profile/connections')
+    } else {
+      const response = await useFetch<any[]>('/api/profile/connections')
+      if (response.error.value) throw response.error.value
+      data = response.data.value
+    }
 
-    if (data.value) {
-      connections.value = data.value
-      const zerodha = data.value.find((c: any) => c.brokerName === 'zerodha')
+    if (data) {
+      connections.value = data
+      const zerodha = data.find((c: any) => c.brokerName === 'zerodha')
       if (zerodha) {
         kiteApiKey.value = zerodha.apiKey || ''
         hasSavedApiSecret.value = zerodha.hasApiSecret || false
@@ -113,14 +125,14 @@ const saveProfile = async () => {
     if (allowStockOptions.value) universes.push('STOCK_OPTIONS')
 
     const payload: any = {
-      ...(fullName.value.trim().length > 0 ? { fullName: fullName.value.trim() } : {}),
+      ...(fullName.value && fullName.value.trim().length > 0 ? { fullName: fullName.value.trim() } : {}),
       allowedUniverses: universes.join(','),
       stockOptionPreference: stockOptionPreference.value,
       equityHoldingMode: equityHoldingMode.value,
       equityRiskPerTrade: Number(equityRiskPerTrade.value) || 1500,
-      maxActivePositions: Number(maxActivePositions.value) || 10,
+      maxActivePositions: Number(maxActivePositions.value) > 0 ? Number(maxActivePositions.value) : 10,
       maxIndexPositions: Number(maxIndexPositions.value) >= 0 ? Number(maxIndexPositions.value) : 2,
-      maxDailyTrades: Number(maxDailyTrades.value) || 30,
+      maxDailyTrades: Number(maxDailyTrades.value) > 0 ? Number(maxDailyTrades.value) : 30,
       enablePullbackEntry: Boolean(enablePullbackEntry.value),
     }
 
@@ -159,8 +171,8 @@ const saveProfile = async () => {
       profileSuccess.value = ''
     }, 3000)
 
-    // Refresh connections to get updated status
-    fetchConnections()
+    // Re-fetch profile and connections from server to confirm persistence
+    await Promise.all([fetchProfile(), fetchConnections()])
   } catch (err: any) {
     console.error('Failed to update profile:', err)
     profileError.value = 'Failed to save changes: ' + (err.data?.statusMessage || err.message || 'Unknown error')
@@ -448,7 +460,7 @@ onMounted(() => {
                     data-test="max-active-positions-input"
                     type="number"
                     min="1"
-                    max="25"
+                    max="100"
                     step="1"
                     class="w-full px-4 py-2 bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-sm"
                   />
@@ -477,9 +489,9 @@ onMounted(() => {
                     v-model.number="maxDailyTrades"
                     data-test="max-daily-trades-input"
                     type="number"
-                    min="5"
-                    max="100"
-                    step="5"
+                    min="1"
+                    max="200"
+                    step="1"
                     class="w-full px-4 py-2 bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-sm"
                   />
                   <p class="text-[11px] text-gray-500">Max intraday trades per session</p>

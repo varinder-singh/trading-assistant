@@ -40,10 +40,27 @@ describe('ProfilePage.vue', () => {
     })
 
     ;(globalThis as any).$fetch = vi.fn(async (url: string, opts?: any) => {
-      if (url === '/api/profile' && opts?.method === 'PUT') {
-        mockPutPayloads.push(opts.body)
-        return { success: true }
+      if (url === '/api/profile') {
+        if (opts?.method === 'PUT') {
+          mockPutPayloads.push(opts.body)
+          return { success: true, profile: opts.body }
+        }
+        return {
+          id: 'user-123',
+          fullName: null,
+          email: 'trader@example.com',
+          tradeMode: 'PAPER',
+          allowedUniverses: 'INDEX_OPTIONS,EQUITY,STOCK_OPTIONS',
+          stockOptionPreference: 'PREFER_OPTIONS_IF_LISTED',
+          equityHoldingMode: 'MIS',
+          equityRiskPerTrade: 1500,
+          maxActivePositions: 10,
+          maxIndexPositions: 2,
+          maxDailyTrades: 30,
+          enablePullbackEntry: true,
+        }
       }
+      if (url === '/api/profile/connections') return []
       return {}
     })
   })
@@ -102,6 +119,44 @@ describe('ProfilePage.vue', () => {
       maxIndexPositions: 8,
       maxDailyTrades: 30,
       enablePullbackEntry: true,
+    })
+    expect(wrapper.text()).toContain('Settings updated successfully!')
+  })
+
+  it('allows user to change Total Active Positions (10), Reserved Slots (2), and Daily Trades (30) to custom values and persists them', async () => {
+    const wrapper = mount(ProfilePage, {
+      global: {
+        stubs: {
+          NuxtLink: { template: '<a><slot /></a>' },
+        },
+      },
+    })
+    await flushPromises()
+
+    // Change 10 -> 16
+    const activePositionsInput = wrapper.find('[data-test="max-active-positions-input"]')
+    await activePositionsInput.setValue('16')
+
+    // Change 2 -> 6
+    const indexPositionsInput = wrapper.find('[data-test="max-index-positions-input"]')
+    await indexPositionsInput.setValue('6')
+
+    // Change 30 -> 45
+    const dailyTradesInput = wrapper.find('[data-test="max-daily-trades-input"]')
+    await dailyTradesInput.setValue('45')
+
+    // Dynamic stock slot helper text: 16 - 6 = 10 slots
+    expect(wrapper.text()).toContain('Stocks get up to 10 slots')
+
+    // Submit form
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(mockPutPayloads).toHaveLength(1)
+    expect(mockPutPayloads[0]).toMatchObject({
+      maxActivePositions: 16,
+      maxIndexPositions: 6,
+      maxDailyTrades: 45,
     })
     expect(wrapper.text()).toContain('Settings updated successfully!')
   })

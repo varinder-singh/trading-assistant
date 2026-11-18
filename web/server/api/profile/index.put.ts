@@ -128,7 +128,8 @@ export default defineEventHandler(async (event) => {
       }
     }
 
-    return { success: true, message: 'Profile updated successfully' }
+    const updatedProfile = await db.selectFrom('profiles').selectAll().where('id', '=', userId).executeTakeFirst()
+    return { success: true, message: 'Profile updated successfully', profile: updatedProfile }
   } catch (error: any) {
     console.error('Error updating profile:', error)
     throw createError({
