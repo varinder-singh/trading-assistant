@@ -60,6 +60,11 @@ export class PaperTrader extends EventEmitter {
   private todayTradeCount = 0
   private tradingHalted = false
 
+  // Burst Velocity Governor: Rolling 30-minute position entries limiter
+  private recentEntryTimestamps: number[] = []
+  public maxEntriesPer30mWindow: number = Number(process.env.MAX_ENTRIES_PER_30M || 5)
+  private readonly rollingVelocityWindowMs: number = 30 * 60 * 1000 // 30 minutes
+
   private kiteOrderService: KiteOrderService | null = null
   public tradeMode: 'PAPER' | 'REAL' = 'PAPER'
 
@@ -81,6 +86,7 @@ export class PaperTrader extends EventEmitter {
     maxActivePositions?: number | null | undefined
     maxIndexPositions?: number | null | undefined
     maxDailyTrades?: number | null | undefined
+    maxEntriesPer30mWindow?: number | null | undefined
   }): void {
     if (config.maxActivePositions && config.maxActivePositions > 0) {
       this.maxConcurrentPositions = Number(config.maxActivePositions)
@@ -91,6 +97,13 @@ export class PaperTrader extends EventEmitter {
     if (config.maxDailyTrades && config.maxDailyTrades > 0) {
       this.maxDailyTrades = Number(config.maxDailyTrades)
     }
+    if (config.maxEntriesPer30mWindow && config.maxEntriesPer30mWindow > 0) {
+      this.maxEntriesPer30mWindow = Number(config.maxEntriesPer30mWindow)
+    }
+  }
+
+  public clearVelocityTracker(): void {
+    this.recentEntryTimestamps = []
   }
 
   public setKiteClient(kc: KiteConnect) {
@@ -565,6 +578,7 @@ export class PaperTrader extends EventEmitter {
         if (!validation.valid) return { success: false, error: validation.error }
         params.quantity = this.calculateBuyQuantity(params)
         this.todayTradeCount++
+        this.recentEntryTimestamps.push(Date.now())
       } else {
         if (this.exitingPositions.has(params.symbol)) {
           console.log(`⚠️ [PAPER TRADE] Exit already in progress for ${params.symbol}. Skipping duplicate exit.`)
@@ -755,6 +769,36 @@ export class PaperTrader extends EventEmitter {
         )
         return { valid: false, error: 'Re-entry cooldown active' }
       }
+    }
+
+    // RSI Exhaustion Guard:
+    // Reject bearish entries (BUY_PE or SELL_EQUITY) if 15m RSI < 35 (exhausted downside, high mean-reversion bounce risk)
+    // Reject bullish entries (BUY_CE or BUY_EQUITY) if 15m RSI > 65 (exhausted upside, high pullback risk)
+    const rsi = params.context?.rsiLevel
+    const setup = params.context?.aiSetup || ''
+    const isBearishSetup = params.context?.isShortEntry || setup === 'BUY_PE' || setup === 'SELL_EQUITY' || setup.includes('PE')
+    const isBullishSetup = !isBearishSetup && (setup === 'BUY_CE' || setup === 'BUY_EQUITY' || setup.includes('CE'))
+
+    if (rsi !== undefined && rsi !== null && rsi > 0) {
+      if (isBearishSetup && rsi < 35) {
+        console.log(`❌ [PAPER TRADE] Entry REJECTED for ${params.symbol}: 15m RSI (${rsi.toFixed(1)}) is oversold (< 35). Exhaustion breakdown risk.`)
+        return { valid: false, error: `RSI oversold exhaustion (< 35): ${rsi.toFixed(1)}` }
+      }
+      if (isBullishSetup && rsi > 65) {
+        console.log(`❌ [PAPER TRADE] Entry REJECTED for ${params.symbol}: 15m RSI (${rsi.toFixed(1)}) is overbought (> 65). Exhaustion breakout risk.`)
+        return { valid: false, error: `RSI overbought exhaustion (> 65): ${rsi.toFixed(1)}` }
+      }
+    }
+
+    // Burst Velocity Governor:
+    // Maximum 5 new entries in any rolling 30-minute window to avoid cascading overtrading during sudden market sell-offs
+    const now = Date.now()
+    this.recentEntryTimestamps = this.recentEntryTimestamps.filter((t) => now - t < this.rollingVelocityWindowMs)
+    if (this.recentEntryTimestamps.length >= this.maxEntriesPer30mWindow) {
+      console.log(
+        `⏳ [PAPER TRADE] Burst velocity throttle active: ${this.recentEntryTimestamps.length}/${this.maxEntriesPer30mWindow} positions opened in the last 30m. Skipping ${params.symbol} to prevent overtrading cascade.`
+      )
+      return { valid: false, error: `Burst velocity throttle: max ${this.maxEntriesPer30mWindow} entries per 30 minutes` }
     }
 
     return { valid: true }

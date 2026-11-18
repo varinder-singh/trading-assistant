@@ -352,8 +352,8 @@ describe('EquityAnalystAgent AI Hallucination Sanitization', () => {
       changePct: -1.8,
       volumeSurgeRatio: 4.2,
       obi: -0.55,
-      tf5m: { price: 1600, rsi: 31, vwap: 1612, trend: 'BEARISH' },
-      tf15m: { price: 1600, rsi: 34, vwap: 1615, trend: 'BEARISH', support: 1580, resistance: 1620 },
+      tf5m: { price: 1600, rsi: 41, vwap: 1612, trend: 'BEARISH' },
+      tf15m: { price: 1600, rsi: 44, vwap: 1615, trend: 'BEARISH', support: 1580, resistance: 1620 },
       relativeStrengthVsNifty: -1.2,
       isFnoListed: true,
     })
@@ -706,7 +706,7 @@ describe('Stock Option Enhancements: 4 Active Positions, Ratchets & Stagnation',
         aiTarget: 490.0,
         aiIndexTargets: [490.0, 482.5, 475.0],
         vixLevel: 16.5,
-        rsiLevel: 32.0,
+        rsiLevel: 42.0,
         trend15m: 'BEARISH',
       },
     })
@@ -865,5 +865,88 @@ describe('Stock Option Enhancements: 4 Active Positions, Ratchets & Stagnation',
     const filledPos = paperTrader.getAllPositions().find((p) => p.symbol === 'WAVE_STOCK')
     expect(filledPos).toBeDefined()
     expect(filledPos?.avgEntryPrice).toBe(997.0)
+  })
+
+  it('RSI Exhaustion Gate: rejects Bearish entry when 15m RSI < 35 and Bullish entry when 15m RSI > 65', async () => {
+    const paperTrader = new PaperTrader('test-rsi-user', null as any, mockRepo, null as any)
+    await paperTrader.initialize()
+
+    // 1. Bearish entry (BUY_PE) with oversold RSI (25.0) -> MUST BE REJECTED
+    const bearishOversold = await paperTrader.placeOrder({
+      symbol: 'HAL26NOV4650PE',
+      token: 888100,
+      side: 'BUY',
+      quantity: 150,
+      price: 50.0,
+      context: {
+        assetClass: 'STOCK_OPTION',
+        aiSetup: 'BUY_PE',
+        rsiLevel: 25.0,
+      },
+    })
+    expect(bearishOversold.success).toBe(false)
+    expect(bearishOversold.error).toContain('RSI oversold exhaustion')
+
+    // 2. Bullish entry (BUY_CE) with overbought RSI (72.0) -> MUST BE REJECTED
+    const bullishOverbought = await paperTrader.placeOrder({
+      symbol: 'TRENT26NOV3300CE',
+      token: 888101,
+      side: 'BUY',
+      quantity: 100,
+      price: 45.0,
+      context: {
+        assetClass: 'STOCK_OPTION',
+        aiSetup: 'BUY_CE',
+        rsiLevel: 72.0,
+      },
+    })
+    expect(bullishOverbought.success).toBe(false)
+    expect(bullishOverbought.error).toContain('RSI overbought exhaustion')
+
+    // 3. Healthy entry (rsi = 52.0) -> MUST SUCCEED
+    const healthyEntry = await paperTrader.placeOrder({
+      symbol: 'HEALTHY_STOCK',
+      token: 888102,
+      side: 'BUY',
+      quantity: 10,
+      price: 100.0,
+      context: {
+        assetClass: 'EQUITY',
+        aiSetup: 'BUY_EQUITY',
+        rsiLevel: 52.0,
+      },
+    })
+    expect(healthyEntry.success).toBe(true)
+  })
+
+  it('Burst Velocity Governor: limits new entries to max 5 in any 30-minute rolling window', async () => {
+    const paperTrader = new PaperTrader('test-velocity-user', null as any, mockRepo, null as any)
+    paperTrader.configurePool({ maxActivePositions: 20, maxEntriesPer30mWindow: 3 })
+    await paperTrader.initialize()
+
+    // Place 3 entries (fills the 30-minute burst quota)
+    for (let i = 1; i <= 3; i++) {
+      const res = await paperTrader.placeOrder({
+        symbol: `BURST_${i}`,
+        token: 999000 + i,
+        side: 'BUY',
+        quantity: 10,
+        price: 50.0,
+        context: { assetClass: 'EQUITY', aiSetup: 'BUY_EQUITY', rsiLevel: 50.0 },
+      })
+      expect(res.success).toBe(true)
+    }
+
+    // 4th entry in same 30m window MUST be throttled
+    const fourthEntry = await paperTrader.placeOrder({
+      symbol: 'BURST_4',
+      token: 999004,
+      side: 'BUY',
+      quantity: 10,
+      price: 50.0,
+      context: { assetClass: 'EQUITY', aiSetup: 'BUY_EQUITY', rsiLevel: 50.0 },
+    })
+    expect(fourthEntry.success).toBe(false)
+    expect(fourthEntry.error).toContain('Burst velocity throttle')
   })
 })

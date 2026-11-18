@@ -88,6 +88,10 @@ Your mandate is precision bi-directional momentum trading: capturing both Bullis
 4. **SEBI Capping Guard**:
    - Cash equities have daily circuit limits. Never project unrealistic intraday targets > 5% away from entry.
 
+5. **RSI Exhaustion Gate (Anti-Chasing Protection)**:
+   - For BEARISH setups (BUY_PE or SELL_EQUITY): If 15m RSI is < 35, the downward leg is already in late exhaustion and Put Option IV is inflated. Output 'NO_TRADE' / 'NONE'.
+   - For BULLISH setups (BUY_CE or BUY_EQUITY): If 15m RSI is > 65, the upward leg is already overextended and Call Option IV is peaked. Output 'NO_TRADE' / 'NONE'.
+
 ### OUTPUT FORMAT:
 You MUST respond ONLY with a single valid JSON object:
 {
@@ -156,6 +160,28 @@ CONSTRAINTS & PREFERENCES:
       const action = this.resolveAction(parsed.action, context.isFnoListed, holdingMode)
       const isBearish = parsed.decision === 'SELL' || action === 'BUY_PE' || action === 'SELL_EQUITY'
       const decision = this.normalizeDecision(parsed.decision, action, isBearish)
+
+      // RSI Exhaustion Guard: Reject late-stage breakdown or breakout chasing
+      if (isBearish && context.tf15m.rsi < 35) {
+        console.warn(
+          `[EquityAnalystAgent] Bearish setup rejected for ${context.symbol}: 15m RSI (${context.tf15m.rsi.toFixed(1)}) is oversold (< 35). Exhaustion breakdown risk.`
+        )
+        return this.buildFallbackNoTrade(
+          context,
+          `Bearish entry rejected: 15m RSI (${context.tf15m.rsi.toFixed(1)}) is oversold (< 35). High risk of mean-reversion bounce.`
+        )
+      }
+
+      if (!isBearish && action !== 'NONE' && decision === 'BUY' && context.tf15m.rsi > 65) {
+        console.warn(
+          `[EquityAnalystAgent] Bullish setup rejected for ${context.symbol}: 15m RSI (${context.tf15m.rsi.toFixed(1)}) is overbought (> 65). Exhaustion breakout risk.`
+        )
+        return this.buildFallbackNoTrade(
+          context,
+          `Bullish entry rejected: 15m RSI (${context.tf15m.rsi.toFixed(1)}) is overbought (> 65). High risk of pullback.`
+        )
+      }
+
       const entryPrice = this.resolveEquityEntryPrice(parsed.entryPrice, context.currentPrice)
       const stopLoss = isBearish
         ? this.resolveBearishStopLoss(parsed.stopLoss, entryPrice)
