@@ -127,4 +127,75 @@ describe('Dual-Cadence Trigger Engine (Fast-Path Anomaly + Structural Cadence)',
     reconnectedAnalyzer.setLastAnalysisPrice(analyzer.getLastAnalysisPrice())
     expect(reconnectedAnalyzer.getLastAnalysisPrice()).toBe(23289.3)
   })
+
+  it('triggers on Periodic Cadence when 15m candle closes and interval has elapsed', () => {
+    let breakoutEvent: any = null
+    analyzer.on('breakout', (event) => {
+      breakoutEvent = event
+    })
+
+    // Set last analysis price and set lastTriggerTime to 16 minutes ago
+    analyzer.setLastAnalysisPrice(23300)
+    analyzer.setLastTriggerTime(Date.now() - 16 * 60 * 1000)
+
+    const closingCandle = {
+      open: 23310,
+      high: 23320,
+      low: 23305,
+      close: 23315,
+      timestamp: Date.now(),
+    }
+
+    analyzer.checkPeriodicCadence(closingCandle, 15)
+
+    expect(breakoutEvent).not.toBeNull()
+    expect(breakoutEvent.reason).toContain('Periodic Cadence: 15m candle structural evaluation')
+    expect(breakoutEvent.tick.last_price).toBe(23315)
+  })
+
+  it('does not trigger Periodic Cadence if triggered recently within 15 minutes', () => {
+    let breakoutEvent: any = null
+    analyzer.on('breakout', (event) => {
+      breakoutEvent = event
+    })
+
+    // Last trigger was only 6 minutes ago
+    analyzer.setLastAnalysisPrice(23300)
+    analyzer.setLastTriggerTime(Date.now() - 6 * 60 * 1000)
+
+    const closingCandle = {
+      open: 23310,
+      high: 23320,
+      low: 23305,
+      close: 23315,
+      timestamp: Date.now(),
+    }
+
+    analyzer.checkPeriodicCadence(closingCandle, 15)
+
+    expect(breakoutEvent).toBeNull()
+  })
+
+  it('triggers Periodic Cadence if lastAnalysisPrice is 0 (unseeded baseline)', () => {
+    let breakoutEvent: any = null
+    analyzer.on('breakout', (event) => {
+      breakoutEvent = event
+    })
+
+    analyzer.setLastAnalysisPrice(0)
+    analyzer.setLastTriggerTime(Date.now() - 6 * 60 * 1000) // past cooldown (5m) but under 15m
+
+    const closingCandle = {
+      open: 23310,
+      high: 23320,
+      low: 23305,
+      close: 23315,
+      timestamp: Date.now(),
+    }
+
+    analyzer.checkPeriodicCadence(closingCandle, 15)
+
+    expect(breakoutEvent).not.toBeNull()
+    expect(breakoutEvent.reason).toContain('Periodic Cadence: 15m candle structural evaluation')
+  })
 })

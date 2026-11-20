@@ -1,14 +1,8 @@
 import { sessionManager } from '@core/execution/session-manager.js'
 import { userRepo } from '@core/db/repositories/container.js'
 import { decryptSecret } from '@core/utils/crypto.js'
-import { isMarketOpen } from '@core/utils/market-hours.js'
 
 export default defineNitroPlugin(async () => {
-  if (!isMarketOpen()) {
-    console.log('[SessionBoot] Market is closed. Skipping session auto-restore.')
-    return
-  }
-
   console.log('[SessionBoot] Auto-restoring active sessions...')
 
   try {

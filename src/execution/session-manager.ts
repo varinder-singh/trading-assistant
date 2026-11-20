@@ -6,6 +6,8 @@ import { LiveAnalyzer, type AnalysisLevels } from '../analysis/live.js'
 import { candleBuilder } from '../data/candle-builder.js'
 import { gtiTracker } from '../indicators/gti-tracker.js'
 import { runAnalysis } from '../analysis/trade.js'
+import { getMultiTimeframeCandles } from '../data/yahoo.js'
+import { analyzeMultiTimeframe } from '../analysis/technical.js'
 import { eventRepo, gtiRepo, userRepo, scannerAlertRepo, analysisSnapshotRepo } from '../db/repositories/container.js'
 import { isClosingBellFilterActive, isMarketOpen, isOpeningBellFilterActive } from '../utils/market-hours.js'
 import type { Connect as KiteConnect } from 'kiteconnect'
@@ -186,6 +188,13 @@ export class UserSession extends EventEmitter {
       if (levels && !this.analyzer.hasLevels()) {
         this.analyzer.setLevels(levels)
       }
+      if (this.analyzer.listenerCount('breakout') === 0) {
+        this.analyzer.on('breakout', this.onBreakout)
+        logger.info(`[UserSession] Attached breakout listener on idempotent reconnect for ${upperSymbol}`)
+      }
+      if (!this.analyzer.hasLevels()) {
+        await this.seedInitialLevels(upperSymbol)
+      }
       this.subscribeActiveTokens(token)
       this.emit('watching', { symbol: upperSymbol, token })
       this.emit('portfolio_sync', this.paperTrader.getAllPositions())
@@ -206,14 +215,19 @@ export class UserSession extends EventEmitter {
     this.watchedToken = token
     this.watchMode = mode || 'intraday'
 
+    // Always attach breakout listener regardless of market hours
+    this.analyzer.on('breakout', this.onBreakout)
+
+    if (levels) {
+      this.analyzer.setLevels(levels)
+    } else {
+      await this.seedInitialLevels(upperSymbol)
+    }
+
     if (!isMarketOpen()) {
-      logger.info(`[UserSession] Market is closed. Watch registered for ${upperSymbol} in read-only mode.`)
+      logger.info(`[UserSession] Market is closed. Watch registered for ${upperSymbol} (ready for open).`)
       this.emit('market_closed', { message: 'Market is closed. Operating in read-only mode.' })
     } else {
-      if (levels) {
-        this.analyzer.setLevels(levels)
-      }
-      this.analyzer.on('breakout', this.onBreakout)
       logger.info(`[UserSession] 🔭 Watching ${upperSymbol} (token: ${token}, mode: ${this.watchMode})`)
     }
 
@@ -228,6 +242,38 @@ export class UserSession extends EventEmitter {
 
     this.emit('watching', { symbol: upperSymbol, token })
     this.emit('portfolio_sync', this.paperTrader.getAllPositions())
+  }
+
+  private async seedInitialLevels(symbol: string): Promise<void> {
+    try {
+      logger.info(`[UserSession] 🎯 Seeding initial levels for ${symbol}...`)
+      const candles = await getMultiTimeframeCandles(symbol, this.kc)
+      if (candles && candles.candles15m && candles.candles15m.length > 0) {
+        const c15m = candles.candles15m
+        const c1h = candles.candles1h && candles.candles1h.length > 0 ? candles.candles1h : c15m
+        const c30m = candles.candles30m && candles.candles30m.length > 0 ? candles.candles30m : c15m
+        const c5m = candles.candles5m && candles.candles5m.length > 0 ? candles.candles5m : c15m
+
+        const { tf15m } = analyzeMultiTimeframe(c1h, c30m, c15m, c5m)
+        if (tf15m) {
+          if (!this.analyzer.hasLevels() && tf15m.resistance && tf15m.support) {
+            this.analyzer.setLevels({
+              resistance: tf15m.resistance,
+              support: tf15m.support,
+              vwap: tf15m.vwap || 0,
+            })
+          }
+          if (this.analyzer.getLastAnalysisPrice() === 0 && tf15m.price) {
+            this.analyzer.setLastAnalysisPrice(tf15m.price)
+          }
+          logger.info(
+            `[UserSession] 🎯 Initial levels seeded for ${symbol}: Support=${tf15m.support}, Resistance=${tf15m.resistance}, VWAP=${tf15m.vwap}, BasePrice=${tf15m.price}`
+          )
+        }
+      }
+    } catch (err) {
+      logger.warn(`[UserSession] Failed to seed initial levels for ${symbol}:`, err)
+    }
   }
 
   private subscribeActiveTokens(primaryToken: number): void {
@@ -255,7 +301,7 @@ export class UserSession extends EventEmitter {
       const allowsIndex = (profile?.allowedUniverses ?? 'INDEX_OPTIONS,EQUITY,STOCK_OPTIONS').includes('INDEX_OPTIONS')
       const targetSymbol = profile?.watchedSymbol || (allowsIndex ? 'NIFTY' : null)
 
-      if (targetSymbol && isMarketOpen()) {
+      if (targetSymbol) {
         logger.info(`[UserSession] Auto-watching ${targetSymbol} on initialization...`)
         await this.watch(targetSymbol, undefined, (profile?.watchedMode as 'intraday' | 'swing') || 'intraday')
       }
@@ -645,6 +691,9 @@ export class UserSession extends EventEmitter {
         if (timeframe === 5) {
           const recentCandles = candleBuilder.getCandles(token, timeframe).slice(-6)
           this.analyzer.checkCandleClose(candle, timeframe, recentCandles)
+          this.analyzer.checkPeriodicCadence(candle, timeframe)
+        } else if (timeframe === 15) {
+          this.analyzer.checkPeriodicCadence(candle, timeframe)
         }
       }
 

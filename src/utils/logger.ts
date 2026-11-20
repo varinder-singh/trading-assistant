@@ -47,7 +47,11 @@ const basePino = pino({
 /**
  * Normalizes variadic logger inputs (supports strings, error objects, metadata dicts)
  */
-function normalizeLogArgs(message: string, ...args: any[]): { msg: string; meta?: Record<string, any>; err?: Error } {
+function normalizeLogArgs(message: string, ...args: any[]): {
+  msg: string
+  meta?: Record<string, any> | undefined
+  err?: Error | undefined
+} {
   let msg = message
   let meta: Record<string, any> | undefined
   let err: Error | undefined

@@ -30,6 +30,7 @@ export class LiveAnalyzer extends EventEmitter {
   private windowSizeMs = 60 * 1000 // 1 minute window for volatility
   private lastTriggerTime = 0
   private triggerCooldownMs = 5 * 60 * 1000 // 5 minutes cooldown between AI calls
+  private periodicCadenceMs = 15 * 60 * 1000 // 15 minutes structural cadence
   private lastGTIScore?: GTIScore
   private gtiSurgeThreshold = 1.5
   private priceAtLastGTICheck = 0
@@ -219,6 +220,43 @@ export class LiveAnalyzer extends EventEmitter {
         { last_price: candle.close, instrument_token: 0, received_at: now }
       )
     }
+  }
+
+  public checkPeriodicCadence(candle: CandleData, timeframe: number): void {
+    if (!isMarketOpen()) return
+
+    const now = Date.now()
+    if (now - this.lastTriggerTime < this.triggerCooldownMs) return
+
+    const timeSinceLast = now - this.lastTriggerTime
+    if (timeSinceLast >= this.periodicCadenceMs || this.lastAnalysisPrice === 0) {
+      this.trigger(`Periodic Cadence: ${timeframe}m candle structural evaluation`, {
+        last_price: candle.close,
+        instrument_token: 0,
+        received_at: now,
+      })
+    }
+  }
+
+  public triggerPeriodicReview(price: number, reason: string = 'Periodic Cadence: structural review'): void {
+    if (!isMarketOpen()) return
+
+    const now = Date.now()
+    if (now - this.lastTriggerTime < this.triggerCooldownMs) return
+
+    this.trigger(reason, {
+      last_price: price,
+      instrument_token: 0,
+      received_at: now,
+    })
+  }
+
+  public setLastTriggerTime(timestamp: number): void {
+    this.lastTriggerTime = timestamp
+  }
+
+  public getLastTriggerTime(): number {
+    return this.lastTriggerTime
   }
 
   private trigger(reason: string, tick: LiveTick): void {
