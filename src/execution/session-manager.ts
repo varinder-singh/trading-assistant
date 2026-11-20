@@ -17,6 +17,9 @@ import { equityAnalysisService } from '../analysis/equity-analysis.js'
 import { getFnoLotSize } from '../data/instrument-classifier.js'
 import { universeBootstrapper } from '../data/universe-bootstrapper.js'
 import { analysisQueue } from './analysis-queue.js'
+import { createLogger } from '../utils/logger.js'
+
+const logger = createLogger('SessionManager')
 
 /**
  * Fix 1: Calculate pre-breakout baseline option price adjusted for directional index spike.
@@ -159,7 +162,7 @@ export class UserSession extends EventEmitter {
     const token = await getInstrumentToken(this.kc, upperSymbol)
 
     if (!token) {
-      console.error(`[UserSession] Token not found for ${upperSymbol}`)
+      logger.error(`[UserSession] Token not found for ${upperSymbol}`)
       this.emit('watch_error', { message: `Token not found for ${upperSymbol}` })
       return
     }
@@ -204,14 +207,14 @@ export class UserSession extends EventEmitter {
     this.watchMode = mode || 'intraday'
 
     if (!isMarketOpen()) {
-      console.log(`[UserSession] Market is closed. Watch registered for ${upperSymbol} in read-only mode.`)
+      logger.info(`[UserSession] Market is closed. Watch registered for ${upperSymbol} in read-only mode.`)
       this.emit('market_closed', { message: 'Market is closed. Operating in read-only mode.' })
     } else {
       if (levels) {
         this.analyzer.setLevels(levels)
       }
       this.analyzer.on('breakout', this.onBreakout)
-      console.log(`[UserSession] 🔭 Watching ${upperSymbol} (token: ${token}, mode: ${this.watchMode})`)
+      logger.info(`[UserSession] 🔭 Watching ${upperSymbol} (token: ${token}, mode: ${this.watchMode})`)
     }
 
     this.subscribeActiveTokens(token)
@@ -220,7 +223,7 @@ export class UserSession extends EventEmitter {
     try {
       await userRepo.updateWatchConfig(this.userId, upperSymbol, this.watchMode)
     } catch (err) {
-      console.error(`[UserSession] Failed to persist watch config for ${upperSymbol}:`, err)
+      logger.error(`[UserSession] Failed to persist watch config for ${upperSymbol}:`, err)
     }
 
     this.emit('watching', { symbol: upperSymbol, token })
@@ -253,33 +256,33 @@ export class UserSession extends EventEmitter {
       const targetSymbol = profile?.watchedSymbol || (allowsIndex ? 'NIFTY' : null)
 
       if (targetSymbol && isMarketOpen()) {
-        console.log(`[UserSession] Auto-watching ${targetSymbol} on initialization...`)
+        logger.info(`[UserSession] Auto-watching ${targetSymbol} on initialization...`)
         await this.watch(targetSymbol, undefined, (profile?.watchedMode as 'intraday' | 'swing') || 'intraday')
       }
     } catch (err) {
-      console.error(`[UserSession] Failed to auto-watch on initialization:`, err)
+      logger.error(`[UserSession] Failed to auto-watch on initialization:`, err)
     }
   }
 
   // ── Breakout Handler (session-level, autonomous) ────────────────────────
   private onBreakout = async (context: any) => {
     if (this.tokenExpired) {
-      console.log(`[UserSession] Token is expired. Aborting breakout analysis for ${this.watchedSymbol}.`)
+      logger.info(`[UserSession] Token is expired. Aborting breakout analysis for ${this.watchedSymbol}.`)
       return
     }
 
     if (isOpeningBellFilterActive()) {
-      console.log(`[UserSession] Opening bell filter active (09:15–09:30 IST). Skipping breakout for ${this.watchedSymbol}.`)
+      logger.info(`[UserSession] Opening bell filter active (09:15–09:30 IST). Skipping breakout for ${this.watchedSymbol}.`)
       return
     }
 
     if (isClosingBellFilterActive()) {
-      console.log(`[UserSession] Closing bell filter active (15:15–15:30 IST). Skipping breakout for ${this.watchedSymbol}.`)
+      logger.info(`[UserSession] Closing bell filter active (15:15–15:30 IST). Skipping breakout for ${this.watchedSymbol}.`)
       return
     }
 
     if (this.isAnalyzing) {
-      console.log(
+      logger.info(
         `[UserSession] AI is already analyzing for ${this.watchedSymbol}. Dropping concurrent breakout event.`
       )
       return
@@ -287,7 +290,7 @@ export class UserSession extends EventEmitter {
     this.isAnalyzing = true
 
     try {
-      console.log(`[UserSession] 🔥 Breakout detected for ${this.watchedSymbol}: ${context.reason}`)
+      logger.info(`[UserSession] 🔥 Breakout detected for ${this.watchedSymbol}: ${context.reason}`)
       this.emit('breakout', context)
 
       await eventRepo.saveEvent({
@@ -337,7 +340,7 @@ export class UserSession extends EventEmitter {
           tradingDate,
         })
       } catch (snapErr) {
-        console.warn(`[UserSession] Failed to persist snapshot for ${this.watchedSymbol}:`, snapErr)
+        logger.warn(`[UserSession] Failed to persist snapshot for ${this.watchedSymbol}:`, snapErr)
       }
 
       // Dynamically update analyzer levels and last analysis price
@@ -385,7 +388,7 @@ export class UserSession extends EventEmitter {
     const option = await getOptionToken(this.kc, this.watchedSymbol, decision.strike || 0, type)
     if (!option) return
 
-    console.log(`[UserSession] Executing Paper Trade for ${option.symbol} (${agentType} Agent)...`)
+    logger.info(`[UserSession] Executing Paper Trade for ${option.symbol} (${agentType} Agent)...`)
     this.ticker.subscribe([option.token])
     this.ticker.setMode(this.ticker.modeFull, [option.token])
 
@@ -424,7 +427,7 @@ export class UserSession extends EventEmitter {
     })
 
     if (entryPrice >= calculatedTarget) {
-      console.warn(
+      logger.warn(
         `⚠️ [UserSession] Entry BLOCKED: CMP ₹${entryPrice.toFixed(2)} has already reached or exceeded the target ₹${calculatedTarget.toFixed(2)}.`
       )
       return
@@ -506,7 +509,7 @@ export class UserSession extends EventEmitter {
       tradeContext,
     } = params
     const slippagePct = ((entryPrice - baseSignalPrice) / baseSignalPrice) * 100
-    console.log(
+    logger.info(
       `⚡ [UserSession] Spike Guard triggered for ${option.symbol}: CMP ₹${entryPrice.toFixed(2)} vs Base ₹${baseSignalPrice.toFixed(2)} (${slippagePct.toFixed(1)}% slippage). Queueing Pullback Trigger Order.`
     )
 
@@ -540,9 +543,9 @@ export class UserSession extends EventEmitter {
   }
 
   private handleBreakoutError(err: any): void {
-    console.error(`[UserSession] Error during breakout analysis:`, err)
+    logger.error(`[UserSession] Error during breakout analysis:`, err)
     if (err?.message?.includes('Token is invalid') || err?.status === 403 || err?.status === 401) {
-      console.error(`[UserSession] 🚨 Zerodha token expired or invalid for user ${this.userId}.`)
+      logger.error(`[UserSession] 🚨 Zerodha token expired or invalid for user ${this.userId}.`)
       this.tokenExpired = true
       this.emit('token_expired', { message: 'Zerodha token expired. Please re-login.' })
     }
@@ -581,7 +584,7 @@ export class UserSession extends EventEmitter {
     })
 
     this.ticker.on('connect', () => {
-      console.log(`[UserSession] Ticker connected for user ${this.userId}`)
+      logger.info(`[UserSession] Ticker connected for user ${this.userId}`)
 
       // Re-subscribe position tokens and pending order tokens
       const positionTokens = this.paperTrader.getAllPositions().map((p) => p.token)
@@ -621,12 +624,12 @@ export class UserSession extends EventEmitter {
     globalKiteScanner.on('candidate_surfaced', this.onCandidateSurfaced)
 
     this.ticker.on('error', (err: any) => {
-      console.error(`[UserSession] Ticker error for user ${this.userId}:`, err)
+      logger.error(`[UserSession] Ticker error for user ${this.userId}:`, err)
       this.emit('ticker_error', err)
     })
 
     this.ticker.on('close', (reason: any) => {
-      console.warn(`[UserSession] Ticker closed for user ${this.userId}:`, reason)
+      logger.warn(`[UserSession] Ticker closed for user ${this.userId}:`, reason)
       this.emit('ticker_close', reason)
     })
 
@@ -656,7 +659,7 @@ export class UserSession extends EventEmitter {
           gtiScore,
         })
       } catch (err) {
-        console.error(`[UserSession] Failed to persist GTI score for ${this.watchedSymbol}:`, err)
+        logger.error(`[UserSession] Failed to persist GTI score for ${this.watchedSymbol}:`, err)
       }
     }
     candleBuilder.on('candle_close', this.candleCloseHandler)
@@ -669,7 +672,7 @@ export class UserSession extends EventEmitter {
         ;(this.ticker as any).removeAllListeners()
       }
     } catch (err) {
-      console.warn(`[UserSession] Error during ticker disconnect for ${this.userId}:`, err)
+      logger.warn(`[UserSession] Error during ticker disconnect for ${this.userId}:`, err)
     }
 
     if (this.candleCloseHandler) {
@@ -776,12 +779,12 @@ export class UserSession extends EventEmitter {
             await this.executeSurfacedOptionOrder(result.optionDetails, result.decision, cand, telemetry)
           }
         } catch (evalErr: any) {
-          console.error(`[UserSession] Failed analysis for candidate ${cand.symbol}:`, evalErr.message || evalErr)
+          logger.error(`[UserSession] Failed analysis for candidate ${cand.symbol}:`, evalErr.message || evalErr)
           await scannerAlertRepo.updateStatus(cand.id, 'EXPIRED', { error: evalErr.message })
         }
       })
     } catch (err: any) {
-      console.error(`[UserSession] Error handling candidate ${candidate.symbol}:`, err.message || err)
+      logger.error(`[UserSession] Error handling candidate ${candidate.symbol}:`, err.message || err)
     }
   }
 
@@ -797,12 +800,12 @@ export class UserSession extends EventEmitter {
   ): Promise<void> {
     const isShort = decision.action === 'SELL_EQUITY' || decision.decision === 'SELL'
     if (isShort && decision.holdingMode === 'CNC') {
-      console.warn(`[UserSession] Skipping short equity trade for ${candidate.symbol}: SEBI prohibits CNC overnight shorting.`)
+      logger.warn(`[UserSession] Skipping short equity trade for ${candidate.symbol}: SEBI prohibits CNC overnight shorting.`)
       return
     }
 
     const side = isShort ? 'SELL' : 'BUY'
-    console.log(`[UserSession] Executing Equity ${side} Trade for ${candidate.symbol} (${decision.holdingMode})...`)
+    logger.info(`[UserSession] Executing Equity ${side} Trade for ${candidate.symbol} (${decision.holdingMode})...`)
     const livePrice = candidate.price && candidate.price > 0 ? candidate.price : decision.entryPrice
     const entryPrice = Math.abs(decision.entryPrice - livePrice) / livePrice > 0.02 ? livePrice : decision.entryPrice
 
@@ -902,13 +905,13 @@ export class UserSession extends EventEmitter {
     candidate?: any,
     telemetry?: { context?: any; vix?: any; usePullbackQueue?: boolean }
   ): Promise<void> {
-    console.log(`[UserSession] Validating & Executing Stock Option Trade for ${option.symbol}...`)
+    logger.info(`[UserSession] Validating & Executing Stock Option Trade for ${option.symbol}...`)
     const quoteMap = await this.kc.getQuote([`NFO:${option.symbol}`])
     const quote = quoteMap[`NFO:${option.symbol}`]
     const entryPrice = this.resolveSurfacedOptionPrice(quote)
 
     if (entryPrice <= 0 || !this.isOptionLiquiditySufficient(quote)) {
-      console.warn(`[UserSession] Option ${option.symbol} skipped: stale/untraded quote or wide spread.`)
+      logger.warn(`[UserSession] Option ${option.symbol} skipped: stale/untraded quote or wide spread.`)
       return
     }
 
@@ -918,7 +921,7 @@ export class UserSession extends EventEmitter {
     const estimatedRisk = lotSize * entryPrice * optionRiskPct
 
     if (estimatedRisk > maxOptionRisk && candidate) {
-      console.log(
+      logger.info(
         `⚖️ [UserSession] Option ${option.symbol} 1-lot risk (₹${estimatedRisk.toFixed(2)}) exceeds max risk cap (₹${maxOptionRisk}). Routing to Cash Equity.`
       )
       await this.executeSurfacedEquityOrder(candidate, decision, telemetry)
@@ -1003,7 +1006,7 @@ export class UserSession extends EventEmitter {
   updateToken(accessToken: string, apiKey?: string) {
     if (this.accessToken === accessToken && this.apiKey === apiKey) return
 
-    console.log(`[UserSession] Token refreshed for user ${this.userId}. Re-initializing client and ticker.`)
+    logger.info(`[UserSession] Token refreshed for user ${this.userId}. Re-initializing client and ticker.`)
     this.accessToken = accessToken
     this.apiKey = apiKey
     this.tokenExpired = false

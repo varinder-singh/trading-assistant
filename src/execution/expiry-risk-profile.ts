@@ -122,14 +122,15 @@ export const PEAK_PROFIT_RATCHET_TIERS: readonly PeakRatchetTier[] = [
 
 /**
  * Equity Profit Ratchet Tiers:
- * Calibrated for unleveraged cash equities (SEBI 20% max daily price band, typical intraday range 0.8% - 3.5%).
- * Intermediate +1.3% tier locks 45% of peak profit so stocks stalling between T1 (+0.9%) and T2 (+1.8%) protect gains automatically.
+ * Calibrated specifically for unleveraged cash equities (SEBI 20% max daily price band, typical intraday impulse 0.5% - 2.5%).
+ * Starts earlier (+0.5% / +0.8%) to lock in green profits on typical 1R moves (~₹1000-₹1500 on ₹1500 risk budget)
+ * and prevent round-trips back to breakeven or loss.
  */
 export const EQUITY_PROFIT_RATCHET_TIERS: readonly PeakRatchetTier[] = [
-  { minPeakGainPct: 0.028, lockPeakGainRatio: 0.70 }, // +2.8%+ peak gain -> lock 70% of peak gain
-  { minPeakGainPct: 0.018, lockPeakGainRatio: 0.55 }, // +1.8%+ peak gain -> lock 55% of peak gain
-  { minPeakGainPct: 0.013, lockPeakGainRatio: 0.45 }, // +1.3%+ peak gain -> lock 45% of peak gain
-  { minPeakGainPct: 0.010, lockPeakGainRatio: 0.15 }, // +1.0%+ peak gain -> lock breakeven (+15% of gain to cover costs)
+  { minPeakGainPct: 0.020, lockPeakGainRatio: 0.70 }, // +2.0%+ peak gain -> lock 70% of peak gain
+  { minPeakGainPct: 0.012, lockPeakGainRatio: 0.55 }, // +1.2%+ peak gain -> lock 55% of peak gain
+  { minPeakGainPct: 0.008, lockPeakGainRatio: 0.40 }, // +0.8%+ peak gain -> lock 40% of peak gain
+  { minPeakGainPct: 0.005, lockPeakGainRatio: 0.20 }, // +0.5%+ peak gain -> lock 20% of peak gain (locks early green buffer)
 ]
 
 /**
@@ -160,7 +161,7 @@ export function getRatchetedStopLoss(
   const matchedTier = tiers.find((t) => peakGainPct >= t.minPeakGainPct)
   if (!matchedTier) return undefined
 
-  const targetSl = entryPrice + matchedTier.lockPeakGainRatio * peakGainPoints
+  const targetSl = Number((entryPrice + matchedTier.lockPeakGainRatio * peakGainPoints).toFixed(2))
   return { targetSl, peakGainPct, tier: matchedTier }
 }
 

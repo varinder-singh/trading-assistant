@@ -34,7 +34,8 @@
     "kiteconnect": "^5.3.0",
     "kysely": "^0.29.2",
     "openai": "^6.35.0",
-    "pg": "^8.21.0"
+    "pg": "^8.21.0",
+    "pino": "^10.4.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

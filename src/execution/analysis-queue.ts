@@ -1,5 +1,8 @@
 import { EventEmitter } from 'node:events'
 import type { CandidateAlert } from '../data/kite-scanner.js'
+import { createLogger } from '../utils/logger.js'
+
+const logger = createLogger('AnalysisQueue')
 
 export interface QueuedCandidate {
   candidate: CandidateAlert
@@ -102,7 +105,7 @@ export class AnalysisQueue extends EventEmitter {
       await item.processor(item.candidate, item.userId)
       this.emit('processing_complete', item.candidate)
     } catch (err: any) {
-      console.error(`[AnalysisQueue] ❌ Error processing candidate ${item.candidate.symbol}:`, err.message || err)
+      logger.error(`[AnalysisQueue] ❌ Error processing candidate ${item.candidate.symbol}:`, err.message || err)
       this.emit('processing_error', { candidate: item.candidate, error: err })
     } finally {
       this.activeSymbol = null

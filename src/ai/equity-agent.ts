@@ -1,5 +1,8 @@
 import type { LLMProvider, LLMMessage } from './types.js'
 import { GeminiProvider } from './providers/gemini.js'
+import { createLogger } from '../utils/logger.js'
+
+const logger = createLogger('EquityAnalystAgent')
 
 export interface EquityAnalysisContext {
   symbol: string
@@ -122,7 +125,7 @@ export class EquityAnalystAgent {
       const raw = await this.provider.chat(messages, { temperature: 0.1 })
       return this.parseJson(raw, context)
     } catch (err: any) {
-      console.error(`[EquityAnalystAgent] Error evaluating ${context.symbol}:`, err.message || err)
+      logger.error(`Error evaluating ${context.symbol}:`, err)
       return this.buildFallbackNoTrade(context, `AI analysis failed: ${err.message}`)
     }
   }
@@ -163,8 +166,8 @@ CONSTRAINTS & PREFERENCES:
 
       // RSI Exhaustion Guard: Reject late-stage breakdown or breakout chasing
       if (isBearish && context.tf15m.rsi < 35) {
-        console.warn(
-          `[EquityAnalystAgent] Bearish setup rejected for ${context.symbol}: 15m RSI (${context.tf15m.rsi.toFixed(1)}) is oversold (< 35). Exhaustion breakdown risk.`
+        logger.warn(
+          `Bearish setup rejected for ${context.symbol}: 15m RSI (${context.tf15m.rsi.toFixed(1)}) is oversold (< 35). Exhaustion breakdown risk.`
         )
         return this.buildFallbackNoTrade(
           context,
@@ -173,8 +176,8 @@ CONSTRAINTS & PREFERENCES:
       }
 
       if (!isBearish && action !== 'NONE' && decision === 'BUY' && context.tf15m.rsi > 65) {
-        console.warn(
-          `[EquityAnalystAgent] Bullish setup rejected for ${context.symbol}: 15m RSI (${context.tf15m.rsi.toFixed(1)}) is overbought (> 65). Exhaustion breakout risk.`
+        logger.warn(
+          `Bullish setup rejected for ${context.symbol}: 15m RSI (${context.tf15m.rsi.toFixed(1)}) is overbought (> 65). Exhaustion breakout risk.`
         )
         return this.buildFallbackNoTrade(
           context,
@@ -258,7 +261,7 @@ CONSTRAINTS & PREFERENCES:
     if (!price || price <= 0) return currentPrice
     const deviation = Math.abs(price - currentPrice) / currentPrice
     if (deviation > 0.025) {
-      console.warn(`[EquityAnalystAgent] AI entry ₹${price} deviates >2.5% from CMP ₹${currentPrice}. Forcing CMP.`)
+      logger.warn(`AI entry ₹${price} deviates >2.5% from CMP ₹${currentPrice}. Forcing CMP.`)
       return currentPrice
     }
     return price

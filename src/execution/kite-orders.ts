@@ -1,5 +1,8 @@
 import type { Connect as KiteConnect } from 'kiteconnect'
 import type { TradeResponse, OrderSide, OrderType } from './types.js'
+import { createLogger } from '../utils/logger.js'
+
+const logger = createLogger('KiteOrderService')
 
 type KiteOrderParams = Parameters<KiteConnect['placeOrder']>[1]
 
@@ -19,7 +22,7 @@ export class KiteOrderService {
   }): Promise<TradeResponse> {
     const lockKey = `${params.side}_${params.symbol}`
     if (this.inFlightOrders.has(lockKey)) {
-      console.log(`❌ [KITE TRADE] Order already in-flight for ${lockKey}. Rejecting duplicate.`)
+      logger.info(`❌ [KITE TRADE] Order already in-flight for ${lockKey}. Rejecting duplicate.`)
       return { success: false, error: 'Order already in progress' }
     }
     this.inFlightOrders.add(lockKey)
@@ -39,7 +42,7 @@ export class KiteOrderService {
         orderId: response.order_id,
       }
     } catch (error: any) {
-      console.error('❌ Kite Order Placement Failed:', error.message || error)
+      logger.error('❌ Kite Order Placement Failed:', error.message || error)
       return {
         success: false,
         error: error.message || 'Unknown error during order placement',
@@ -84,7 +87,7 @@ export class KiteOrderService {
       })
       return { success: true, triggerId: response?.trigger_id }
     } catch (err: any) {
-      console.error(`❌ [GTT Placement Failed] for ${params.symbol}:`, err.message || err)
+      logger.error(`❌ [GTT Placement Failed] for ${params.symbol}:`, err.message || err)
       return { success: false, error: err.message || 'GTT placement failed' }
     }
   }

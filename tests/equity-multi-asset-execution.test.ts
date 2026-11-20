@@ -63,45 +63,45 @@ describe('Equity Tiered Targets & SEBI Capping', () => {
 })
 
 describe('Equity Profit Ratchet Tiers', () => {
-  it('locks breakeven on +1.0% gain', () => {
+  it('locks 20% of peak profit on +0.5%+ gain (early green buffer against slippage/costs)', () => {
     const entry = 1000
-    const peak = 1012 // +1.2% peak gain
+    const peak = 1006 // +0.6% peak gain
     const ratchet = getRatchetedStopLoss(entry, peak, EQUITY_PROFIT_RATCHET_TIERS)
 
     expect(ratchet).toBeDefined()
-    expect(ratchet?.peakGainPct).toBeCloseTo(0.012, 3)
-    // Tier 1 (+1.0%) locks 15% of gain above entry (cost buffer): 1000 + 0.15 * 12 = 1001.80
-    expect(ratchet?.targetSl).toBeCloseTo(1001.8, 1)
+    expect(ratchet?.peakGainPct).toBeCloseTo(0.006, 3)
+    // Tier 1 (+0.5%) locks 20% of gain above entry: 1000 + 0.20 * 6 = 1001.20
+    expect(ratchet?.targetSl).toBe(1001.2)
   })
 
-  it('locks 45% of peak profit on +1.35% intermediate gain (e.g. TRENT stalling between T1 and T2)', () => {
+  it('locks 40% of peak profit on +0.8%+ gain (e.g. SUPREMEIND / NAUKRI style impulse moves)', () => {
+    const entry = 1000
+    const peak = 1009 // +0.9% peak gain
+    const ratchet = getRatchetedStopLoss(entry, peak, EQUITY_PROFIT_RATCHET_TIERS)
+
+    expect(ratchet).toBeDefined()
+    // Tier 2 (+0.8%) locks 40% of gain above entry: 1000 + 0.40 * 9 = 1003.60
+    expect(ratchet?.targetSl).toBe(1003.6)
+  })
+
+  it('locks 55% of peak profit on +1.2%+ gain (between T1 and T2)', () => {
     const entry = 1000
     const peak = 1014 // +1.4% peak gain
     const ratchet = getRatchetedStopLoss(entry, peak, EQUITY_PROFIT_RATCHET_TIERS)
 
     expect(ratchet).toBeDefined()
-    // Intermediate Tier (+1.3%) locks 45% of gain above entry: 1000 + 0.45 * 14 = 1006.30
-    expect(ratchet?.targetSl).toBeCloseTo(1006.3, 1)
+    // Tier 3 (+1.2%) locks 55% of gain above entry: 1000 + 0.55 * 14 = 1007.70
+    expect(ratchet?.targetSl).toBe(1007.7)
   })
 
-  it('locks 55% of peak profit on +2.0% gain', () => {
+  it('locks 70% of peak profit on +2.0%+ strong momentum extension', () => {
     const entry = 1000
-    const peak = 1020 // +2.0% peak gain
+    const peak = 1025 // +2.5% peak gain
     const ratchet = getRatchetedStopLoss(entry, peak, EQUITY_PROFIT_RATCHET_TIERS)
 
     expect(ratchet).toBeDefined()
-    // Tier 2 (+1.8%) locks 55% of gain above entry: 1000 + 0.55 * 20 = 1011
-    expect(ratchet?.targetSl).toBe(1011)
-  })
-
-  it('locks 70% of peak profit on +3.0% gain', () => {
-    const entry = 1000
-    const peak = 1030 // +3.0% peak gain
-    const ratchet = getRatchetedStopLoss(entry, peak, EQUITY_PROFIT_RATCHET_TIERS)
-
-    expect(ratchet).toBeDefined()
-    // Tier 3 (+2.8%) locks 70% of gain above entry: 1000 + 0.7 * 30 = 1021
-    expect(ratchet?.targetSl).toBe(1021)
+    // Tier 4 (+2.0%) locks 70% of gain above entry: 1000 + 0.70 * 25 = 1017.50
+    expect(ratchet?.targetSl).toBe(1017.5)
   })
 })
 
@@ -571,8 +571,9 @@ describe('Stock Option Enhancements: 4 Active Positions, Ratchets & Stagnation',
     )
   })
 
-  it('moves equity stop loss to breakeven when price reaches 50% of T1 distance (Half-Target Ratchet)', async () => {
+  it('moves equity stop loss to breakeven + buffer when price reaches 50% of T1 distance (Half-Target Ratchet)', async () => {
     // Entry: 100, SL: 98, T1: 101.4. Half-target distance = (101.4-100)*0.5 = 0.7. Threshold = 100.7.
+    // Green buffer = 0.7 * 0.20 = 0.14 -> Target SL = 100.14
     const pos: any = {
       symbol: 'RATCHET_TEST',
       token: 999002,
@@ -594,10 +595,10 @@ describe('Stock Option Enhancements: 4 Active Positions, Ratchets & Stagnation',
     await (paperTrader as any).processPriceTickExits('RATCHET_TEST', pos, 100.5)
     expect(pos.aiStopLoss).toBe(98.0)
 
-    // Tick reaches 100.8 (touches 50% of T1, below 1% full ratchet tier): SL should ratchet to entry price (100.0)
-    pos.peakPrice = 100.8
-    await (paperTrader as any).processPriceTickExits('RATCHET_TEST', pos, 100.8)
-    expect(pos.aiStopLoss).toBe(100.0)
+    // Tick reaches 100.7 (touches 50% of T1): SL should ratchet to entry price + green buffer (100.14)
+    pos.peakPrice = 100.7
+    await (paperTrader as any).processPriceTickExits('RATCHET_TEST', pos, 100.7)
+    expect(pos.aiStopLoss).toBe(100.14)
   })
 
   it('enforces 90m Intraday Momentum Timeout on MIS equities but keeps CNC Swing positions alive', async () => {
