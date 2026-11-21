@@ -433,6 +433,33 @@ export interface PostMortemDistilledLesson {
 }
 
 // ============================================================================
+// B13: Deliberative Multi-Agent Council & Dialectic Debate Schemas
+// ============================================================================
+export interface DeliberationSpeech {
+  readonly agentName: string
+  readonly role: 'PROPOSAL' | 'COUNTER_ARGUMENT' | 'REBUTTAL' | 'SYNTHESIS'
+  readonly thesis: string
+  readonly citedEvidence: readonly string[]
+  readonly recommendedAction: AIOptionAction | 'NO_TRADE'
+}
+
+export interface DeliberationCouncilSynthesis {
+  readonly consensusReached: boolean
+  readonly consensusBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | 'NO_TRADE'
+  readonly consensusOptionAction: AIOptionAction
+  readonly confidence: number
+  readonly resolutionRationale: string
+  readonly executionDirectives: {
+    readonly requirePullbackLimit?: boolean | undefined
+    readonly suggestedLimitPrice?: number | undefined
+    readonly minDeltaRequired?: number | undefined
+    readonly tightenedIndexStopLoss?: number | undefined
+    readonly mandatoryConditions: readonly string[]
+  }
+  readonly speeches: readonly DeliberationSpeech[]
+}
+
+// ============================================================================
 // Master TradingBlackboard (Shared State Across Graph Nodes)
 // ============================================================================
 export interface TradingBlackboard {
@@ -458,6 +485,7 @@ export interface TradingBlackboard {
   macroEnvelope?: AgentMessage<MacroSpecialistReport> | undefined
   conflictMatrix?: ConflictMatrix | undefined
   criticEnvelope?: AgentMessage<AdversarialCriticReport> | undefined
+  deliberationCouncil?: DeliberationCouncilSynthesis | undefined
   finalDecision?: AISuccessResponse | undefined
   mathValidationErrors: string[]
   repairAttempts: number

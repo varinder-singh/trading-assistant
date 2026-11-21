@@ -119,6 +119,98 @@ export class MASToolRegistry {
           }
         },
       },
+      {
+        name: 'inspectSessionHorizon',
+        description:
+          'Evaluates remaining intraday session time before 3:15 PM EOD square-off to prevent late runway traps.',
+        parameters: {
+          type: 'object',
+          properties: {},
+        },
+        execute: () => {
+          const istTimeStr = blackboard.structureSlice.istTime || ''
+          const now = new Date()
+          let currentMinutesFromMidnight = 0
+
+          const match = istTimeStr.match(/(\d{1,2}):(\d{2})/)
+          if (match) {
+            currentMinutesFromMidnight = parseInt(match[1]!, 10) * 60 + parseInt(match[2]!, 10)
+          } else {
+            // Fallback to UTC + 5.5
+            const utc = now.getTime() + now.getTimezoneOffset() * 60000
+            const istDate = new Date(utc + 3600000 * 5.5)
+            currentMinutesFromMidnight = istDate.getHours() * 60 + istDate.getMinutes()
+          }
+
+          const squareOffMinutes = 15 * 60 + 15 // 15:15 IST
+          const timeToSquareOffMins = Math.max(0, squareOffMinutes - currentMinutesFromMidnight)
+          const isClosingRunwayRisk = timeToSquareOffMins < 45
+
+          let recommendation: 'ALLOW_ALL' | 'SCALP_ONLY_TIGHT_SL' | 'REJECT_NEW_ENTRIES' = 'ALLOW_ALL'
+          let rationale = `Sufficient runway (${timeToSquareOffMins}m remaining until 3:15 PM EOD square-off).`
+
+          if (timeToSquareOffMins <= 15) {
+            recommendation = 'REJECT_NEW_ENTRIES'
+            rationale = `CRITICAL: Only ${timeToSquareOffMins}m left before mandatory EOD liquidation. New entries prohibited.`
+          } else if (timeToSquareOffMins < 45) {
+            recommendation = 'SCALP_ONLY_TIGHT_SL'
+            rationale = `Tight runway (${timeToSquareOffMins}m left). Trend continuation prohibited; rapid scalps with tight stops only.`
+          }
+
+          return {
+            currentIstTime: istTimeStr || `${Math.floor(currentMinutesFromMidnight / 60)}:${currentMinutesFromMidnight % 60}`,
+            timeToSquareOffMins,
+            isClosingRunwayRisk,
+            recommendation,
+            rationale,
+          }
+        },
+      },
+      {
+        name: 'inspectSectorBreadthAndBeta',
+        description:
+          'Evaluates sector alignment and relative strength vs NIFTY benchmark to prevent counter-beta trade traps.',
+        parameters: {
+          type: 'object',
+          properties: {
+            symbol: { type: 'string', description: 'Stock or Index symbol' },
+          },
+        },
+        execute: (args) => {
+          const sym = String(args.symbol || blackboard.symbol).toUpperCase()
+          const tf15m = blackboard.structureSlice.tf15m
+          const macro = blackboard.macroSlice
+
+          // Relative momentum proxy using VWAP position and RSI
+          const isStockAboveVwap = tf15m.price > tf15m.vwap
+          const isBenchmarkBullish = (macro.gtiScore?.composite ?? 0) >= 0 || macro.vix.current < 16
+
+          let sectorAlignment: 'ALIGNED' | 'DIVERGENT' | 'NEUTRAL' = 'NEUTRAL'
+          let recommendation: 'ALIGNED' | 'CAUTION_DIVERGENT' | 'VETO_COUNTER_TREND' = 'ALIGNED'
+          let note = 'Normal market beta.'
+
+          if (isStockAboveVwap && !isBenchmarkBullish) {
+            sectorAlignment = 'DIVERGENT'
+            recommendation = 'CAUTION_DIVERGENT'
+            note = `${sym} shows positive relative strength despite weak benchmark. Sizing reduction recommended.`
+          } else if (!isStockAboveVwap && isBenchmarkBullish) {
+            sectorAlignment = 'DIVERGENT'
+            recommendation = 'VETO_COUNTER_TREND'
+            note = `${sym} is lagging below VWAP while broad market is risk-on. Shorting into market strength has low expectancy.`
+          }
+
+          return {
+            symbol: sym,
+            sectorAlignment,
+            recommendation,
+            benchmarkVix: macro.vix.current,
+            benchmarkGti: macro.gtiScore?.composite ?? 0,
+            priceVsVwap: isStockAboveVwap ? 'ABOVE' : 'BELOW',
+            rsi14: tf15m.rsi14,
+            note,
+          }
+        },
+      },
     ]
   }
 
@@ -212,6 +304,100 @@ export class MASToolRegistry {
           }
         },
       },
+      {
+        name: 'inspectOptionVelocity',
+        description:
+          'Evaluates if an option contract has spiked excessively in the last 5 minutes to prevent top-tick market chasing.',
+        parameters: {
+          type: 'object',
+          properties: {
+            strike: { type: 'number', description: 'Option strike' },
+            optionType: { type: 'string', description: 'CE or PE' },
+          },
+          required: ['strike', 'optionType'],
+        },
+        execute: (args) => {
+          const strike = Number(args.strike)
+          const optionType = String(args.optionType || 'CE').toUpperCase()
+          const row = blackboard.rawOptionRows.find((r) => r.strike === strike && r.type === optionType)
+          const liveTicks = blackboard.structureSlice.liveTrigger?.downsampledTicks || []
+
+          let tickSurgePct = 0
+          if (liveTicks.length >= 2) {
+            const first = liveTicks[0]!
+            const last = liveTicks[liveTicks.length - 1]!
+            tickSurgePct = Number((((last - first) / first) * 100).toFixed(2))
+          }
+
+          // Spike check: if option LTP is high relative to ATM or index surged abruptly (>0.15% in 1m)
+          const isHyperExtended = Math.abs(tickSurgePct) > 0.15 || (row && row.iv > 35)
+          const currentLtp = row ? row.ltp : 50
+          const suggestedLimitPrice = Number((currentLtp * 0.90).toFixed(2)) // 10% pullback entry queue
+
+          return {
+            strike,
+            optionType,
+            currentLtp,
+            recentIndexTickSurgePct: tickSurgePct,
+            isHyperExtended,
+            executionRecommendation: isHyperExtended ? 'QUEUE_PULLBACK_LIMIT' : 'ENTER_MARKET',
+            suggestedLimitPrice: isHyperExtended ? suggestedLimitPrice : currentLtp,
+            rationale: isHyperExtended
+              ? `Spike surge detected (${tickSurgePct}% index impulse). Do not chase market buy; queue pending limit at ${suggestedLimitPrice}.`
+              : 'Normal order book velocity. Market execution permitted.',
+          }
+        },
+      },
+      {
+        name: 'inspectDynamicGreeksSurface',
+        description:
+          'Evaluates strike Delta, Theta burn, and low-denominator sensitivity to prevent selecting sluggish deep OTM strikes.',
+        parameters: {
+          type: 'object',
+          properties: {
+            strike: { type: 'number', description: 'Candidate strike price' },
+            optionType: { type: 'string', description: 'CE or PE' },
+          },
+          required: ['strike', 'optionType'],
+        },
+        execute: (args) => {
+          const strike = Number(args.strike)
+          const optionType = String(args.optionType || 'CE').toUpperCase()
+          const row = blackboard.rawOptionRows.find((r) => r.strike === strike && r.type === optionType)
+          const dte = blackboard.optionsSlice.daysToExpiry
+
+          if (!row) {
+            return {
+              error: `Strike ${strike} ${optionType} not found in active chain.`,
+              attempts: 1,
+              suggestion: `Select strike near ATM ${blackboard.optionsSlice.atmStrike}.`,
+            }
+          }
+
+          const deltaAbs = Math.abs(row.delta)
+          const isDeltaLowRisk = deltaAbs < 0.35 && dte >= 1.0
+
+          // Find ATM or Near-ITM alternative with safe Delta (0.45 - 0.58)
+          const safeAlternative = blackboard.rawOptionRows.find(
+            (r) => r.type === optionType && Math.abs(r.delta) >= 0.45 && Math.abs(r.delta) <= 0.60
+          )
+
+          return {
+            strike: row.strike,
+            optionType: row.type,
+            ltp: row.ltp,
+            delta: row.delta,
+            gamma: row.gamma,
+            theta: row.theta,
+            daysToExpiry: dte,
+            isDeltaLowRisk,
+            recommendedStrike: isDeltaLowRisk && safeAlternative ? safeAlternative.strike : row.strike,
+            rationale: isDeltaLowRisk
+              ? `Delta (${row.delta.toFixed(2)}) is sluggish (<0.35 on ${dte.toFixed(1)} DTE). Risk of premature shakeout and missed ratchets. Switch to ATM ${safeAlternative?.strike ?? blackboard.optionsSlice.atmStrike}.`
+              : `Delta (${row.delta.toFixed(2)}) is optimal for responsive profit ratchet execution.`,
+          }
+        },
+      },
     ]
   }
 
@@ -293,6 +479,12 @@ export class MASToolRegistry {
           )
         },
       },
+      ...MASToolRegistry.buildStructureTools(blackboard).filter(
+        (t) => t.name === 'inspectSessionHorizon' || t.name === 'inspectSectorBreadthAndBeta'
+      ),
+      ...MASToolRegistry.buildOptionsTools(blackboard).filter(
+        (t) => t.name === 'inspectOptionVelocity' || t.name === 'inspectDynamicGreeksSurface'
+      ),
     ]
   }
 }

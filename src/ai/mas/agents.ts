@@ -14,6 +14,8 @@ import type {
   AdversarialCriticReport,
   AgentMessage,
   AgentTraceSpan,
+  DeliberationCouncilSynthesis,
+  DeliberationSpeech,
   MacroSpecialistReport,
   OTelMasSpanAttributes,
   OptionsSpecialistReport,
@@ -135,7 +137,7 @@ export class RegimeAndStructureAgent {
     const grant = buildAgentCapabilityGrant(
       RegimeAndStructureAgent.AGENT_NAME,
       blackboard.claimVersion,
-      ['inspectWaveAndSwings', 'getReversalQualityBreakdown'],
+      ['inspectWaveAndSwings', 'getReversalQualityBreakdown', 'inspectSessionHorizon', 'inspectSectorBreadthAndBeta'],
       ['structureSlice', 'rawSwingPoints15m'],
       ['structureEnvelope']
     )
@@ -305,7 +307,7 @@ export class OptionsFlowAgent {
     const grant = buildAgentCapabilityGrant(
       OptionsFlowAgent.AGENT_NAME,
       blackboard.claimVersion,
-      ['inspectOptionStrikeChain', 'simulateStrikePayoff'],
+      ['inspectOptionStrikeChain', 'simulateStrikePayoff', 'inspectOptionVelocity', 'inspectDynamicGreeksSurface'],
       ['optionsSlice', 'rawOptionRows'],
       ['optionsEnvelope']
     )
@@ -591,7 +593,14 @@ export class AdversarialCriticAgent {
     const grant = buildAgentCapabilityGrant(
       AdversarialCriticAgent.AGENT_NAME,
       blackboard.claimVersion,
-      ['queryPastRegimeFailures', 'verifyTradeMath'],
+      [
+        'queryPastRegimeFailures',
+        'verifyTradeMath',
+        'inspectSessionHorizon',
+        'inspectSectorBreadthAndBeta',
+        'inspectOptionVelocity',
+        'inspectDynamicGreeksSurface',
+      ],
       ['structureEnvelope', 'optionsEnvelope', 'macroEnvelope', 'conflictMatrix', 'memoryContextTagged'],
       ['criticEnvelope']
     )
@@ -727,6 +736,216 @@ ${blackboard.memoryContextTagged.value}`
 }
 
 // ============================================================================
+// Stage 2.5: DialecticCouncilAgent (Socratic Multi-Agent Deliberation & Resolution)
+// ============================================================================
+export class DialecticCouncilAgent {
+  public static readonly AGENT_NAME = 'DialecticCouncilAgent' as const
+
+  public async deliberate(
+    blackboard: TradingBlackboard,
+    provider: LLMProvider,
+    budgetLedger: AtomicBudgetLedger
+  ): Promise<{ synthesis: DeliberationCouncilSynthesis; span: AgentTraceSpan }> {
+    const startedAtMs = Date.now()
+    const hasConflict = Boolean(blackboard.conflictMatrix?.hasDirectConflict)
+    const criticVerdict = blackboard.criticEnvelope?.handoff.claim.verdict || 'APPROVE'
+    const isDebateNeeded = hasConflict || criticVerdict !== 'APPROVE'
+
+    // Fast-path: When all specialists agree unanimously and Critic issues an unequivocal APPROVE
+    if (!isDebateNeeded) {
+      const rawUnanimous = blackboard.conflictMatrix?.unanimousDirection
+      const unanimousBias = rawUnanimous === 'NONE' || !rawUnanimous ? 'BULLISH' : rawUnanimous
+      const consensusAction: AIOptionAction = unanimousBias === 'BEARISH' ? 'BUY_PE' : 'BUY_CE'
+      const synthesis: DeliberationCouncilSynthesis = {
+        consensusReached: true,
+        consensusBias: unanimousBias,
+        consensusOptionAction: consensusAction,
+        confidence: 85,
+        resolutionRationale: 'Unanimous alignment across Structure, Options, and Macro specialists with Critic APPROVE.',
+        executionDirectives: {
+          mandatoryConditions: blackboard.criticEnvelope?.handoff.claim.mandatoryConditions || [],
+        },
+        speeches: [
+          {
+            agentName: 'Council Moderator',
+            role: 'SYNTHESIS',
+            thesis: 'Complete consensus achieved across all three domain specialists without contradiction.',
+            citedEvidence: ['Unanimous Direction', 'Clean Pre-Mortem Red Team Pass'],
+            recommendedAction: consensusAction,
+          },
+        ],
+      }
+
+      const span: AgentTraceSpan = {
+        nodeId: 'dialectic_deliberation',
+        agentName: DialecticCouncilAgent.AGENT_NAME,
+        startedAtMs,
+        durationMs: Date.now() - startedAtMs,
+        status: 'ok',
+        summary: `Deliberation Fast-Path: Unanimous consensus (${consensusAction}) without specialist friction.`,
+        toolCalls: [],
+        otelAttributes: {
+          'gen_ai.system': 'AntigravityMAS',
+          'gen_ai.request.model': 'gemini-flash',
+          'gen_ai.agent.name': DialecticCouncilAgent.AGENT_NAME,
+          'gen_ai.usage.input_tokens': 0,
+          'gen_ai.usage.output_tokens': 0,
+          'gen_ai.usage.cached_tokens': 0,
+          'mas.workflow.id': blackboard.runId,
+          'mas.step.index': 2,
+          'mas.pattern': 'ADVERSARIAL_DEBATE',
+          'mas.handoff.source': 'AdversarialCriticAgent',
+          'mas.handoff.target': 'ConsensusJudgeAgent',
+          'mas.termination_reason': 'succeeded',
+        },
+      }
+
+      return { synthesis, span }
+    }
+
+    // Active Deliberation Path
+    const systemPrompt = `You are the DialecticCouncilAgent in an institutional NSE Options Multi-Agent System.
+Your job is to resolve critical contradictions between the Structure Specialist, Options Specialist, Macro Specialist, and Adversarial Critic.
+
+DELIBERATION PROTOCOL:
+1. Socratic Cross-Examination:
+   - If Structure is Bullish but Options shows a heavy Call Writing Wall (resistance), determine whether spot has enough momentum to force a short squeeze or if buying calls will result in theta burn.
+   - If a Volatility Spike or extension is detected, mandate a pending pullback limit order rather than market execution.
+   - If broad market regime conflicts with an isolated stock setup (e.g. shorting into risk-on rally), vote NO_TRADE to preserve capital.
+   - If time remaining before 3:15 PM EOD square-off is < 45m, prohibit trend continuation entries.
+2. Resolution Mandate:
+   - If downside risk is asymmetric or signals remain irreconcilably conflicted, vote "consensusBias": "NO_TRADE", "consensusOptionAction": "NONE".
+   - If the contradiction is resolved, set actionable executionDirectives (e.g. requirePullbackLimit, suggestedLimitPrice, tightenedIndexStopLoss, or minDeltaRequired).
+
+Respond with valid JSON only matching DeliberationCouncilSynthesis:
+{
+  "consensusReached": <boolean>,
+  "consensusBias": "BULLISH" | "BEARISH" | "NEUTRAL" | "NO_TRADE",
+  "consensusOptionAction": "BUY_CE" | "BUY_PE" | "NONE",
+  "confidence": <0-100>,
+  "resolutionRationale": "<2-3 sentences explaining how the council resolved the debate>",
+  "executionDirectives": {
+    "requirePullbackLimit": <boolean>,
+    "suggestedLimitPrice": <number or undefined>,
+    "minDeltaRequired": <number or undefined>,
+    "tightenedIndexStopLoss": <number or undefined>,
+    "mandatoryConditions": [<string>]
+  },
+  "speeches": [
+    {
+      "agentName": "Structure Specialist" | "Options Specialist" | "Adversarial Critic" | "Council Moderator",
+      "role": "PROPOSAL" | "COUNTER_ARGUMENT" | "REBUTTAL" | "SYNTHESIS",
+      "thesis": "<1 sentence argument>",
+      "citedEvidence": [<string>],
+      "recommendedAction": "BUY_CE" | "BUY_PE" | "NO_TRADE"
+    }
+  ]
+}`
+
+    const userPrompt = `Conduct the dialectic council deliberation on the conflicting specialist claims:
+
+## PRE-FLIGHT GATES & CAUTIONS
+${JSON.stringify(blackboard.preFlightGates, null, 2)}
+
+## CONFLICT MATRIX
+${JSON.stringify(blackboard.conflictMatrix, null, 2)}
+
+## STRUCTURE CLAIM
+${JSON.stringify(blackboard.structureEnvelope?.handoff.claim ?? null, null, 2)}
+
+## OPTIONS CLAIM
+${JSON.stringify(blackboard.optionsEnvelope?.handoff.claim ?? null, null, 2)}
+
+## MACRO CLAIM
+${JSON.stringify(blackboard.macroEnvelope?.handoff.claim ?? null, null, 2)}
+
+## ADVERSARIAL CRITIC OBJECTIONS
+${JSON.stringify(blackboard.criticEnvelope?.handoff.claim ?? null, null, 2)}`
+
+    const reservation = budgetLedger.reserve(2500)
+    if (!reservation.allowed) {
+      throw new Error('WORKFLOW_TOKEN_BUDGET_EXHAUSTED before DialecticCouncilAgent')
+    }
+
+    const llmResult = await invokeProviderWithTools(
+      provider,
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      [],
+      0.1
+    )
+    const totalTokens = llmResult.estimatedInputTokens + llmResult.estimatedOutputTokens
+    budgetLedger.settle(2500, totalTokens)
+
+    const synthesis = this.parseSynthesis(llmResult.text, blackboard)
+    const span = buildTraceSpan({
+      nodeId: 'dialectic_deliberation',
+      agentName: DialecticCouncilAgent.AGENT_NAME,
+      startedAtMs,
+      status: synthesis.consensusBias === 'NO_TRADE' ? 'vetoed' : 'ok',
+      summary: `Council Deliberation: ${synthesis.consensusBias} (${synthesis.consensusOptionAction}) @ ${synthesis.confidence}%`,
+      llmResult,
+      workflowId: blackboard.runId,
+      stepIndex: 2,
+      pattern: 'ADVERSARIAL_DEBATE',
+      target: 'ConsensusJudgeAgent',
+      lifecycleState: 'succeeded',
+    })
+
+    return { synthesis, span }
+  }
+
+  private parseSynthesis(raw: string, blackboard: TradingBlackboard): DeliberationCouncilSynthesis {
+    const parsed = safeParseAgentJson<Record<string, any>>(raw, 'DialecticCouncilAgent')
+    const consensusBias = (['BULLISH', 'BEARISH', 'NEUTRAL', 'NO_TRADE'].includes(parsed.consensusBias)
+      ? parsed.consensusBias
+      : 'NO_TRADE') as DeliberationCouncilSynthesis['consensusBias']
+
+    const consensusOptionAction = (
+      consensusBias === 'BULLISH' ? 'BUY_CE' : consensusBias === 'BEARISH' ? 'BUY_PE' : 'NONE'
+    ) as AIOptionAction
+
+    return {
+      consensusReached: Boolean(parsed.consensusReached ?? true),
+      consensusBias,
+      consensusOptionAction,
+      confidence: Math.max(0, Math.min(100, Number(parsed.confidence ?? 60))),
+      resolutionRationale: String(parsed.resolutionRationale || 'Council deliberation concluded.'),
+      executionDirectives: {
+        requirePullbackLimit: Boolean(parsed.executionDirectives?.requirePullbackLimit),
+        suggestedLimitPrice: parsed.executionDirectives?.suggestedLimitPrice
+          ? Number(parsed.executionDirectives.suggestedLimitPrice)
+          : undefined,
+        minDeltaRequired: parsed.executionDirectives?.minDeltaRequired
+          ? Number(parsed.executionDirectives.minDeltaRequired)
+          : undefined,
+        tightenedIndexStopLoss: parsed.executionDirectives?.tightenedIndexStopLoss
+          ? Number(parsed.executionDirectives.tightenedIndexStopLoss)
+          : undefined,
+        mandatoryConditions: Array.isArray(parsed.executionDirectives?.mandatoryConditions)
+          ? parsed.executionDirectives.mandatoryConditions.map(String)
+          : [],
+      },
+      speeches: Array.isArray(parsed.speeches)
+        ? parsed.speeches.map((s: any) => ({
+            agentName: String(s.agentName || 'Council Member'),
+            role: (['PROPOSAL', 'COUNTER_ARGUMENT', 'REBUTTAL', 'SYNTHESIS'].includes(s.role)
+              ? s.role
+              : 'SYNTHESIS') as DeliberationSpeech['role'],
+            thesis: String(s.thesis || ''),
+            citedEvidence: Array.isArray(s.citedEvidence) ? s.citedEvidence.map(String) : [],
+            recommendedAction: (['BUY_CE', 'BUY_PE', 'NONE', 'NO_TRADE'].includes(s.recommendedAction)
+              ? s.recommendedAction
+              : 'NO_TRADE') as DeliberationSpeech['recommendedAction'],
+          }))
+        : [],
+    }
+  }
+}
+
+// ============================================================================
 // Stage 3: ConsensusJudgeAgent (Hierarchical Synthesis & 1-Shot Math Repair)
 // ============================================================================
 export class ConsensusJudgeAgent {
@@ -790,7 +1009,9 @@ ${JSON.stringify(blackboard.optionsEnvelope?.handoff.claim ?? null, null, 2)}
 ${JSON.stringify(blackboard.macroEnvelope?.handoff.claim ?? null, null, 2)}
 
 ## ADVERSARIAL CRITIC VERDICT
-${JSON.stringify(blackboard.criticEnvelope?.handoff.claim ?? null, null, 2)}`
+${JSON.stringify(blackboard.criticEnvelope?.handoff.claim ?? null, null, 2)}
+
+${blackboard.deliberationCouncil ? `## DELIBERATION COUNCIL SYNTHESIS\n${JSON.stringify(blackboard.deliberationCouncil, null, 2)}` : ''}`
 
     const reservation = budgetLedger.reserve(2500)
     if (!reservation.allowed) {
@@ -828,8 +1049,25 @@ ${JSON.stringify(blackboard.criticEnvelope?.handoff.claim ?? null, null, 2)}`
   }
 
   private parseDecision(raw: string, blackboard: TradingBlackboard): AISuccessResponse {
-    const parsed = safeParseAgentJson<Record<string, any>>(raw, 'ConsensusJudgeAgent')
     const spot = blackboard.structureSlice.tf15m.price || 24000
+    if (blackboard.deliberationCouncil?.consensusBias === 'NO_TRADE') {
+      return {
+        decision: 'NO_TRADE',
+        setup: 'NONE',
+        macroTrend: String(blackboard.structureSlice.tf15m.trend || 'SIDEWAYS'),
+        instrument: 'OPTIONS',
+        optionAction: 'NONE',
+        strike: null,
+        entry: spot,
+        stopLoss: spot,
+        targets: [],
+        riskRewardRatio: 0,
+        confidence: 0,
+        reason: `Deliberation Council Veto: ${blackboard.deliberationCouncil.resolutionRationale}`,
+      }
+    }
+
+    const parsed = safeParseAgentJson<Record<string, any>>(raw, 'ConsensusJudgeAgent')
     const normalizedDecision =
       parsed.decision === 'SELL' && (parsed.optionAction === 'BUY_PE' || parsed.optionAction === 'BUY_CE')
         ? 'BUY'
@@ -912,6 +1150,22 @@ Respond with valid JSON only matching PositionGuardianReport:
   "reason": "<1-2 sentences citing structure, OI flow, and clean-slate status>"
 }`
 
+    const strippedMarketData = {
+      price: input?.marketData?.price ?? input?.marketData?.tf15m?.price,
+      vwap: input?.marketData?.vwap ?? input?.marketData?.tf15m?.vwap,
+      vwapZScore: input?.marketData?.vwapZScore ?? input?.marketData?.tf15m?.vwapZScore,
+      rsi14: input?.marketData?.rsi ?? input?.marketData?.tf15m?.rsi,
+      trend: input?.marketData?.trend ?? input?.marketData?.tf15m?.trend,
+      support: input?.marketData?.support ?? input?.marketData?.tf15m?.support,
+      resistance: input?.marketData?.resistance ?? input?.marketData?.tf15m?.resistance,
+      vix: input?.marketData?.vix?.current,
+      pcr: input?.marketData?.optionsAnalysisZerodha?.pcr,
+      atmNetFlow: input?.marketData?.optionsAnalysisZerodha?.atmNetFlow,
+      downsampledTicks: Array.isArray(input?.marketData?.liveTrigger?.downsampledTicks)
+        ? input.marketData.liveTrigger.downsampledTicks.slice(-10)
+        : undefined,
+    }
+
     const userPrompt = `${memoryPrompt}
 
 ## ROLLING EVALUATION HISTORY (LAST ${history.length} CHECKS)
@@ -920,8 +1174,8 @@ ${JSON.stringify(history, null, 2)}
 ## OPEN POSITION
 ${JSON.stringify(input.openPosition, null, 2)}
 
-## CURRENT MARKET DATA
-${JSON.stringify(input.marketData, null, 2)}`
+## CURRENT MARKET DATA (STRIPPED & COMPRESSED)
+${JSON.stringify(strippedMarketData, null, 2)}`
 
     const raw = await provider.chat(
       [
@@ -931,7 +1185,7 @@ ${JSON.stringify(input.marketData, null, 2)}`
       { temperature: 0.1 }
     )
     const parsed = safeParseAgentJson<Record<string, any>>(raw, 'PositionGuardianAgent')
-    const decision = this.resolveGuardianDecision(parsed, input?.openPosition)
+    const decision = this.resolveGuardianDecision(parsed, input?.openPosition, strippedMarketData)
 
     const report: PositionGuardianReport = {
       decision,
@@ -961,10 +1215,31 @@ ${JSON.stringify(input.marketData, null, 2)}`
     return report
   }
 
-  private resolveGuardianDecision(parsed: Record<string, any>, openPosition: any): PositionGuardianReport['decision'] {
+  private resolveGuardianDecision(
+    parsed: Record<string, any>,
+    openPosition: any,
+    marketData?: Record<string, any>
+  ): PositionGuardianReport['decision'] {
     if (parsed.cleanSlateCounterfactual === 'THESIS_BROKEN' || parsed.decision === 'EXIT') {
       return 'EXIT'
     }
+    const currentPrice = Number(openPosition?.currentPrice || openPosition?.ltp || 0)
+    const entryPrice = Number(openPosition?.entryPrice || 0)
+    const vwap = Number(marketData?.vwap || 0)
+    const isOptionCe = openPosition?.symbol?.endsWith('CE') || openPosition?.side === 'BUY'
+    const isOptionPe = openPosition?.symbol?.endsWith('PE')
+    const gainPct = entryPrice > 0 ? (currentPrice - entryPrice) / entryPrice : 0
+
+    // VWAP Breakdown Breakeven Protection: If position gained >= 0.8% or T1 cushion, but price lost 5m VWAP
+    if (gainPct >= 0.008 || openPosition?.t1Hit) {
+      if (vwap > 0 && isOptionCe && currentPrice < vwap) {
+        return 'UPDATE_SL' // Lock Breakeven
+      }
+      if (vwap > 0 && isOptionPe && currentPrice > vwap) {
+        return 'UPDATE_SL' // Lock Breakeven
+      }
+    }
+
     const entryTimestamp = openPosition?.timestamp ? new Date(openPosition.timestamp).getTime() : 0
     const isIncubation = entryTimestamp > 0 && Date.now() - entryTimestamp < 5 * 60 * 1000
     if (parsed.decision === 'UPDATE_SL' && isIncubation && !openPosition?.t1Hit) {
@@ -1083,6 +1358,7 @@ export class TradingMASOrchestrator {
   private readonly optionsAgent = new OptionsFlowAgent()
   private readonly macroAgent = new MacroSentimentAgent()
   private readonly criticAgent = new AdversarialCriticAgent()
+  private readonly councilAgent = new DialecticCouncilAgent()
   private readonly judgeAgent = new ConsensusJudgeAgent()
   public readonly guardianAgent = new PositionGuardianAgent()
   public readonly postMortemAgent = new PostMortemAgent()
@@ -1227,6 +1503,7 @@ export class TradingMASOrchestrator {
         options: blackboard.optionsEnvelope?.handoff.claim ?? null,
         macro: blackboard.macroEnvelope?.handoff.claim ?? null,
         critic: blackboard.criticEnvelope?.handoff.claim ?? null,
+        deliberationCouncil: blackboard.deliberationCouncil ?? null,
         conflictMatrix: blackboard.conflictMatrix ?? null,
         preFlightGates: blackboard.preFlightGates,
         traceSpans: blackboard.traceSpans,
@@ -1375,6 +1652,32 @@ export class TradingMASOrchestrator {
       }
     })
 
+    // Stage 2.5: Dialectic Multi-Agent Deliberation Council
+    graph.addNode('dialectic_deliberation', async (state) => {
+      this.emitUpdate({
+        agent: 'Council Moderator',
+        status: 'thinking',
+        message: 'Convening Dialectic Council to deliberate on specialist claims & red-team objections...',
+      })
+      try {
+        const { synthesis, span } = await this.circuitBreaker.execute(() =>
+          this.retryPolicy.executeWithTransientRetry(() =>
+            this.councilAgent.deliberate(state, provider, budgetLedger)
+          )
+        )
+        state.deliberationCouncil = synthesis
+        state.traceSpans = [...state.traceSpans, span]
+        this.emitUpdate({
+          agent: 'Council Moderator',
+          status: 'decided',
+          message: `Council Verdict: ${synthesis.consensusBias} (${synthesis.consensusOptionAction}) — ${synthesis.resolutionRationale}`,
+          data: synthesis,
+        })
+      } catch (err) {
+        console.warn('[MAS Deliberation Council] Degraded gracefully:', err)
+      }
+    })
+
     // Stage 3: Consensus Judge
     graph.addNode('consensus_judge', async (state) => {
       this.emitUpdate({
@@ -1455,7 +1758,8 @@ export class TradingMASOrchestrator {
 
       return shouldRunCritic ? 'adversarial_critic' : 'consensus_judge'
     })
-    graph.addEdge('adversarial_critic', 'consensus_judge')
+    graph.addEdge('adversarial_critic', 'dialectic_deliberation')
+    graph.addEdge('dialectic_deliberation', 'consensus_judge')
     graph.addEdge('consensus_judge', 'validate_trade_math')
     graph.addConditionalEdge('validate_trade_math', (state) => {
       if (
