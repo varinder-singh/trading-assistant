@@ -2,6 +2,7 @@ import type { AISuccessResponse, LLMToolDefinition, TradingAgentType } from '../
 import type { CapabilityGrant, TradingBlackboard, TradingDomainPolicyConfig } from './types.js'
 import { DEFAULT_TRADING_DOMAIN_POLICY } from './types.js'
 import { createTaggedValue } from './contracts.js'
+import { MarketRegistry } from '../../markets/registry.js'
 
 // ============================================================================
 // B12 (Ch. 14 RG1 & AM3): ToolCallMediator enforcing 12-field CapabilityGrant
@@ -122,12 +123,25 @@ export class MASToolRegistry {
       {
         name: 'inspectSessionHorizon',
         description:
-          'Evaluates remaining intraday session time before 3:15 PM EOD square-off to prevent late runway traps.',
+          'Evaluates remaining intraday session time before EOD square-off to prevent late runway traps across markets.',
         parameters: {
           type: 'object',
           properties: {},
         },
         execute: () => {
+          const activeMarket = MarketRegistry.getActiveMarket()
+          if (activeMarket.is24x7) {
+            return {
+              marketId: activeMarket.id,
+              is24x7: true,
+              currentIstTime: '24x7',
+              timeToSquareOffMins: Number.POSITIVE_INFINITY,
+              isClosingRunwayRisk: false,
+              recommendation: 'ALLOW_ALL' as const,
+              rationale: `Continuous 24/7 market (${activeMarket.name}). No intraday runway constraints or mandatory EOD liquidation.`,
+            }
+          }
+
           const istTimeStr = blackboard.structureSlice.istTime || ''
           const now = new Date()
           let currentMinutesFromMidnight = 0
@@ -136,18 +150,28 @@ export class MASToolRegistry {
           if (match) {
             currentMinutesFromMidnight = parseInt(match[1]!, 10) * 60 + parseInt(match[2]!, 10)
           } else {
-            // Fallback to UTC + 5.5
-            const utc = now.getTime() + now.getTimezoneOffset() * 60000
-            const istDate = new Date(utc + 3600000 * 5.5)
-            currentMinutesFromMidnight = istDate.getHours() * 60 + istDate.getMinutes()
+            const formatter = new Intl.DateTimeFormat('en-US', {
+              timeZone: activeMarket.timezone,
+              hour12: false,
+              hour: 'numeric',
+              minute: 'numeric',
+            })
+            const parts = formatter.formatToParts(now)
+            const h = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10)
+            const m = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10)
+            currentMinutesFromMidnight = h * 60 + m
           }
 
-          const squareOffMinutes = 15 * 60 + 15 // 15:15 IST
+          const closeTimeParts = activeMarket.config.closeTime.split(':').map((v) => parseInt(v, 10))
+          const marketCloseMinutes = (closeTimeParts[0] ?? 0) * 60 + (closeTimeParts[1] ?? 0)
+          const squareOffBuffer = activeMarket.config.squareOffMinutesBeforeClose ?? 15
+          const squareOffMinutes = marketCloseMinutes - squareOffBuffer
+
           const timeToSquareOffMins = Math.max(0, squareOffMinutes - currentMinutesFromMidnight)
           const isClosingRunwayRisk = timeToSquareOffMins < 45
 
           let recommendation: 'ALLOW_ALL' | 'SCALP_ONLY_TIGHT_SL' | 'REJECT_NEW_ENTRIES' = 'ALLOW_ALL'
-          let rationale = `Sufficient runway (${timeToSquareOffMins}m remaining until 3:15 PM EOD square-off).`
+          let rationale = `Sufficient runway (${timeToSquareOffMins}m remaining until square-off for ${activeMarket.name}).`
 
           if (timeToSquareOffMins <= 15) {
             recommendation = 'REJECT_NEW_ENTRIES'
@@ -158,6 +182,7 @@ export class MASToolRegistry {
           }
 
           return {
+            marketId: activeMarket.id,
             currentIstTime: istTimeStr || `${Math.floor(currentMinutesFromMidnight / 60)}:${currentMinutesFromMidnight % 60}`,
             timeToSquareOffMins,
             isClosingRunwayRisk,

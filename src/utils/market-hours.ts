@@ -1,32 +1,24 @@
-export interface SpecialSession {
-  date: string // 'YYYY-MM-DD' in Asia/Kolkata
-  openTime: string // 'HH:MM' (24-hour)
-  closeTime: string // 'HH:MM'
-  name: string
-}
+import { MarketRegistry, NSE_SPECIAL_SESSIONS } from '../markets/registry.js'
+import type { SpecialSessionConfig } from '../markets/types.js'
+
+export type SpecialSession = SpecialSessionConfig
 
 // Known special trading sessions (e.g. Diwali Muhurat Trading, NSE special weekend disaster recovery sessions)
-export const SPECIAL_SESSIONS: SpecialSession[] = [
-  {
-    date: '2026-11-08',
-    openTime: '14:20',
-    closeTime: '18:00',
-    name: 'Diwali Muhurat Trading',
-  },
-]
-
-function getCustomSpecialSessions(): SpecialSession[] {
-  if (typeof process === 'undefined' || !process.env?.SPECIAL_TRADING_SESSIONS) return []
-  try {
-    return JSON.parse(process.env.SPECIAL_TRADING_SESSIONS)
-  } catch {
-    return []
-  }
-}
+export const SPECIAL_SESSIONS: SpecialSession[] = NSE_SPECIAL_SESSIONS
 
 export function getActiveSpecialSession(date: Date = new Date()): SpecialSession | null {
+  const activeMarket = MarketRegistry.getActiveMarket()
+  const sessions = [...(activeMarket.config.specialSessions || [])]
+  if (typeof process !== 'undefined' && process.env?.SPECIAL_TRADING_SESSIONS) {
+    try {
+      sessions.push(...JSON.parse(process.env.SPECIAL_TRADING_SESSIONS))
+    } catch {
+      // ignore
+    }
+  }
+
   const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Kolkata',
+    timeZone: activeMarket.timezone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -46,8 +38,7 @@ export function getActiveSpecialSession(date: Date = new Date()): SpecialSession
   const minute = parseInt(getValue('minute') || '0', 10)
   const timeInMinutes = hour * 60 + minute
 
-  const allSessions = [...SPECIAL_SESSIONS, ...getCustomSpecialSessions()]
-  for (const session of allSessions) {
+  for (const session of sessions) {
     if (session.date === currentDate) {
       const openParts = session.openTime.split(':').map((v) => parseInt(v, 10))
       const closeParts = session.closeTime.split(':').map((v) => parseInt(v, 10))
@@ -61,92 +52,18 @@ export function getActiveSpecialSession(date: Date = new Date()): SpecialSession
   return null
 }
 
-function getIstMinutesFromMidnight(date: Date): { timeInMinutes: number; weekday: string } {
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Kolkata',
-    hour12: false,
-    weekday: 'long',
-    hour: 'numeric',
-    minute: 'numeric',
-  })
-  const parts = formatter.formatToParts(date)
-  const getValue = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
-  const hour = parseInt(getValue('hour') || '0', 10)
-  const minute = parseInt(getValue('minute') || '0', 10)
-
-  return {
-    timeInMinutes: hour * 60 + minute,
-    weekday: getValue('weekday'),
-  }
-}
-
 export function isOpeningBellFilterActive(date: Date = new Date()): boolean {
-  if (typeof process !== 'undefined' && process.env?.DISABLE_OPENING_BELL_FILTER === 'true') {
-    return false
-  }
-
-  const filterMinutes = Number(process.env?.OPENING_BELL_FILTER_MINS ?? 15)
-  if (filterMinutes <= 0) return false
-
-  const { timeInMinutes, weekday } = getIstMinutesFromMidnight(date)
-  if (weekday === 'Saturday' || weekday === 'Sunday') return false
-
-  const marketOpen = 9 * 60 + 15 // 555 (09:15 IST)
-  const openingBellEnd = marketOpen + filterMinutes // 570 (09:30 IST default)
-
-  return timeInMinutes >= marketOpen && timeInMinutes < openingBellEnd
+  return MarketRegistry.getActiveMarket().isOpeningBellFilterActive(date)
 }
 
 export function isClosingBellFilterActive(date: Date = new Date()): boolean {
-  if (typeof process !== 'undefined' && process.env?.DISABLE_CLOSING_BELL_FILTER === 'true') {
-    return false
-  }
-
-  const cutoffMinutesBeforeClose = Number(process.env?.CLOSING_BELL_FILTER_MINS ?? 15)
-  if (cutoffMinutesBeforeClose <= 0) return false
-
-  const { timeInMinutes, weekday } = getIstMinutesFromMidnight(date)
-  if (weekday === 'Saturday' || weekday === 'Sunday') return false
-
-  const marketClose = 15 * 60 + 30 // 930 (15:30 IST)
-  const closingCutoffStart = marketClose - cutoffMinutesBeforeClose // 915 (15:15 IST default)
-
-  return timeInMinutes >= closingCutoffStart && timeInMinutes <= marketClose
+  return MarketRegistry.getActiveMarket().isClosingBellFilterActive(date)
 }
 
 export function isMarketOpen(date: Date = new Date()): boolean {
-  if (typeof process !== 'undefined' && (process.env?.FORCE_MARKET_OPEN === 'true' || process.env?.MARKET_FORCE_OPEN === 'true')) {
-    return true
-  }
-
-  // 1. Check for active special trading sessions (e.g. Diwali Muhurat trading)
-  const specialSession = getActiveSpecialSession(date)
-  if (specialSession) {
-    return true
-  }
-
-  // 2. Standard NSE trading hours check (Mon - Fri 09:15 - 15:30 IST)
-  const { timeInMinutes, weekday } = getIstMinutesFromMidnight(date)
-  if (weekday === 'Saturday' || weekday === 'Sunday') {
-    return false
-  }
-
-  // Market hours: 09:15 AM to 03:30 PM (15:30)
-  const marketOpen = 9 * 60 + 15 // 555
-  const marketClose = 15 * 60 + 30 // 930
-
-  return timeInMinutes >= marketOpen && timeInMinutes <= marketClose
+  return MarketRegistry.getActiveMarket().isMarketOpen(date)
 }
 
 export function getMarketStatusMessage(date: Date = new Date()): string {
-  if (typeof process !== 'undefined' && (process.env?.FORCE_MARKET_OPEN === 'true' || process.env?.MARKET_FORCE_OPEN === 'true')) {
-    return 'Market is Open (Forced)'
-  }
-
-  const specialSession = getActiveSpecialSession(date)
-  if (specialSession) {
-    return `Market is Open (${specialSession.name})`
-  }
-
-  return isMarketOpen(date) ? 'Market is Open' : 'Market is Closed'
+  return MarketRegistry.getActiveMarket().getMarketStatusMessage(date)
 }
