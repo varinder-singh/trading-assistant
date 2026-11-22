@@ -4,6 +4,7 @@
     <FlightControlHeader
       class="shrink-0 z-30"
       :symbol="symbol"
+      :active-market="effectiveActiveMarket"
       :live-price="livePrice"
       :price-change="priceChange"
       :price-change-pct="priceChangePct"
@@ -166,10 +167,10 @@
         </div>
       </div>
 
-      <!-- Mobile Bottom Navigation Bar (Thumb-reachable 5-tab bar) -->
+      <!-- Mobile Bottom Navigation Bar (Thumb-reachable 5-tab bar with PWA Safe Area Inset) -->
       <nav
         data-test="mobile-bottom-nav"
-        class="shrink-0 bg-slate-900 border-t border-slate-800 px-1 py-1.5 grid grid-cols-5 gap-1 z-40 select-none"
+        class="shrink-0 bg-slate-900 border-t border-slate-800 px-1 pt-1.5 pb-[calc(env(safe-area-inset-bottom,0px)+0.375rem)] grid grid-cols-5 gap-1 z-40 select-none min-h-[56px]"
       >
         <!-- 1. Positions -->
         <button
@@ -286,6 +287,7 @@ const props = withDefaults(
     screenerData?: any
     chartTimeframe?: string
     lastAnalysisTime?: number | null
+    activeMarket?: 'NSE' | 'US' | 'CRYPTO'
   }>(),
   {
     symbol: 'NIFTY',
@@ -303,8 +305,17 @@ const props = withDefaults(
     screenerData: () => ({ topGainers: [], topSurges: [] }),
     chartTimeframe: '15m',
     lastAnalysisTime: null,
+    activeMarket: undefined,
   }
 )
+
+const effectiveActiveMarket = computed<'NSE' | 'US' | 'CRYPTO'>(() => {
+  if (props.activeMarket) return props.activeMarket
+  const s = props.symbol?.toUpperCase() || ''
+  if (['AAPL', 'TSLA', 'SPY', 'QQQ', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META'].includes(s)) return 'US'
+  if (['BTC', 'ETH', 'SOL', 'USDT'].includes(s) || s.includes('USDT')) return 'CRYPTO'
+  return 'NSE'
+})
 
 const emit = defineEmits<{
   (e: 'panicSquareOff'): void

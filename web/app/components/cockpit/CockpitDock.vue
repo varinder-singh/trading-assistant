@@ -70,6 +70,7 @@
             <th>ENTRY</th>
             <th>LTP</th>
             <th>TRAILING SL</th>
+            <th>THESIS & VWAP</th>
             <th>TARGET STATUS</th>
             <th>UNREALIZED P&L</th>
             <th class="text-right">ACTIONS</th>
@@ -105,6 +106,29 @@
                   class="text-[9px] px-1 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded font-bold"
                 >
                   LOCKED
+                </span>
+              </div>
+            </td>
+            <td>
+              <div class="flex items-center gap-1.5">
+                <span
+                  v-if="pos.vwapBreakevenLocked || pos.breakevenLocked"
+                  class="text-[10px] px-1.5 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded font-bold inline-flex items-center gap-1"
+                  title="5m VWAP breakeven lock guaranteed by Position Guardian"
+                >
+                  <span>🛡️</span> BE LOCKED
+                </span>
+                <span
+                  v-else-if="pos.thesisInvalidated"
+                  class="text-[10px] px-1.5 py-0.5 bg-rose-500/20 text-rose-300 border border-rose-500/40 rounded font-bold inline-flex items-center gap-1"
+                >
+                  <span>⚠️</span> THESIS BREACH
+                </span>
+                <span
+                  v-else
+                  class="text-[10px] px-1.5 py-0.5 bg-slate-800 text-slate-300 border border-slate-700 rounded font-medium inline-flex items-center gap-1"
+                >
+                  <span>🟢</span> INTACT
                 </span>
               </div>
             </td>
@@ -413,7 +437,7 @@
             </div>
           </div>
 
-          <!-- Row 3: Target & Trailing SL -->
+          <!-- Row 3: Target, Trailing SL & VWAP BE Lock -->
           <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
             <div class="flex items-center gap-1.5">
               <span class="text-slate-400 text-[11px]">SL:</span>
@@ -425,6 +449,13 @@
                 class="text-[9px] px-1 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded font-bold"
               >
                 LOCKED
+              </span>
+              <span
+                v-if="pos.vwapBreakevenLocked || pos.breakevenLocked"
+                class="text-[9px] px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded font-bold inline-flex items-center gap-0.5"
+                title="5m VWAP breakeven floor guaranteed by Position Guardian"
+              >
+                <span>🛡️</span> BE LOCKED
               </span>
             </div>
 

@@ -71,7 +71,26 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
         </svg>
 
-        <!-- 4. Consensus Judge -->
+        <!-- 4. Dialectic Deliberation Council (Socratic Debate Stage) -->
+        <button
+          data-test="hud-council-btn"
+          type="button"
+          @click="$emit('selectAgent', 'Dialectic Council')"
+          class="cursor-pointer group flex items-center gap-2 px-2.5 py-1 bg-slate-800/80 hover:bg-slate-800 border border-slate-700 rounded-md transition hover:border-purple-500/60"
+        >
+          <span
+            class="w-2 h-2 rounded-full"
+            :class="getAgentDotColor(agents['Dialectic Council']?.status)"
+          ></span>
+          <span class="text-slate-400 group-hover:text-slate-200">4. Council:</span>
+          <span class="font-bold text-purple-300">{{ agents['Dialectic Council']?.status?.toUpperCase() || 'UNANIMOUS' }}</span>
+        </button>
+
+        <svg class="w-3 h-3 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+
+        <!-- 5. Consensus Judge -->
         <button
           data-test="hud-consensus-btn"
           type="button"
@@ -82,7 +101,7 @@
             class="w-2 h-2 rounded-full"
             :class="getAgentDotColor(agents['Consensus Judge']?.status)"
           ></span>
-          <span class="text-slate-400 group-hover:text-slate-200">4. Consensus:</span>
+          <span class="text-slate-400 group-hover:text-slate-200">5. Consensus:</span>
           <span class="font-bold text-slate-200">{{ agents['Consensus Judge']?.status?.toUpperCase() || 'AWAITING' }}</span>
         </button>
 
@@ -90,19 +109,20 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
         </svg>
 
-        <!-- 5. Risk Manager -->
+        <!-- 6. Position Guardian & Risk Manager -->
         <button
           data-test="hud-risk-btn"
+          data-test-guardian="hud-guardian-btn"
           type="button"
-          @click="$emit('selectAgent', 'Risk Manager')"
-          class="cursor-pointer group flex items-center gap-2 px-2.5 py-1 bg-slate-800/80 hover:bg-slate-800 border border-slate-700 rounded-md transition hover:border-indigo-400"
+          @click="$emit('selectAgent', 'Position Guardian')"
+          class="cursor-pointer group flex items-center gap-2 px-2.5 py-1 bg-slate-800/80 hover:bg-slate-800 border border-slate-700 rounded-md transition hover:border-cyan-400"
         >
           <span
             class="w-2 h-2 rounded-full"
-            :class="getAgentDotColor(agents['Risk Manager']?.status)"
+            :class="getAgentDotColor(agents['Position Guardian']?.status || agents['Risk Manager']?.status)"
           ></span>
-          <span class="text-slate-400 group-hover:text-slate-200">5. Risk:</span>
-          <span class="font-bold text-slate-200">{{ agents['Risk Manager']?.status?.toUpperCase() || 'ACTIVE' }}</span>
+          <span class="text-slate-400 group-hover:text-slate-200">6. Guardian:</span>
+          <span class="font-bold text-cyan-300">{{ agents['Position Guardian']?.status?.toUpperCase() || agents['Risk Manager']?.status?.toUpperCase() || 'ACTIVE' }}</span>
         </button>
       </div>
 

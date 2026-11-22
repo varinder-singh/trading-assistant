@@ -25,7 +25,7 @@
       <div class="flex items-center gap-3 bg-slate-800/60 px-3 py-1.5 rounded-lg border border-slate-700/60">
         <div class="flex items-center gap-2">
           <span class="font-mono font-bold text-sm text-white">{{ symbol }}</span>
-          <span class="text-xs px-1.5 py-0.5 bg-slate-700 text-slate-300 rounded font-mono">INDEX</span>
+          <span class="text-xs px-1.5 py-0.5 bg-slate-700 text-slate-300 rounded font-mono">{{ activeMarket === 'US_EQUITIES' ? 'US EQ' : (activeMarket === 'CRYPTO_PERP' ? 'CRYPTO' : 'INDEX') }}</span>
         </div>
         <div class="flex items-baseline gap-2 font-mono">
           <span
@@ -43,6 +43,20 @@
             ({{ (priceChangePct || 0) >= 0 ? '+' : '' }}{{ (priceChangePct || 0).toFixed(2) }}%)
           </span>
         </div>
+      </div>
+
+      <!-- Active Market Pill -->
+      <div class="hidden sm:flex items-center gap-1.5 bg-slate-800/80 px-2.5 py-1.5 rounded-lg border border-slate-700 font-mono text-xs">
+        <span class="text-slate-400 text-[10px] font-bold">MARKET:</span>
+        <span v-if="activeMarket === 'US_EQUITIES' || activeMarket === 'US'" class="text-blue-300 font-bold flex items-center gap-1">
+          <span>🇺🇸</span> US (Alpaca)
+        </span>
+        <span v-else-if="activeMarket === 'CRYPTO_PERP' || activeMarket === 'CRYPTO'" class="text-amber-300 font-bold flex items-center gap-1">
+          <span>🌐</span> Crypto (24/7)
+        </span>
+        <span v-else class="text-orange-300 font-bold flex items-center gap-1">
+          <span>🇮🇳</span> NSE (Kite)
+        </span>
       </div>
 
       <!-- Active Trade Pill (if any position open) -->
@@ -157,7 +171,7 @@
           class="text-sm font-bold leading-tight"
           :class="numDailyPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'"
         >
-          {{ numDailyPnl >= 0 ? '+' : '' }}₹{{ numDailyPnl.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+          {{ numDailyPnl >= 0 ? '+' : '' }}{{ currencySymbol }}{{ numDailyPnl.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
         </div>
       </div>
 
@@ -222,6 +236,7 @@ const props = withDefaults(
     vix?: number | null
     tokenExpiryHours?: number
     positions?: any[]
+    activeMarket?: string
   }>(),
   {
     symbol: 'NIFTY',
@@ -235,10 +250,12 @@ const props = withDefaults(
     vix: null,
     tokenExpiryHours: 7,
     positions: () => [],
+    activeMarket: 'NSE',
   }
 )
 
 const numDailyPnl = computed(() => Number(props.dailyPnl) || 0)
+const currencySymbol = computed(() => (props.activeMarket === 'US_EQUITIES' || props.activeMarket === 'CRYPTO_PERP' ? '$' : '₹'))
 
 defineEmits<{
   (e: 'update:flightMode', mode: 'auto' | 'supervised' | 'halt'): void

@@ -140,7 +140,7 @@
             <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
             </svg>
-            Adversarial Critic
+            Adversarial Critic (Pre-Mortem)
           </span>
           <div class="flex items-center gap-2">
             <span v-if="agents['Adversarial Critic']?.lastUpdate" class="text-[10px] text-slate-500 font-mono">
@@ -151,6 +151,99 @@
         </div>
         <p class="text-xs text-slate-300 leading-normal">
           {{ agents['Adversarial Critic']?.message || 'Standby for pre-mortem check...' }}
+        </p>
+      </div>
+
+      <!-- Dialectic Deliberation Council (Socratic Debate & Synthesis) -->
+      <div class="bg-purple-950/20 border border-purple-800/40 rounded-xl p-3 space-y-2">
+        <div class="flex items-center justify-between text-xs">
+          <span class="font-bold text-purple-300 flex items-center gap-1.5">
+            <span class="text-sm">⚖️</span>
+            Dialectic Council (Socratic Debate)
+          </span>
+          <div class="flex items-center gap-2">
+            <span
+              class="px-2 py-0.5 rounded text-[10px] font-mono font-bold"
+              :class="agents['Dialectic Council']?.data?.wasDebated ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'bg-purple-500/20 text-purple-300 border border-purple-500/40'"
+            >
+              {{ agents['Dialectic Council']?.data?.wasDebated ? 'ACTIVE DEBATE' : 'FAST-PATH PASS' }}
+            </span>
+          </div>
+        </div>
+        <p class="text-xs text-slate-300 leading-normal">
+          {{ agents['Dialectic Council']?.message || 'Unanimous specialist alignment. Zero-latency fast path.' }}
+        </p>
+        <div v-if="agents['Dialectic Council']?.data?.speeches" class="space-y-1.5 pt-1 border-t border-purple-900/50 text-[11px] font-mono">
+          <div
+            v-for="(speech, idx) in agents['Dialectic Council'].data.speeches"
+            :key="idx"
+            class="bg-slate-900/80 p-2 rounded border border-purple-900/40 space-y-0.5"
+          >
+            <div class="flex items-center justify-between font-bold text-purple-300">
+              <span>{{ speech.speaker }}:</span>
+              <span :class="speech.stance === 'BULLISH' ? 'text-emerald-400' : (speech.stance === 'BEARISH' ? 'text-rose-400' : 'text-amber-400')">{{ speech.stance }}</span>
+            </div>
+            <p class="text-slate-400">{{ speech.coreArgument }}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ReAct Deterministic Investigative Tools Telemetry -->
+      <div class="bg-slate-800/40 border border-slate-700/50 rounded-xl p-3 space-y-2">
+        <div class="flex items-center justify-between text-xs">
+          <span class="font-bold text-slate-300 flex items-center gap-1.5">
+            <span class="text-sm">🔍</span>
+            Investigative ReAct Tools
+          </span>
+          <span class="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/30">
+            DETERMINISTIC
+          </span>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-[11px] font-mono">
+          <div class="bg-slate-900/70 p-2 rounded border border-slate-800">
+            <div class="text-[10px] text-slate-500">SESSION RUNWAY</div>
+            <div class="text-slate-200 font-bold flex items-center gap-1 mt-0.5">
+              <span>⏱️</span>
+              <span>{{ agents['Structure Specialist']?.data?.runwayMins ? `${agents['Structure Specialist'].data.runwayMins}m` : 'Unconstrained' }}</span>
+            </div>
+          </div>
+          <div class="bg-slate-900/70 p-2 rounded border border-slate-800">
+            <div class="text-[10px] text-slate-500">OPTION VELOCITY</div>
+            <div class="text-slate-200 font-bold flex items-center gap-1 mt-0.5">
+              <span>📐</span>
+              <span>{{ agents['Options Specialist']?.data?.velocityStatus || 'Stable Flow' }}</span>
+            </div>
+          </div>
+          <div class="bg-slate-900/70 p-2 rounded border border-slate-800">
+            <div class="text-[10px] text-slate-500">GREEKS SURFACE</div>
+            <div class="text-slate-200 font-bold flex items-center gap-1 mt-0.5">
+              <span>📊</span>
+              <span>{{ agents['Options Specialist']?.data?.deltaEfficiency || 'ATM Delta Opt' }}</span>
+            </div>
+          </div>
+          <div class="bg-slate-900/70 p-2 rounded border border-slate-800">
+            <div class="text-[10px] text-slate-500">SECTOR BETA</div>
+            <div class="text-slate-200 font-bold flex items-center gap-1 mt-0.5">
+              <span>📈</span>
+              <span>{{ agents['Macro & GTI']?.data?.betaAlignment || 'Risk-On Sync' }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Position Guardian & Thesis Guardianship -->
+      <div class="bg-cyan-950/20 border border-cyan-800/40 rounded-xl p-3 space-y-1.5">
+        <div class="flex items-center justify-between text-xs">
+          <span class="font-bold text-cyan-300 flex items-center gap-1.5">
+            <span class="text-sm">🛡️</span>
+            Position Guardian
+          </span>
+          <span class="text-cyan-400 font-mono text-[11px] font-bold">
+            {{ agents['Position Guardian']?.status?.toUpperCase() || 'ACTIVE' }}
+          </span>
+        </div>
+        <p class="text-xs text-slate-300 leading-normal">
+          {{ agents['Position Guardian']?.message || 'Continuous thesis guardianship active. 5m VWAP breakeven lock armed.' }}
         </p>
       </div>
     </div>
