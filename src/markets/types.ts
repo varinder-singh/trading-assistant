@@ -6,6 +6,7 @@ export type MarketAssetClass =
   | 'EQUITY'
   | 'INDEX_OPTION'
   | 'STOCK_OPTION'
+  | 'CRYPTO'
   | 'CRYPTO_PERP'
   | 'COMMODITY_FUTURES'
   | 'FOREX'
@@ -64,15 +65,15 @@ export interface IMarketSession {
 export interface MarketQuote {
   symbol: string
   price: number
-  open?: number
-  high?: number
-  low?: number
-  close?: number
-  volume?: number
+  open?: number | undefined
+  high?: number | undefined
+  low?: number | undefined
+  close?: number | undefined
+  volume?: number | undefined
   timestamp: number
   currency: string
-  bid?: number
-  ask?: number
+  bid?: number | undefined
+  ask?: number | undefined
 }
 
 export interface MarketOrderRequest {
@@ -81,21 +82,21 @@ export interface MarketOrderRequest {
   side: 'BUY' | 'SELL'
   quantity: number
   orderType: 'MARKET' | 'LIMIT'
-  price?: number
-  triggerPrice?: number
-  stopLossPrice?: number
-  targetPrice?: number
-  product?: 'MIS' | 'CNC' | 'PERPETUAL' | 'MARGIN' | string
+  price?: number | undefined
+  triggerPrice?: number | undefined
+  stopLossPrice?: number | undefined
+  targetPrice?: number | undefined
+  product?: 'MIS' | 'CNC' | 'PERPETUAL' | 'MARGIN' | string | undefined
 }
 
 export interface MarketOrderResponse {
   orderId: string
   symbol: string
   status: 'PENDING' | 'FILLED' | 'REJECTED' | 'CANCELLED'
-  averagePrice?: number
+  averagePrice?: number | undefined
   filledQuantity: number
   placedAt: number
-  message?: string
+  message?: string | undefined
 }
 
 export interface MarketPosition {

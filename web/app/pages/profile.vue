@@ -35,6 +35,13 @@ const kiteApiKey = ref('')
 const kiteApiSecret = ref('')
 const hasSavedApiSecret = ref(false)
 
+const enableUsMarket = ref(false)
+const alpacaTradingMode = ref<'PAPER' | 'LIVE'>('PAPER')
+const alpacaApiKey = ref('')
+const alpacaApiSecret = ref('')
+const hasSavedAlpacaSecret = ref(false)
+const disconnectingAlpaca = ref(false)
+
 const loadingConnections = ref(true)
 const connections = ref<any[]>([])
 
@@ -76,6 +83,12 @@ const fetchProfile = async () => {
       if (data.enablePullbackEntry !== undefined && data.enablePullbackEntry !== null) {
         enablePullbackEntry.value = Boolean(data.enablePullbackEntry)
       }
+      if (data.enableUsMarket !== undefined && data.enableUsMarket !== null) {
+        enableUsMarket.value = Boolean(data.enableUsMarket)
+      }
+      if (data.alpacaTradingMode) {
+        alpacaTradingMode.value = data.alpacaTradingMode === 'LIVE' ? 'LIVE' : 'PAPER'
+      }
     }
   } catch (err: any) {
     console.error('Failed to load profile:', err)
@@ -104,6 +117,17 @@ const fetchConnections = async () => {
       if (zerodha) {
         kiteApiKey.value = zerodha.apiKey || ''
         hasSavedApiSecret.value = zerodha.hasApiSecret || false
+      }
+      const alpaca = data.find((c: any) => c.brokerName === 'alpaca')
+      if (alpaca) {
+        alpacaApiKey.value = alpaca.apiKey || ''
+        hasSavedAlpacaSecret.value = alpaca.hasApiSecret || false
+        if (alpaca.tradingMode) {
+          alpacaTradingMode.value = alpaca.tradingMode === 'LIVE' ? 'LIVE' : 'PAPER'
+        }
+      } else {
+        alpacaApiKey.value = ''
+        hasSavedAlpacaSecret.value = false
       }
     }
   } catch (err: any) {
@@ -134,6 +158,8 @@ const saveProfile = async () => {
       maxIndexPositions: Number(maxIndexPositions.value) >= 0 ? Number(maxIndexPositions.value) : 2,
       maxDailyTrades: Number(maxDailyTrades.value) > 0 ? Number(maxDailyTrades.value) : 30,
       enablePullbackEntry: Boolean(enablePullbackEntry.value),
+      enableUsMarket: Boolean(enableUsMarket.value),
+      alpacaTradingMode: alpacaTradingMode.value,
     }
 
     if (kiteApiKey.value && kiteApiSecret.value) {
@@ -143,7 +169,21 @@ const saveProfile = async () => {
       (kiteApiKey.value && !kiteApiSecret.value && !hasSavedApiSecret.value) ||
       (!kiteApiKey.value && kiteApiSecret.value)
     ) {
-      profileError.value = 'Both API Key and API Secret must be provided together.'
+      profileError.value = 'Both Kite API Key and API Secret must be provided together.'
+      savingProfile.value = false
+      return
+    }
+
+    if (alpacaApiKey.value && alpacaApiSecret.value) {
+      payload.alpacaApiKey = alpacaApiKey.value.trim()
+      payload.alpacaApiSecret = alpacaApiSecret.value.trim()
+    } else if (alpacaApiKey.value && hasSavedAlpacaSecret.value) {
+      payload.alpacaApiKey = alpacaApiKey.value.trim()
+    } else if (
+      (!alpacaApiKey.value && alpacaApiSecret.value) ||
+      (alpacaApiKey.value && !alpacaApiSecret.value && !hasSavedAlpacaSecret.value)
+    ) {
+      profileError.value = 'Both Alpaca API Key and API Secret must be provided together.'
       savingProfile.value = false
       return
     }
@@ -166,6 +206,11 @@ const saveProfile = async () => {
       kiteApiSecret.value = '' // Clear after save for security
     }
 
+    if (alpacaApiSecret.value) {
+      hasSavedAlpacaSecret.value = true
+      alpacaApiSecret.value = '' // Clear after save for security
+    }
+
     profileSuccess.value = 'Settings updated successfully!'
     setTimeout(() => {
       profileSuccess.value = ''
@@ -178,6 +223,43 @@ const saveProfile = async () => {
     profileError.value = 'Failed to save changes: ' + (err.data?.statusMessage || err.message || 'Unknown error')
   } finally {
     savingProfile.value = false
+  }
+}
+
+// Disconnect Alpaca Credentials
+const disconnectAlpaca = async () => {
+  const confirmDisconnect = window.confirm(
+    'Are you sure you want to remove your Alpaca API credentials? US Market trading will be disabled.'
+  )
+  if (!confirmDisconnect) return
+
+  try {
+    disconnectingAlpaca.value = true
+    profileError.value = ''
+    profileSuccess.value = ''
+
+    if (typeof $fetch === 'function') {
+      await $fetch('/api/profile/broker?name=alpaca', { method: 'DELETE' })
+    } else {
+      await useFetch('/api/profile/broker?name=alpaca', { method: 'DELETE' })
+    }
+
+    alpacaApiKey.value = ''
+    alpacaApiSecret.value = ''
+    hasSavedAlpacaSecret.value = false
+    enableUsMarket.value = false
+
+    profileSuccess.value = 'Alpaca credentials removed successfully.'
+    setTimeout(() => {
+      profileSuccess.value = ''
+    }, 3000)
+
+    await Promise.all([fetchProfile(), fetchConnections()])
+  } catch (err: any) {
+    console.error('Failed to disconnect Alpaca:', err)
+    profileError.value = 'Failed to remove Alpaca credentials: ' + (err.data?.statusMessage || err.message || 'Unknown error')
+  } finally {
+    disconnectingAlpaca.value = false
   }
 }
 
@@ -376,17 +458,92 @@ onMounted(() => {
               </div>
             </div>
 
+            <hr class="border-gray-100 my-6" />
+
+            <!-- Alpaca Developer Credentials (US Market & Crypto) -->
+            <div class="space-y-4">
+              <div class="flex flex-col md:flex-row md:items-center justify-between gap-2">
+                <div>
+                  <h3 class="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                    <span>Alpaca Markets Credentials</span>
+                    <span
+                      class="text-xs px-2 py-0.5 rounded-full font-medium"
+                      :class="alpacaTradingMode === 'LIVE' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'"
+                    >
+                      {{ alpacaTradingMode === 'LIVE' ? 'Live US Equities' : 'Paper Sandbox' }}
+                    </span>
+                  </h3>
+                  <p class="text-xs text-gray-500">
+                    User-configured credentials stored securely in database (encrypted with AES-256-GCM).
+                    <a href="https://alpaca.markets/" target="_blank" class="text-indigo-600 hover:underline">Get keys from Alpaca</a>.
+                  </p>
+                </div>
+
+                <div class="flex items-center gap-2">
+                  <label class="text-xs font-medium text-gray-600">Mode:</label>
+                  <select
+                    v-model="alpacaTradingMode"
+                    data-test="alpaca-mode-select"
+                    class="px-2.5 py-1 text-xs bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                  >
+                    <option value="PAPER">Paper Trading (Sandbox)</option>
+                    <option value="LIVE">Live Trading (Real USD)</option>
+                  </select>
+
+                  <button
+                    v-if="hasSavedAlpacaSecret || alpacaApiKey"
+                    type="button"
+                    @click="disconnectAlpaca"
+                    :disabled="disconnectingAlpaca"
+                    data-test="disconnect-alpaca-btn"
+                    class="text-xs px-2.5 py-1 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg border border-red-200 transition-colors disabled:opacity-50"
+                  >
+                    {{ disconnectingAlpaca ? 'Removing...' : 'Remove Keys' }}
+                  </button>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="space-y-2">
+                  <label class="text-sm font-medium text-gray-700">Alpaca API Key ID</label>
+                  <input
+                    v-model="alpacaApiKey"
+                    data-test="alpaca-api-key-input"
+                    type="text"
+                    placeholder="e.g. PK..."
+                    class="w-full px-4 py-2 bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono text-sm"
+                  />
+                </div>
+
+                <div class="space-y-2">
+                  <label class="text-sm font-medium text-gray-700 flex items-center justify-between">
+                    Alpaca API Secret Key
+                    <span v-if="hasSavedAlpacaSecret" class="text-xs text-green-600 flex items-center gap-1">
+                      <ShieldCheck class="w-3 h-3" /> Saved Securely
+                    </span>
+                  </label>
+                  <input
+                    v-model="alpacaApiSecret"
+                    data-test="alpaca-api-secret-input"
+                    type="password"
+                    placeholder="Enter to update (encrypted at rest)"
+                    class="w-full px-4 py-2 bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+
             <!-- Multi-Asset Universe & Execution Settings -->
             <div class="pt-6 border-t border-gray-100 space-y-6">
               <div>
                 <h3 class="text-base font-semibold text-gray-900">Trading Universe & Execution Preferences</h3>
-                <p class="text-xs text-gray-500">Configure which asset classes the assistant monitors and how stock trades execute.</p>
+                <p class="text-xs text-gray-500">Configure which asset classes the assistant monitors and how trades execute.</p>
               </div>
 
               <!-- Allowed Universes -->
               <div class="space-y-3">
-                <label class="text-sm font-medium text-gray-700">Active Asset Classes</label>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <label class="text-sm font-medium text-gray-700">Active Asset Classes & Markets</label>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
                   <label class="flex items-center gap-3 p-3.5 border rounded-xl cursor-pointer hover:bg-gray-50 transition-colors" :class="allowIndexOptions ? 'border-indigo-500 bg-indigo-50/30' : 'border-gray-200'">
                     <input type="checkbox" v-model="allowIndexOptions" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4" />
                     <div>
@@ -398,7 +555,7 @@ onMounted(() => {
                   <label class="flex items-center gap-3 p-3.5 border rounded-xl cursor-pointer hover:bg-gray-50 transition-colors" :class="allowEquity ? 'border-indigo-500 bg-indigo-50/30' : 'border-gray-200'">
                     <input type="checkbox" v-model="allowEquity" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4" />
                     <div>
-                      <span class="text-sm font-medium text-gray-900 block">NSE Cash Equities</span>
+                      <span class="text-sm font-medium text-gray-900 block">NSE Equities</span>
                       <span class="text-xs text-gray-500">Top 200 Liquid Stocks</span>
                     </div>
                   </label>
@@ -408,6 +565,14 @@ onMounted(() => {
                     <div>
                       <span class="text-sm font-medium text-gray-900 block">Stock Options</span>
                       <span class="text-xs text-gray-500">NSE F&O Listed Stocks</span>
+                    </div>
+                  </label>
+
+                  <label class="flex items-center gap-3 p-3.5 border rounded-xl cursor-pointer hover:bg-gray-50 transition-colors" :class="enableUsMarket ? 'border-indigo-500 bg-indigo-50/30' : 'border-gray-200'">
+                    <input type="checkbox" v-model="enableUsMarket" data-test="enable-us-market-checkbox" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4" />
+                    <div>
+                      <span class="text-sm font-medium text-gray-900 block">US Market (Alpaca)</span>
+                      <span class="text-xs text-gray-500">NYSE / NASDAQ Equities</span>
                     </div>
                   </label>
                 </div>
@@ -595,6 +760,57 @@ onMounted(() => {
                   >
                     Connect Account
                   </a>
+                </template>
+              </div>
+            </div>
+
+            <!-- Alpaca Markets Integration Card -->
+            <div
+              class="border border-gray-200 rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-gray-300 transition-colors"
+            >
+              <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-lg bg-amber-50 flex items-center justify-center flex-shrink-0 text-2xl">
+                  🦙
+                </div>
+                <div>
+                  <h3 class="font-semibold text-gray-900 flex items-center gap-2">
+                    <span>Alpaca Markets</span>
+                    <span
+                      v-if="connections.find((c) => c.brokerName === 'alpaca')?.isActive"
+                      class="text-xs px-2 py-0.5 rounded-full font-medium"
+                      :class="connections.find((c) => c.brokerName === 'alpaca')?.tradingMode === 'LIVE' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'"
+                    >
+                      {{ connections.find((c) => c.brokerName === 'alpaca')?.tradingMode === 'LIVE' ? 'Live USD' : 'Paper Sandbox' }}
+                    </span>
+                  </h3>
+                  <p class="text-sm text-gray-500">US Equities (NYSE / NASDAQ), Options, and Crypto API</p>
+                </div>
+              </div>
+
+              <div class="flex items-center gap-4">
+                <template v-if="connections.find((c) => c.brokerName === 'alpaca')?.isActive">
+                  <div
+                    class="flex items-center gap-2 px-3 py-1 bg-green-50 text-green-700 rounded-full text-sm font-medium border border-green-100"
+                  >
+                    <ShieldCheck class="w-4 h-4" />
+                    Connected ({{ connections.find((c) => c.brokerName === 'alpaca')?.apiKey?.slice(0, 6) }}...)
+                  </div>
+                  <button
+                    type="button"
+                    @click="disconnectAlpaca"
+                    :disabled="disconnectingAlpaca"
+                    class="text-sm text-red-600 hover:text-red-700 font-medium px-3 py-1.5 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {{ disconnectingAlpaca ? 'Disconnecting...' : 'Disconnect' }}
+                  </button>
+                </template>
+                <template v-else>
+                  <div
+                    class="flex items-center gap-2 px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-sm font-medium border border-gray-200"
+                  >
+                    Not Configured
+                  </div>
+                  <span class="text-xs text-gray-500">Add credentials above to connect</span>
                 </template>
               </div>
             </div>

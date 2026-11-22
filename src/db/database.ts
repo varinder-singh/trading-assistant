@@ -18,6 +18,8 @@ export interface ProfilesTable {
   maxIndexPositions?: number | null
   maxDailyTrades?: number | null
   enablePullbackEntry?: boolean | null
+  enableUsMarket?: boolean | null
+  alpacaTradingMode?: 'PAPER' | 'LIVE' | string | null
   createdAt: string
   updatedAt: string
 }

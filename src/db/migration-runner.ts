@@ -10,6 +10,7 @@ import * as m013 from './migrations/013_add_watch_config_to_profiles.js'
 import * as m014 from './migrations/014_add_equity_and_universe_preferences.js'
 import * as m015 from './migrations/015_create_scanner_and_analysis_persistence.js'
 import * as m016 from './migrations/016_add_profile_position_pool_settings.js'
+import * as m017 from './migrations/017_add_us_market_and_alpaca_to_profiles.js'
 
 export const staticMigrationProvider: MigrationProvider = {
   async getMigrations(): Promise<Record<string, Migration>> {
@@ -24,6 +25,7 @@ export const staticMigrationProvider: MigrationProvider = {
       '014_add_equity_and_universe_preferences': m014,
       '015_create_scanner_and_analysis_persistence': m015,
       '016_add_profile_position_pool_settings': m016,
+      '017_add_us_market_and_alpaca_to_profiles': m017,
     }
   },
 }

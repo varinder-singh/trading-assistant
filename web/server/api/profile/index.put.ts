@@ -28,6 +28,11 @@ export default defineEventHandler(async (event) => {
     maxIndexPositions,
     maxDailyTrades,
     enablePullbackEntry,
+    enableUsMarket,
+    alpacaTradingMode,
+    alpacaApiKey,
+    alpacaApiSecret,
+    removeAlpaca,
   } = body
 
   if (fullName !== undefined && fullName !== null && typeof fullName !== 'string') {
@@ -52,6 +57,10 @@ export default defineEventHandler(async (event) => {
     if (maxIndexPositions !== undefined) profileUpdates.maxIndexPositions = Number(maxIndexPositions)
     if (maxDailyTrades !== undefined) profileUpdates.maxDailyTrades = Number(maxDailyTrades)
     if (enablePullbackEntry !== undefined) profileUpdates.enablePullbackEntry = Boolean(enablePullbackEntry)
+    if (enableUsMarket !== undefined) profileUpdates.enableUsMarket = Boolean(enableUsMarket)
+    if (alpacaTradingMode !== undefined) {
+      profileUpdates.alpacaTradingMode = alpacaTradingMode === 'LIVE' ? 'LIVE' : 'PAPER'
+    }
 
     if (Object.keys(profileUpdates).length > 0) {
       const existing = await db.selectFrom('profiles').select('id').where('id', '=', userId).executeTakeFirst()
@@ -121,6 +130,66 @@ export default defineEventHandler(async (event) => {
             apiKey: kiteApiKey,
             apiSecretEncrypted: encryptedSecret,
             isActive: false, // Remains false until successful OAuth login
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          })
+          .execute()
+      }
+    }
+
+    // Upsert or remove logic for Alpaca broker credentials
+    if (removeAlpaca) {
+      await db
+        .deleteFrom('brokerAccounts')
+        .where('userId', '=', userId)
+        .where('brokerName', '=', 'alpaca')
+        .execute()
+    } else if (alpacaApiKey && alpacaApiKey.trim().length > 0) {
+      const existingAlpaca = await db
+        .selectFrom('brokerAccounts')
+        .select(['id', 'apiSecretEncrypted'])
+        .where('userId', '=', userId)
+        .where('brokerName', '=', 'alpaca')
+        .executeTakeFirst()
+
+      if (!alpacaApiSecret && !existingAlpaca?.apiSecretEncrypted) {
+        throw createError({
+          statusCode: 400,
+          statusMessage: 'Both Alpaca API Key and API Secret must be provided together',
+        })
+      }
+
+      const encryptedAlpacaSecret = alpacaApiSecret
+        ? encryptSecret(alpacaApiSecret)
+        : existingAlpaca?.apiSecretEncrypted
+
+      const mode = alpacaTradingMode === 'LIVE' ? 'LIVE' : 'PAPER'
+
+      if (existingAlpaca) {
+        await db
+          .updateTable('brokerAccounts')
+          .set({
+            apiKey: alpacaApiKey.trim(),
+            apiSecretEncrypted: encryptedAlpacaSecret,
+            accessToken: mode,
+            isActive: true,
+            updatedAt: new Date().toISOString(),
+          })
+          .where('id', '=', existingAlpaca.id)
+          .execute()
+      } else {
+        await db
+          .insertInto('brokerAccounts')
+          .values({
+            id: crypto.randomUUID(),
+            userId: userId,
+            brokerName: 'alpaca',
+            brokerUserId: 'alpaca-user',
+            accessToken: mode,
+            apiKey: alpacaApiKey.trim(),
+            apiSecretEncrypted: encryptedAlpacaSecret,
+            publicToken: null,
+            isActive: true,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           })

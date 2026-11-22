@@ -160,4 +160,89 @@ describe('ProfilePage.vue', () => {
     })
     expect(wrapper.text()).toContain('Settings updated successfully!')
   })
+
+  it('allows user to enable US Market with Alpaca and save custom Alpaca credentials', async () => {
+    const wrapper = mount(ProfilePage, {
+      global: {
+        stubs: {
+          NuxtLink: { template: '<a><slot /></a>' },
+        },
+      },
+    })
+    await flushPromises()
+
+    // 1. Toggle US Market checkbox
+    const usMarketCheckbox = wrapper.find('[data-test="enable-us-market-checkbox"]')
+    expect(usMarketCheckbox.exists()).toBe(true)
+    await usMarketCheckbox.setValue(true)
+
+    // 2. Select Alpaca Trading Mode: LIVE
+    const modeSelect = wrapper.find('[data-test="alpaca-mode-select"]')
+    expect(modeSelect.exists()).toBe(true)
+    await modeSelect.setValue('LIVE')
+
+    // 3. Input Alpaca API Key and Secret
+    const keyInput = wrapper.find('[data-test="alpaca-api-key-input"]')
+    expect(keyInput.exists()).toBe(true)
+    await keyInput.setValue('PK_TEST_USER_KEY_123')
+
+    const secretInput = wrapper.find('[data-test="alpaca-api-secret-input"]')
+    expect(secretInput.exists()).toBe(true)
+    await secretInput.setValue('SK_TEST_USER_SECRET_456')
+
+    // Submit form
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(mockPutPayloads).toHaveLength(1)
+    expect(mockPutPayloads[0]).toMatchObject({
+      enableUsMarket: true,
+      alpacaTradingMode: 'LIVE',
+      alpacaApiKey: 'PK_TEST_USER_KEY_123',
+      alpacaApiSecret: 'SK_TEST_USER_SECRET_456',
+    })
+    expect(wrapper.text()).toContain('Settings updated successfully!')
+  })
+
+  it('allows user to disconnect and remove Alpaca credentials', async () => {
+    // Setup with existing alpaca connection
+    ;(globalThis as any).$fetch = vi.fn(async (url: string, opts?: any) => {
+      if (url === '/api/profile/connections') {
+        return [
+          {
+            id: 'conn-alpaca',
+            brokerName: 'alpaca',
+            isActive: true,
+            apiKey: 'PK_TEST_KEY_EXISTING',
+            hasApiSecret: true,
+            tradingMode: 'PAPER',
+          },
+        ]
+      }
+      if (url === '/api/profile/broker?name=alpaca' && opts?.method === 'DELETE') {
+        return { success: true }
+      }
+      return {}
+    })
+    window.confirm = vi.fn().mockReturnValue(true)
+
+    const wrapper = mount(ProfilePage, {
+      global: {
+        stubs: {
+          NuxtLink: { template: '<a><slot /></a>' },
+        },
+      },
+    })
+    await flushPromises()
+
+    const disconnectBtn = wrapper.find('[data-test="disconnect-alpaca-btn"]')
+    expect(disconnectBtn.exists()).toBe(true)
+    await disconnectBtn.trigger('click')
+    await flushPromises()
+
+    expect(window.confirm).toHaveBeenCalled()
+    expect((globalThis as any).$fetch).toHaveBeenCalledWith('/api/profile/broker?name=alpaca', {
+      method: 'DELETE',
+    })
+  })
 })

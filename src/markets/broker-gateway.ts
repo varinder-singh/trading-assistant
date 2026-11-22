@@ -45,4 +45,12 @@ export class BrokerGatewayRegistry {
     }
     return undefined
   }
+
+  public static listAdapters(): readonly IBrokerGateway[] {
+    return Array.from(this.adapters.values())
+  }
+
+  public static reset(): void {
+    this.adapters.clear()
+  }
 }

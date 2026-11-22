@@ -22,6 +22,8 @@ export default defineEventHandler(async (event) => {
         id: userId,
         fullName: user.email ? user.email.split('@')[0] : 'Trader',
         email: user.email,
+        enableUsMarket: false,
+        alpacaTradingMode: 'PAPER',
         createdAt: new Date().toISOString(),
       }
     }

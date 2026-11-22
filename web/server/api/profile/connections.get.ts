@@ -16,7 +16,7 @@ export default defineEventHandler(async (event) => {
   try {
     const connections = await db
       .selectFrom('brokerAccounts')
-      .select(['id', 'brokerName', 'brokerUserId', 'isActive', 'updatedAt', 'apiKey', 'apiSecretEncrypted'])
+      .select(['id', 'brokerName', 'brokerUserId', 'isActive', 'updatedAt', 'apiKey', 'apiSecretEncrypted', 'accessToken'])
       .where('userId', '=', userId)
       .execute()
 
@@ -28,6 +28,7 @@ export default defineEventHandler(async (event) => {
       updatedAt: c.updatedAt,
       apiKey: c.apiKey,
       hasApiSecret: !!c.apiSecretEncrypted,
+      tradingMode: c.accessToken === 'LIVE' ? 'LIVE' : 'PAPER',
     }))
   } catch (error: any) {
     console.error('Error fetching broker connections:', error)
