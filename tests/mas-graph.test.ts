@@ -630,4 +630,71 @@ describe('Phase 2: Multi-Agent System (MAS) Engine & Book Standards (B1-B12)', (
     expect(ledger.getTotalConsumedTokens()).toBe(3800)
     expect(evaluator).toBeDefined()
   })
+
+  it('B13: DialecticCouncilAgent robustly parses unquoted undefined and trailing commas in LLM directives', async () => {
+    const rawCouncilResponseWithUndefined = `{
+      "consensusReached": false,
+      "consensusBias": "NO_TRADE",
+      "consensusOptionAction": "NONE",
+      "confidence": 55,
+      "resolutionRationale": "Council could not reach consensus due to conflicting structure and options.",
+      "executionDirectives": {
+        "requirePullbackLimit": false,
+        "suggestedLimitPrice": undefined,
+        "minDeltaRequired": undefined,
+        "tightenedIndexStopLoss": undefined,
+        "mandatoryConditions": [
+          "Verify RSI on 5m timeframe.",
+          "Check put open interest.",
+        ]
+      },
+      "speeches": [
+        {
+          "agentName": "Structure Specialist",
+          "role": "PROPOSAL",
+          "thesis": "NIFTY is in a Wave 4 consolidation with neutral RSI.",
+          "citedEvidence": ["Wave 4 on 5m"],
+          "recommendedAction": "NONE"
+        }
+      ]
+    }`
+
+    const mockProvider: LLMProvider = {
+      name: 'mock-provider',
+      chat: async () => rawCouncilResponseWithUndefined,
+      chatWithTools: async () => ({
+        text: rawCouncilResponseWithUndefined,
+        toolCalls: [],
+        estimatedInputTokens: 500,
+        estimatedOutputTokens: 200,
+        stepsUsed: 1,
+      }),
+    }
+
+    const { DialecticCouncilAgent } = await import('../src/ai/mas/agents.js')
+    const councilAgent = new DialecticCouncilAgent()
+    const ledger = new AtomicBudgetLedger(5000)
+
+    const blackboard: any = {
+      runId: 'test-run-1',
+      claimVersion: 1,
+      preFlightGates: { isBlocked: false, reasons: [] },
+      conflictMatrix: { hasDirectConflict: true, severity: 'HIGH', dominantBias: 'NO_TRADE', missingPerspectives: [] },
+      structureEnvelope: { handoff: { claim: { bias: 'NEUTRAL' } } },
+      optionsEnvelope: { handoff: { claim: { bias: 'BULLISH' } } },
+      macroEnvelope: { handoff: { claim: { bias: 'NEUTRAL' } } },
+      criticEnvelope: { handoff: { claim: { verdict: 'CHALLENGE_REDUCE_SIZE' } } },
+    }
+
+    const { synthesis, span } = await councilAgent.deliberate(blackboard, mockProvider, ledger)
+
+    expect(synthesis.consensusReached).toBe(false)
+    expect(synthesis.consensusBias).toBe('NO_TRADE')
+    expect(synthesis.confidence).toBe(55)
+    expect(synthesis.resolutionRationale).toBe('Council could not reach consensus due to conflicting structure and options.')
+    expect(synthesis.executionDirectives.suggestedLimitPrice).toBeUndefined()
+    expect(synthesis.executionDirectives.mandatoryConditions).toHaveLength(2)
+    expect(synthesis.speeches).toHaveLength(1)
+    expect(span.status).toBe('vetoed')
+  })
 })

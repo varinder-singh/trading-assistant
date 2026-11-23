@@ -10,13 +10,10 @@ import type {
 } from './types.js'
 import { eventHub } from '../utils/event-hub.js'
 import { memoryService } from './memory.js'
+import { cleanAndSanitizeJson } from '../utils/json-sanitizer.js'
 
 export function cleanJson(text: string): string {
-  return text
-    .replace(/^```(?:json)?\n?/, '')
-    .replace(/\n?```$/, '')
-    .trim()
-    .replace(/"(?:[^"\\]|\\.)*"/g, (match) => match.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t'))
+  return cleanAndSanitizeJson(text)
 }
 
 function sanitizeStopLoss(

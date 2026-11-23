@@ -45,6 +45,7 @@ import { BlackboardContextScoper } from './blackboard.js'
 import { MASToolRegistry, ToolCallMediator, TradePlanMathValidator } from './tools.js'
 import type { MemoryService } from '../memory.js'
 import { eventHub } from '../../utils/event-hub.js'
+import { cleanAndSanitizeJson, safeJsonParse } from '../../utils/json-sanitizer.js'
 import {
   CONSENSUS_AGENT_PROMPT,
   OPTIONS_AGENT_PROMPT,
@@ -59,42 +60,12 @@ function formatWave5Instruction(wave5Target?: number): string {
   return `The mathematical Wave 5 Exhaustion Target is exactly ${Number(wave5Target).toFixed(2)}. If price enters within 5 points of this level, shift trailing stop tightly.`
 }
 
-function extractJsonBlock(raw: string): string {
-  const text = String(raw || '').trim()
-  if (!text) return ''
-  // 1. Try stripping markdown fence blocks
-  const fenced = text
-    .replace(/^```(?:json)?\s*\n?/, '')
-    .replace(/\n?```\s*$/, '')
-    .trim()
-  if (fenced.startsWith('{') && fenced.endsWith('}')) {
-    return fenced
-  }
-  // 2. Fallback: extract substring between first '{' and last '}'
-  const start = text.indexOf('{')
-  const end = text.lastIndexOf('}')
-  if (start !== -1 && end > start) {
-    return text.substring(start, end + 1).trim()
-  }
-  return text
-}
-
 function cleanAgentJson(raw: string): string {
-  const extracted = extractJsonBlock(raw)
-  return extracted.replace(/"(?:[^"\\]|\\.)*"/g, (match) =>
-    match.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t')
-  )
+  return cleanAndSanitizeJson(raw)
 }
 
 function safeParseAgentJson<T extends Record<string, any>>(raw: string, agentName: string, fallback: T = {} as T): T {
-  const cleaned = cleanAgentJson(raw)
-  if (!cleaned) return fallback
-  try {
-    return JSON.parse(cleaned) as T
-  } catch (parseError) {
-    console.warn(`[${agentName}] JSON parse error: ${(parseError as Error).message}. Raw response was:`, raw)
-    return fallback
-  }
+  return safeJsonParse<T>(raw, fallback, agentName)
 }
 
 async function invokeProviderWithTools(
@@ -817,7 +788,7 @@ DELIBERATION PROTOCOL:
    - If downside risk is asymmetric or signals remain irreconcilably conflicted, vote "consensusBias": "NO_TRADE", "consensusOptionAction": "NONE".
    - If the contradiction is resolved, set actionable executionDirectives (e.g. requirePullbackLimit, suggestedLimitPrice, tightenedIndexStopLoss, or minDeltaRequired).
 
-Respond with valid JSON only matching DeliberationCouncilSynthesis:
+Respond with valid JSON only matching DeliberationCouncilSynthesis (use null, never undefined, for optional numeric directives):
 {
   "consensusReached": <boolean>,
   "consensusBias": "BULLISH" | "BEARISH" | "NEUTRAL" | "NO_TRADE",
@@ -826,9 +797,9 @@ Respond with valid JSON only matching DeliberationCouncilSynthesis:
   "resolutionRationale": "<2-3 sentences explaining how the council resolved the debate>",
   "executionDirectives": {
     "requirePullbackLimit": <boolean>,
-    "suggestedLimitPrice": <number or undefined>,
-    "minDeltaRequired": <number or undefined>,
-    "tightenedIndexStopLoss": <number or undefined>,
+    "suggestedLimitPrice": <number or null>,
+    "minDeltaRequired": <number or null>,
+    "tightenedIndexStopLoss": <number or null>,
     "mandatoryConditions": [<string>]
   },
   "speeches": [

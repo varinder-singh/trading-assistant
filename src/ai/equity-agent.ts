@@ -1,6 +1,7 @@
 import type { LLMProvider, LLMMessage } from './types.js'
 import { GeminiProvider } from './providers/gemini.js'
 import { createLogger } from '../utils/logger.js'
+import { cleanAndSanitizeJson } from '../utils/json-sanitizer.js'
 
 const logger = createLogger('EquityAnalystAgent')
 
@@ -155,7 +156,7 @@ CONSTRAINTS & PREFERENCES:
   }
 
   private parseJson(raw: string, context: EquityAnalysisContext): EquityAgentDecision {
-    const cleaned = this.extractJsonBlock(raw)
+    const cleaned = cleanAndSanitizeJson(raw)
 
     try {
       const parsed = JSON.parse(cleaned)
