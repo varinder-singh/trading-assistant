@@ -17,6 +17,7 @@ import { forEachSequentially } from '../utils/sequential.js'
 import { candleBuilder as defaultCandleBuilder } from '../data/candle-builder.js'
 import { getMultiTimeframeCandles } from '../data/yahoo.js'
 import { getInstrumentToken } from '../data/kite.js'
+import { extractUnderlyingSymbol } from '../utils/symbol.js'
 import type { Connect as KiteConnect } from 'kiteconnect'
 import { KiteOrderService } from './kite-orders.js'
 import { getGreeksFromPrice } from '../analysis/greeks.js'
@@ -275,11 +276,7 @@ export class PaperTrader extends EventEmitter {
 
   private async evaluateSinglePosition(pos: PaperPosition): Promise<void> {
     try {
-      const symbol = pos.symbol.startsWith('NIFTY')
-        ? 'NIFTY'
-        : pos.symbol.startsWith('BANKNIFTY')
-          ? 'BANKNIFTY'
-          : pos.symbol
+      const symbol = extractUnderlyingSymbol(pos.symbol)
 
       const [macro, underlyingToken] = await Promise.all([
         getMultiTimeframeCandles(symbol, this.kc),

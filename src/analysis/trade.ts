@@ -14,7 +14,7 @@ import { cooldownManager } from '../utils/cooldown.js'
 import type { Candle, TradeTechnicalAnalysis } from '../types/analysis.js'
 import { getInstrumentToken } from '../data/kite.js'
 import { gtiTracker } from '../indicators/gti-tracker.js'
-import { resolveYahooTicker } from '../utils/symbol.js'
+import { resolveYahooTicker, extractUnderlyingSymbol } from '../utils/symbol.js'
 import { calculateReversalScore } from './reversals.js'
 
 const divider = '═'.repeat(50)
@@ -368,9 +368,10 @@ export class TradeAnalysisService {
     },
     userId: string = ''
   ) {
-    resolveYahooTicker(symbol)
+    const underlying = extractUnderlyingSymbol(symbol || openPosition.symbol)
+    resolveYahooTicker(underlying)
 
-    const [candles, vix, kiteData] = await this.fetchPositionEvalInputs(kc, symbol, injectedCandles)
+    const [candles, vix, kiteData] = await this.fetchPositionEvalInputs(kc, underlying, injectedCandles)
 
     const { tf1h, tf30m, tf15m, tf5m } = analyzeMultiTimeframe(
       candles.candles1h,
