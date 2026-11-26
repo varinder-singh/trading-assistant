@@ -96,7 +96,7 @@ export interface TradingDomainPolicyConfig {
 export const DEFAULT_TRADING_DOMAIN_POLICY: TradingDomainPolicyConfig = Object.freeze({
   policyVersion: '2026.10.v2-regulated-options',
   maxVixAllowed: 25,
-  minExecutionConfidence: 60,
+  minExecutionConfidence: 75,
   fullSizeConfidence: 75,
   minTrapReversalScore: 3,
   maxScalperVwapZScore: 2.0,
@@ -234,6 +234,8 @@ export interface TimeframeSummarySlice {
 
 export interface StructureBlackboardSlice {
   readonly symbol: string
+  readonly assetClass?: 'INDEX_OPTION' | 'STOCK_OPTION' | 'EQUITY' | undefined
+  readonly isFnoListed?: boolean | undefined
   readonly mode: string
   readonly istTime: string
   readonly tf1h: TimeframeSummarySlice
@@ -318,6 +320,13 @@ export interface OptionsBlackboardSlice {
 export interface MacroBlackboardSlice {
   readonly symbol: string
   readonly istTime: string
+  readonly assetClass?: 'INDEX_OPTION' | 'STOCK_OPTION' | 'EQUITY' | undefined
+  readonly benchmark?: {
+    readonly symbol: string
+    readonly trend15m: string
+    readonly rsi15m: number
+    readonly relativeStrength?: number | undefined
+  } | undefined
   readonly vix: {
     readonly current: number
     readonly change: number
@@ -467,6 +476,18 @@ export interface TradingBlackboard {
   readonly claimVersion: number
   readonly symbol: string
   readonly userId: string
+  readonly assetClass?: 'INDEX_OPTION' | 'STOCK_OPTION' | 'EQUITY' | undefined
+  readonly benchmarkContext?: {
+    readonly symbol: string
+    readonly trend15m: string
+    readonly rsi15m: number
+    readonly relativeStrength?: number | undefined
+  } | undefined
+  readonly userPreferences?: {
+    readonly stockOptionPreference?: string | undefined
+    readonly equityHoldingMode?: 'MIS' | 'CNC' | undefined
+    readonly equityRiskPerTrade?: number | undefined
+  } | undefined
   readonly startedAtMs: number
   readonly deadlineMs: number
   readonly policy: TradingDomainPolicyConfig

@@ -562,7 +562,8 @@ export class TradePlanMathValidator {
 
     const entry = decision.entry || spotPrice
     const stopLoss = decision.stopLoss
-    const isBearish = decision.optionAction === 'BUY_PE'
+    const isBearish =
+      decision.optionAction === 'BUY_PE' || decision.optionAction === 'SELL_EQUITY' || decision.decision === 'SELL'
     const firstTarget = decision.targets?.[0]
 
     const mathErrors: (string | null)[] = [
@@ -571,10 +572,14 @@ export class TradePlanMathValidator {
         ? `stopLoss (${stopLoss}) is not on the underlying index scale near spot (${spotPrice})`
         : null,
       isBearish && stopLoss <= entry
-        ? `BUY_PE requires index stopLoss (${stopLoss}) strictly ABOVE entry (${entry})`
+        ? decision.optionAction === 'SELL_EQUITY'
+          ? `SELL_EQUITY requires stopLoss (${stopLoss}) strictly ABOVE entry (${entry})`
+          : `BUY_PE requires index stopLoss (${stopLoss}) strictly ABOVE entry (${entry})`
         : null,
       !isBearish && stopLoss >= entry
-        ? `BUY_CE requires index stopLoss (${stopLoss}) strictly BELOW entry (${entry})`
+        ? decision.optionAction === 'BUY_EQUITY'
+          ? `BUY_EQUITY requires stopLoss (${stopLoss}) strictly BELOW entry (${entry})`
+          : `BUY_CE requires index stopLoss (${stopLoss}) strictly BELOW entry (${entry})`
         : null,
     ]
 
@@ -627,6 +632,11 @@ export class TradePlanMathValidator {
     if (preFlightGates.isBlocked) {
       return [`PREFLIGHT_BLOCKED: ${preFlightGates.blockReasons.join('; ')}`]
     }
+    if (decision.confidence < this.policy.minExecutionConfidence) {
+      return [
+        `CONFIDENCE_TOO_LOW: Decision confidence (${decision.confidence}%) is below minimum execution threshold (${this.policy.minExecutionConfidence}%)`,
+      ]
+    }
 
     const allowedForSetup =
       decision.setup === 'INSTITUTIONAL_TRAP'
@@ -635,7 +645,14 @@ export class TradePlanMathValidator {
           ? preFlightGates.trendAllowedActions
           : preFlightGates.scalperAllowedActions
 
-    if (!allowedForSetup.includes(decision.optionAction)) {
+    const directionalAction: AIOptionAction =
+      decision.optionAction === 'BUY_EQUITY'
+        ? 'BUY_CE'
+        : decision.optionAction === 'SELL_EQUITY'
+          ? 'BUY_PE'
+          : decision.optionAction
+
+    if (!allowedForSetup.includes(directionalAction)) {
       return [
         `ACTION_FORBIDDEN_BY_GATE: ${decision.optionAction} is not permitted for ${agentType} (${decision.setup}). Allowed: [${allowedForSetup.join(', ')}]`,
       ]

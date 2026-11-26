@@ -60,6 +60,16 @@ function formatWave5Instruction(wave5Target?: number): string {
   return `The mathematical Wave 5 Exhaustion Target is exactly ${Number(wave5Target).toFixed(2)}. If price enters within 5 points of this level, shift trailing stop tightly.`
 }
 
+function resolveSpotPrice(structureSlice?: StructureBlackboardSlice): number {
+  const spot = structureSlice?.tf15m?.price ?? structureSlice?.tf5m?.price ?? structureSlice?.tf1h?.price
+  if (!spot || spot <= 0) {
+    throw new Error(
+      `Cannot resolve valid spot price from structureSlice for ${structureSlice?.symbol || 'UNKNOWN'}: tf15m=${structureSlice?.tf15m?.price}, tf5m=${structureSlice?.tf5m?.price}, tf1h=${structureSlice?.tf1h?.price}`
+    )
+  }
+  return spot
+}
+
 function cleanAgentJson(raw: string): string {
   return cleanAndSanitizeJson(raw)
 }
@@ -233,7 +243,7 @@ ${JSON.stringify(blackboard.structureSlice, null, 2)}`
   }
 
   private parseReport(raw: string, blackboard: TradingBlackboard): StructureSpecialistReport {
-    const spot = blackboard.structureSlice.tf15m.price || 24000
+    const spot = resolveSpotPrice(blackboard.structureSlice)
     const parsed = safeParseAgentJson<Record<string, any>>(raw, 'RegimeAndStructureAgent')
 
     const bias =
@@ -275,6 +285,10 @@ export class OptionsFlowAgent {
     budgetLedger: AtomicBudgetLedger
   ): Promise<{ envelope: AgentMessage<OptionsSpecialistReport>; span: AgentTraceSpan }> {
     const startedAtMs = Date.now()
+    if (this.shouldOmitOptionsAnalysis(blackboard)) {
+      return this.buildCashEquityNeutralEnvelope(blackboard, bus, deadline, startedAtMs)
+    }
+
     const grant = buildAgentCapabilityGrant(
       OptionsFlowAgent.AGENT_NAME,
       blackboard.claimVersion,
@@ -412,6 +426,80 @@ ${JSON.stringify(blackboard.optionsSlice, null, 2)}`
       reason: String(parsed.reason || parsed.rationale || 'Options flow analysis completed.'),
     }
   }
+
+  private shouldOmitOptionsAnalysis(blackboard: TradingBlackboard): boolean {
+    const isEquity = blackboard.structureSlice?.assetClass === 'EQUITY'
+    const hasOptions = (blackboard.optionsSlice?.focusedRows?.length ?? 0) > 0
+    return Boolean(isEquity && (!blackboard.structureSlice?.isFnoListed || !hasOptions))
+  }
+
+  private buildCashEquityNeutralEnvelope(
+    blackboard: TradingBlackboard,
+    bus: MessageBusValidator,
+    deadline: RunDeadline,
+    startedAtMs: number
+  ): { envelope: AgentMessage<OptionsSpecialistReport>; span: AgentTraceSpan } {
+    const report: OptionsSpecialistReport = {
+      bias: 'NEUTRAL',
+      confidence: 75,
+      dominantFlow: 'EQUITY_CASH_ONLY',
+      recommendedStrike: null,
+      recommendedOptionAction: 'NONE',
+      ivCrushRisk: 'LOW',
+      thetaDecayRisk: 'LOW',
+      keySignals: ['Cash Equity Segment: Derivatives chain not applicable or omitted'],
+      citedIndicators: { pcr: 1.0 },
+      reason: 'Options flow not applicable for pure cash equity candidate or non-FnO asset.',
+    }
+
+    const envelope = bus.createSignedEnvelope<OptionsSpecialistReport>({
+      correlationId: blackboard.runId,
+      sender: OptionsFlowAgent.AGENT_NAME,
+      recipient: 'ConsensusJudgeAgent',
+      claimVersion: blackboard.claimVersion,
+      deadline,
+      lifecycleState: 'succeeded',
+      handoff: {
+        claim: report,
+        provenance: {
+          sourceAgent: OptionsFlowAgent.AGENT_NAME,
+          citedFields: ['optionsSlice.pcr'],
+          toolCallsUsed: [],
+        },
+        uncertainty: [],
+        action: 'PROPOSE',
+        permissions: ['optionsEnvelope'],
+        resultSchema: 'OptionsSpecialistReport.v1',
+        acceptance: {
+          verifiedCitations: true,
+          verifiedReasoningActionMatch: true,
+          withinDeadline: !deadline.isExpired(),
+        },
+      },
+    })
+
+    const span = buildTraceSpan({
+      nodeId: 'parallel_specialists:options',
+      agentName: OptionsFlowAgent.AGENT_NAME,
+      startedAtMs,
+      status: 'ok',
+      summary: `EQUITY_CASH_ONLY (Options flow omitted) @ 75%`,
+      llmResult: {
+        text: JSON.stringify(report),
+        toolCalls: [],
+        estimatedInputTokens: 0,
+        estimatedOutputTokens: 0,
+        stepsUsed: 0,
+      },
+      workflowId: blackboard.runId,
+      stepIndex: 1,
+      pattern: 'PARALLEL_FANOUT',
+      target: 'ConsensusJudgeAgent',
+      lifecycleState: 'succeeded',
+    })
+
+    return { envelope, span }
+  }
 }
 
 // ============================================================================
@@ -439,8 +527,13 @@ export class MacroSentimentAgent {
     const mediator = new ToolCallMediator(grant)
     const tools = mediator.wrapTools(MASToolRegistry.buildMacroTools(blackboard), blackboard.claimVersion)
 
-    const systemPrompt = `You are the MacroSentimentAgent in an institutional NSE NIFTY Options Multi-Agent System.
-Your bounded context is India VIX, News Sentiment, and the 5-component Grand Unified Institutional Tracker (GTI).
+    const benchmarkSection = blackboard.macroSlice.benchmark
+      ? `\nBENCHMARK INDEX CONTEXT (NIFTY): Trend=${blackboard.macroSlice.benchmark.trend15m}, RSI=${blackboard.macroSlice.benchmark.rsi15m}, RelativeStrength=${blackboard.macroSlice.benchmark.relativeStrength}.
+MANDATORY BENCHMARK ALIGNMENT RULE: Never recommend buying if NIFTY is trending Bearish. Never recommend shorting if NIFTY is trending Bullish. If benchmark conflicts with proposed direction, set institutionalFlowAligned=false and vetoRecommended=true.`
+      : ''
+
+    const systemPrompt = `You are the MacroSentimentAgent in an institutional NSE Multi-Agent System.
+Your bounded context is India VIX, News Sentiment, and the 5-component Grand Unified Institutional Tracker (GTI).${benchmarkSection}
 Respond with valid JSON only matching MacroSpecialistReport:
 {
   "bias": "BULLISH" | "BEARISH" | "NEUTRAL",
@@ -532,6 +625,11 @@ ${JSON.stringify(blackboard.macroSlice, null, 2)}`
     const fallbackVixRegime = vix > 22 ? 'EXTREME' : vix > 16 ? 'ELEVATED' : 'CALM'
     const bias =
       parsed.bias === 'BULLISH' || parsed.bias === 'BEARISH' || parsed.bias === 'NEUTRAL' ? parsed.bias : 'NEUTRAL'
+
+    const benchmarkOpposing = this.isBenchmarkOpposing(bias, blackboard.macroSlice.benchmark?.trend15m)
+    const vetoRecommended = benchmarkOpposing || Boolean(parsed.vetoRecommended ?? vix > blackboard.policy.maxVixAllowed)
+    const institutionalFlowAligned = !benchmarkOpposing && Boolean(parsed.institutionalFlowAligned ?? true)
+
     return {
       bias,
       confidence: Math.max(0, Math.min(100, Number(parsed.confidence ?? 60))),
@@ -539,11 +637,16 @@ ${JSON.stringify(blackboard.macroSlice, null, 2)}`
         parsed.vixRegime === 'CALM' || parsed.vixRegime === 'ELEVATED' || parsed.vixRegime === 'EXTREME'
           ? parsed.vixRegime
           : fallbackVixRegime,
-      institutionalFlowAligned: Boolean(parsed.institutionalFlowAligned ?? true),
-      vetoRecommended: Boolean(parsed.vetoRecommended ?? vix > blackboard.policy.maxVixAllowed),
+      institutionalFlowAligned,
+      vetoRecommended,
       citedIndicators: parsed.citedIndicators,
       reason: String(parsed.reason || 'Macro assessment completed.'),
     }
+  }
+
+  private isBenchmarkOpposing(bias: string, benchmarkTrend?: string): boolean {
+    const trend = (benchmarkTrend || '').toUpperCase()
+    return (bias === 'BEARISH' && trend.includes('BULL')) || (bias === 'BULLISH' && trend.includes('BEAR'))
   }
 }
 
@@ -586,6 +689,10 @@ CRITICAL OPTIONS FLOW & SHORT SQUEEZE RULES:
 1. If Structure is Bullish, Spot Price > VWAP, and ATM Call OI is contracting (ΔCE OI < 0 / Short Covering), this is an ACTIVE SHORT SQUEEZE, not a Bull Trap. Do NOT issue HARD_VETO or flag as bull trap.
 2. If signals are mixed (e.g. bullish technicals but low cumulative PCR), issue CHALLENGE_REDUCE_SIZE (recommending half size) rather than HARD_VETO.
 3. Reserve HARD_VETO strictly for terminal conditions (e.g. VIX > circuit breaker, buying calls directly into a non-moving massive resistance wall, or severe structural thesis breakdown).
+4. BENCHMARK OPPOSITION & RSI EXHAUSTION RULES (For Stock Options and Cash Equities):
+   - If stock is Bearish or attempting a Short breakdown, but 15m RSI is already oversold (< 35), flag SEVERE DOWNSIDE EXHAUSTION. Do NOT approve shorting oversold dips into potential mean-reversion bounces. Issue HARD_VETO.
+   - If stock is Bullish or attempting a breakout, but 15m RSI is overbought (> 65) or 5m RSI > 75, flag SEVERE EXTENSION / OVERBOUGHT. Issue HARD_VETO.
+   - If stock setup opposes the benchmark NIFTY trend (e.g. shorting stock while NIFTY is Bullish), issue HARD_VETO due to broad market headwind.
 
 Respond with valid JSON only matching AdversarialCriticReport:
 {
@@ -724,9 +831,12 @@ export class DialecticCouncilAgent {
 
     // Fast-path: When all specialists agree unanimously and Critic issues an unequivocal APPROVE
     if (!isDebateNeeded) {
+      const isEquity = blackboard.structureSlice?.assetClass === 'EQUITY'
       const rawUnanimous = blackboard.conflictMatrix?.unanimousDirection
       const unanimousBias = rawUnanimous === 'NONE' || !rawUnanimous ? 'BULLISH' : rawUnanimous
-      const consensusAction: AIOptionAction = unanimousBias === 'BEARISH' ? 'BUY_PE' : 'BUY_CE'
+      const consensusAction: AIOptionAction = isEquity
+        ? (unanimousBias === 'BEARISH' ? 'SELL_EQUITY' : 'BUY_EQUITY')
+        : (unanimousBias === 'BEARISH' ? 'BUY_PE' : 'BUY_CE')
       const synthesis: DeliberationCouncilSynthesis = {
         consensusReached: true,
         consensusBias: unanimousBias,
@@ -874,8 +984,11 @@ ${JSON.stringify(blackboard.criticEnvelope?.handoff.claim ?? null, null, 2)}`
       ? parsed.consensusBias
       : 'NO_TRADE') as DeliberationCouncilSynthesis['consensusBias']
 
+    const isEquity = blackboard.structureSlice?.assetClass === 'EQUITY'
     const consensusOptionAction = (
-      consensusBias === 'BULLISH' ? 'BUY_CE' : consensusBias === 'BEARISH' ? 'BUY_PE' : 'NONE'
+      isEquity
+        ? (consensusBias === 'BULLISH' ? 'BUY_EQUITY' : consensusBias === 'BEARISH' ? 'SELL_EQUITY' : 'NONE')
+        : (consensusBias === 'BULLISH' ? 'BUY_CE' : consensusBias === 'BEARISH' ? 'BUY_PE' : 'NONE')
     ) as AIOptionAction
 
     return {
@@ -930,30 +1043,39 @@ export class ConsensusJudgeAgent {
   ): Promise<{ decision: AISuccessResponse; span: AgentTraceSpan }> {
     const startedAtMs = Date.now()
     const isRepair = Boolean(repairHint)
-    const systemPrompt = `You are the ConsensusJudgeAgent in an institutional NSE NIFTY Options Multi-Agent System.
+    const isEquity = blackboard.structureSlice?.assetClass === 'EQUITY'
+    const spot = resolveSpotPrice(blackboard.structureSlice)
+    const systemPrompt = `You are the ConsensusJudgeAgent in an institutional NSE Multi-Agent System.
 Synthesize the verified Specialist Envelopes, Conflict Matrix, Pre-Flight Gates, and Adversarial Critic verdict into a final JSON trade plan.
 
 ${CONSENSUS_AGENT_PROMPT}
 
 ## NON-NEGOTIABLE INSTITUTIONAL SYNTHESIS RULES
-1. Direction Mapping:
-   - Bullish trade -> \`"decision": "BUY"\`, \`"optionAction": "BUY_CE"\`
-   - Bearish trade -> \`"decision": "BUY"\`, \`"optionAction": "BUY_PE"\` (NEVER output \`"decision": "SELL"\` for buying puts)
-   - No trade / Veto -> \`"decision": "NO_TRADE"\`, \`"optionAction": "NONE"\`
+${
+  isEquity
+    ? `1. Direction Mapping for Cash Equity:
+   - Bullish trade -> "decision": "BUY", "instrument": "EQUITY", "optionAction": "BUY_EQUITY", "strike": null
+   - Bearish trade -> "decision": "SELL", "instrument": "EQUITY", "optionAction": "SELL_EQUITY", "strike": null
+   - No trade / Veto -> "decision": "NO_TRADE", "instrument": "EQUITY", "optionAction": "NONE", "strike": null`
+    : `1. Direction Mapping for Options:
+   - Bullish trade -> "decision": "BUY", "instrument": "OPTIONS", "optionAction": "BUY_CE"
+   - Bearish trade -> "decision": "BUY", "instrument": "OPTIONS", "optionAction": "BUY_PE" (NEVER output "decision": "SELL" for buying puts)
+   - No trade / Veto -> "decision": "NO_TRADE", "instrument": "OPTIONS", "optionAction": "NONE"`
+}
 2. If \`preFlightGates.isBlocked\` is true OR \`criticReport.verdict === "HARD_VETO"\`, you MUST output \`"decision": "NO_TRADE"\`, \`"optionAction": "NONE"\`.
 3. If \`conflictMatrix.missingPerspectives\` is non-empty, explicitly note the missing specialist perspective in \`reason\`.
-4. \`entry\`, \`stopLoss\`, and \`targets\` MUST be on the NIFTY INDEX scale (near ${blackboard.structureSlice.tf15m.price}).
-   - For \`BUY_CE\`: \`stopLoss < entry < targets[0] < targets[1]\`
-   - For \`BUY_PE\`: \`stopLoss > entry > targets[0] > targets[1]\`
+4. \`entry\`, \`stopLoss\`, and \`targets\` MUST be on the underlying asset scale near spot (${spot}).
+   - For Bullish (${isEquity ? 'BUY_EQUITY' : 'BUY_CE'}): \`stopLoss < entry < targets[0] < targets[1]\`
+   - For Bearish (${isEquity ? 'SELL_EQUITY' : 'BUY_PE'}): \`stopLoss > entry > targets[0] > targets[1]\`
 5. Respond with valid JSON only matching AISuccessResponse:
 {
-  "decision": "BUY" | "NO_TRADE",
+  "decision": "BUY" | "SELL" | "NO_TRADE",
   "setup": "TRUE_BREAKOUT" | "INSTITUTIONAL_TRAP" | "TREND_CONTINUATION" | "NONE",
   "macroTrend": "<string>",
-  "instrument": "OPTIONS",
-  "optionAction": "BUY_CE" | "BUY_PE" | "NONE",
+  "instrument": "${isEquity ? 'EQUITY' : 'OPTIONS'}",
+  "optionAction": "${isEquity ? 'BUY_EQUITY" | "SELL_EQUITY' : 'BUY_CE" | "BUY_PE'}" | "NONE",
   "strike": <number or null>,
-  "reason": "<2-3 sentences citing technicals, OI flow, and any missing perspectives or critic conditions>",
+  "reason": "<2-3 sentences citing technicals, flow, and any missing perspectives or critic conditions>",
   "confidence": <0-100>,
   "entry": <number>,
   "stopLoss": <number>,
@@ -1020,45 +1142,26 @@ ${blackboard.deliberationCouncil ? `## DELIBERATION COUNCIL SYNTHESIS\n${JSON.st
   }
 
   private parseDecision(raw: string, blackboard: TradingBlackboard): AISuccessResponse {
-    const spot = blackboard.structureSlice.tf15m.price || 24000
+    const isEquity = blackboard.structureSlice?.assetClass === 'EQUITY'
+    const spot = resolveSpotPrice(blackboard.structureSlice)
     if (blackboard.deliberationCouncil?.consensusBias === 'NO_TRADE') {
-      return {
-        decision: 'NO_TRADE',
-        setup: 'NONE',
-        macroTrend: String(blackboard.structureSlice.tf15m.trend || 'SIDEWAYS'),
-        instrument: 'OPTIONS',
-        optionAction: 'NONE',
-        strike: null,
-        entry: spot,
-        stopLoss: spot,
-        targets: [],
-        riskRewardRatio: 0,
-        confidence: 0,
-        reason: `Deliberation Council Veto: ${blackboard.deliberationCouncil.resolutionRationale}`,
-      }
+      return this.buildCouncilVetoResponse(blackboard, isEquity, spot)
     }
 
     const parsed = safeParseAgentJson<Record<string, any>>(raw, 'ConsensusJudgeAgent')
-    const normalizedDecision =
-      parsed.decision === 'SELL' && (parsed.optionAction === 'BUY_PE' || parsed.optionAction === 'BUY_CE')
-        ? 'BUY'
-        : parsed.decision === 'BUY'
-          ? 'BUY'
-          : 'NO_TRADE'
-
-    const missingNote =
-      blackboard.conflictMatrix && blackboard.conflictMatrix.missingPerspectives.length > 0
-        ? ` [${blackboard.conflictMatrix.missingPerspectives.join('; ')}]`
-        : ''
+    const resolved = isEquity ? this.resolveEquityDecision(parsed) : this.resolveOptionsDecision(parsed)
+    const missingNote = this.buildMissingPerspectivesNote(blackboard)
 
     return {
-      decision: normalizedDecision,
+      decision: resolved.decision,
       setup: (parsed.setup || blackboard.structureEnvelope?.handoff.claim.setup || 'NONE') as AIMarketActivitySetup,
-      macroTrend: String(parsed.macroTrend || blackboard.structureSlice.tf15m.trend || 'SIDEWAYS'),
-      instrument: 'OPTIONS',
-      optionAction: normalizedDecision === 'NO_TRADE' ? 'NONE' : ((parsed.optionAction || 'NONE') as AIOptionAction),
+      macroTrend: String(parsed.macroTrend || blackboard.structureSlice?.tf15m?.trend || 'SIDEWAYS'),
+      instrument: isEquity ? 'EQUITY' : 'OPTIONS',
+      assetClass: blackboard.structureSlice?.assetClass || (isEquity ? 'EQUITY' : 'INDEX_OPTION'),
+      action: resolved.action,
+      optionAction: resolved.optionAction,
       strike:
-        normalizedDecision === 'NO_TRADE'
+        resolved.decision === 'NO_TRADE' || isEquity
           ? null
           : Number(
               parsed.strike ||
@@ -1072,6 +1175,64 @@ ${blackboard.deliberationCouncil ? `## DELIBERATION COUNCIL SYNTHESIS\n${JSON.st
       targets: Array.isArray(parsed.targets) ? parsed.targets.map(Number) : [],
       riskRewardRatio: Number(parsed.riskRewardRatio || 1.5),
     }
+  }
+
+  private buildCouncilVetoResponse(
+    blackboard: TradingBlackboard,
+    isEquity: boolean,
+    spot: number
+  ): AISuccessResponse {
+    return {
+      decision: 'NO_TRADE',
+      setup: 'NONE',
+      macroTrend: String(blackboard.structureSlice?.tf15m?.trend || 'SIDEWAYS'),
+      instrument: isEquity ? 'EQUITY' : 'OPTIONS',
+      assetClass: blackboard.structureSlice?.assetClass || (isEquity ? 'EQUITY' : 'INDEX_OPTION'),
+      action: 'HOLD',
+      optionAction: 'NONE',
+      strike: null,
+      entry: spot,
+      stopLoss: spot,
+      targets: [],
+      riskRewardRatio: 0,
+      confidence: 0,
+      reason: `Deliberation Council Veto: ${blackboard.deliberationCouncil?.resolutionRationale}`,
+    }
+  }
+
+  private resolveEquityDecision(parsed: Record<string, any>): {
+    decision: 'BUY' | 'SELL' | 'NO_TRADE'
+    action: 'BUY' | 'SELL' | 'HOLD'
+    optionAction: AIOptionAction
+  } {
+    const isSell = parsed.decision === 'SELL' || parsed.optionAction === 'SELL_EQUITY'
+    const isBuy = parsed.decision === 'BUY' || parsed.optionAction === 'BUY_EQUITY'
+
+    return isSell
+      ? { decision: 'SELL', action: 'SELL', optionAction: 'SELL_EQUITY' }
+      : isBuy
+        ? { decision: 'BUY', action: 'BUY', optionAction: 'BUY_EQUITY' }
+        : { decision: 'NO_TRADE', action: 'HOLD', optionAction: 'NONE' }
+  }
+
+  private resolveOptionsDecision(parsed: Record<string, any>): {
+    decision: 'BUY' | 'NO_TRADE'
+    action: 'BUY' | 'HOLD'
+    optionAction: AIOptionAction
+  } {
+    const isDirectional =
+      (parsed.decision === 'SELL' && (parsed.optionAction === 'BUY_PE' || parsed.optionAction === 'BUY_CE')) ||
+      parsed.decision === 'BUY'
+    const optionAction = isDirectional ? ((parsed.optionAction || 'NONE') as AIOptionAction) : 'NONE'
+    const decision = isDirectional && optionAction !== 'NONE' ? 'BUY' : 'NO_TRADE'
+    const action = decision === 'BUY' ? 'BUY' : 'HOLD'
+
+    return { decision, action, optionAction }
+  }
+
+  private buildMissingPerspectivesNote(blackboard: TradingBlackboard): string {
+    const missing = blackboard.conflictMatrix?.missingPerspectives ?? []
+    return missing.length > 0 ? ` [${missing.join('; ')}]` : ''
   }
 }
 
@@ -1757,12 +1918,20 @@ export class TradingMASOrchestrator {
   }
 
   private buildAbstainResponse(state: TradingBlackboard, reason: string): AISuccessResponse {
-    const spot = state.structureSlice.tf15m.price || 24000
+    const isEquity = state.structureSlice?.assetClass === 'EQUITY'
+    let spot: number | null = null
+    try {
+      spot = resolveSpotPrice(state.structureSlice)
+    } catch {
+      spot = null
+    }
     return {
       decision: 'NO_TRADE',
       setup: 'NONE',
-      macroTrend: state.structureSlice.tf15m.trend || 'SIDEWAYS',
-      instrument: 'OPTIONS',
+      macroTrend: state.structureSlice?.tf15m?.trend || 'SIDEWAYS',
+      instrument: isEquity ? 'EQUITY' : 'OPTIONS',
+      assetClass: state.structureSlice?.assetClass || (isEquity ? 'EQUITY' : 'INDEX_OPTION'),
+      action: 'HOLD',
       optionAction: 'NONE',
       strike: null,
       reason,

@@ -567,59 +567,73 @@ export class TradeAnalysisService {
     if (!aiDecision.optionAction || aiDecision.optionAction === 'NONE') return
 
     const normalizedConfidence = aiDecision.confidence <= 1.0 ? aiDecision.confidence * 100 : aiDecision.confidence
+    if (!this.checkConfidenceThreshold(aiDecision, normalizedConfidence)) return
+    if (!this.checkReversalScoreGate(aiDecision, reversalScore)) return
 
-    if (normalizedConfidence < 60) {
-      console.log(`[Analysis] Signal REJECTED: Confidence ${normalizedConfidence}% is below minimum threshold (60%).`)
+    const zScore15m = tf15m.vwapZScore || 0
+    const isWave3 =
+      activeAgent === 'TREND' || aiDecision.setup === 'TRUE_BREAKOUT' || tf15m.waveContext?.currentPhase === 'WAVE_3'
+    if (!this.checkVwapZScoreGate(aiDecision, zScore15m, isWave3)) return
+
+    this.applyGtiGatekeeper(aiDecision, normalizedConfidence, gtiScore)
+  }
+
+  private checkConfidenceThreshold(aiDecision: any, normalizedConfidence: number): boolean {
+    if (normalizedConfidence < 75) {
+      console.log(`[Analysis] Signal REJECTED: Confidence ${normalizedConfidence}% is below minimum threshold (75%).`)
       aiDecision.decision = 'HOLD'
       aiDecision.optionAction = 'NONE'
-      return
+      return false
     }
 
-    if (normalizedConfidence < 75) {
+    if (normalizedConfidence < 80) {
       console.log(
         `[Analysis] ⚠️ Moderate confidence (${normalizedConfidence}%). Trade ALLOWED with reduced position (1 lot).`
       )
       aiDecision.reducedPosition = true
     }
+    return true
+  }
 
-    if (aiDecision.setup === 'INSTITUTIONAL_TRAP' && reversalScore) {
-      const requiredScore = aiDecision.optionAction === 'BUY_CE' ? reversalScore.bullish : reversalScore.bearish
-      if (requiredScore < 3) {
-        console.warn(
-          `[Reversal Score Filter] 🛑 BLOCKED: ${aiDecision.optionAction} rejected — Playbook B INSTITUTIONAL_TRAP requires Reversal Score >= 3/5 (actual: ${requiredScore}/5).`
-        )
-        aiDecision.decision = 'HOLD'
-        aiDecision.optionAction = 'NONE'
-        aiDecision.reason = `[REVERSAL SCORE BLOCKED] ${aiDecision.reason} | Playbook B requires Reversal Score >= 3/5 (got ${requiredScore}/5).`
-        return
-      }
-    }
+  private checkReversalScoreGate(aiDecision: any, reversalScore?: { bullish: number; bearish: number }): boolean {
+    if (aiDecision.setup !== 'INSTITUTIONAL_TRAP' || !reversalScore) return true
 
-    const zScore15m = tf15m.vwapZScore || 0
-    const isWave3Expansion =
-      activeAgent === 'TREND' || aiDecision.setup === 'TRUE_BREAKOUT' || tf15m.waveContext?.currentPhase === 'WAVE_3'
+    const requiredScore = aiDecision.optionAction === 'BUY_CE' ? reversalScore.bullish : reversalScore.bearish
+    if (requiredScore >= 3) return true
 
-    if (!isWave3Expansion && aiDecision.optionAction === 'BUY_CE' && zScore15m > 2.0) {
+    console.warn(
+      `[Reversal Score Filter] 🛑 BLOCKED: ${aiDecision.optionAction} rejected — Playbook B INSTITUTIONAL_TRAP requires Reversal Score >= 3/5 (actual: ${requiredScore}/5).`
+    )
+    aiDecision.decision = 'HOLD'
+    aiDecision.optionAction = 'NONE'
+    aiDecision.reason = `[REVERSAL SCORE BLOCKED] ${aiDecision.reason} | Playbook B requires Reversal Score >= 3/5 (got ${requiredScore}/5).`
+    return false
+  }
+
+  private checkVwapZScoreGate(aiDecision: any, zScore15m: number, isWave3Expansion: boolean): boolean {
+    if (isWave3Expansion) return true
+
+    if (aiDecision.optionAction === 'BUY_CE' && zScore15m > 2.0) {
       console.warn(
         `[VWAP Z-Score Filter] 🛑 BLOCKED: BUY_CE rejected — 15m VWAP Z-Score (${zScore15m.toFixed(2)}) > +2.0 (overbought mean-reversion boundary).`
       )
       aiDecision.decision = 'HOLD'
       aiDecision.optionAction = 'NONE'
       aiDecision.reason = `[VWAP Z-SCORE BLOCKED] ${aiDecision.reason} | Price is overbought (VWAP Z-Score ${zScore15m.toFixed(2)} > +2.0).`
-      return
+      return false
     }
 
-    if (!isWave3Expansion && aiDecision.optionAction === 'BUY_PE' && zScore15m < -2.0) {
+    if (aiDecision.optionAction === 'BUY_PE' && zScore15m < -2.0) {
       console.warn(
         `[VWAP Z-Score Filter] 🛑 BLOCKED: BUY_PE rejected — 15m VWAP Z-Score (${zScore15m.toFixed(2)}) < -2.0 (oversold mean-reversion boundary).`
       )
       aiDecision.decision = 'HOLD'
       aiDecision.optionAction = 'NONE'
       aiDecision.reason = `[VWAP Z-SCORE BLOCKED] ${aiDecision.reason} | Price is oversold (VWAP Z-Score ${zScore15m.toFixed(2)} < -2.0).`
-      return
+      return false
     }
 
-    this.applyGtiGatekeeper(aiDecision, normalizedConfidence, gtiScore)
+    return true
   }
 
   private applyGtiGatekeeper(aiDecision: any, normalizedConfidence: number, gtiScore: any): void {
@@ -652,16 +666,7 @@ export class TradeAnalysisService {
     }
 
     if (gtiMildOpposing) {
-      const penalizedConfidence = Math.max(50, normalizedConfidence * 0.7)
-      console.warn(
-        `[GTI Gatekeeper] ⚠️ WARNING: ${aiDecision.optionAction} — GTI score ${gtiScore.composite.toFixed(2)} (${gtiScore.classification}) mildly opposes. Confidence ${normalizedConfidence}% → ${penalizedConfidence.toFixed(0)}%.`
-      )
-      aiDecision.confidence = penalizedConfidence
-      aiDecision.reducedPosition = true
-      aiDecision.reason = `[GTI CAUTION] ${aiDecision.reason} | Institutional flow (${gtiScore.classification}) mildly opposes — reduced sizing applied.`
-      console.log(
-        `🎯 AI EXECUTION SIGNAL: ${aiDecision.optionAction} at strike ${aiDecision.strike} (REDUCED SIZE — GTI caution)`
-      )
+      this.handleMildGtiOpposition(aiDecision, normalizedConfidence, gtiScore)
       return
     }
 
@@ -670,6 +675,30 @@ export class TradeAnalysisService {
     )
     console.log(
       `[GTI] ✅ Institutional flow CONFIRMS direction: ${gtiScore.classification} (${gtiScore.composite.toFixed(2)})`
+    )
+  }
+
+  private handleMildGtiOpposition(aiDecision: any, normalizedConfidence: number, gtiScore: any): void {
+    const penalizedConfidence = Math.max(50, normalizedConfidence * 0.7)
+    console.warn(
+      `[GTI Gatekeeper] ⚠️ WARNING: ${aiDecision.optionAction} — GTI score ${gtiScore.composite.toFixed(2)} (${gtiScore.classification}) mildly opposes. Confidence ${normalizedConfidence}% → ${penalizedConfidence.toFixed(0)}%.`
+    )
+    aiDecision.confidence = penalizedConfidence
+
+    if (penalizedConfidence < 75) {
+      console.warn(
+        `[GTI Gatekeeper] 🛑 BLOCKED: ${aiDecision.optionAction} rejected — Penalized confidence ${penalizedConfidence.toFixed(0)}% dropped below minimum threshold (75%).`
+      )
+      aiDecision.decision = 'HOLD'
+      aiDecision.optionAction = 'NONE'
+      aiDecision.reason = `[GTI BLOCKED] ${aiDecision.reason} | Penalized confidence (${penalizedConfidence.toFixed(0)}%) fell below minimum threshold (75%).`
+      return
+    }
+
+    aiDecision.reducedPosition = true
+    aiDecision.reason = `[GTI CAUTION] ${aiDecision.reason} | Institutional flow (${gtiScore.classification}) mildly opposes — reduced sizing applied.`
+    console.log(
+      `🎯 AI EXECUTION SIGNAL: ${aiDecision.optionAction} at strike ${aiDecision.strike} (REDUCED SIZE — GTI caution)`
     )
   }
 

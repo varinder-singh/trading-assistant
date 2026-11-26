@@ -4,6 +4,7 @@ import { analyzeMultiTimeframe, analyzeDailyContext } from './technical.js'
 import { classifyInstrument, isNearMonthlyExpiry } from '../data/instrument-classifier.js'
 import { globalKiteScanner } from '../data/kite-scanner.js'
 import { EquityAnalystAgent, type EquityAnalysisContext, type EquityAgentDecision } from '../ai/equity-agent.js'
+import { LLMService } from '../ai/llm.js'
 import { getOptionToken } from '../data/kite.js'
 import { getIndiaVix, type VixData } from '../data/vix.js'
 import type { Candle } from '../types/analysis.js'
@@ -21,47 +22,46 @@ export interface EquityAnalysisPipelineResult {
   }
 }
 
+export interface UserEquityPreferences {
+  stockOptionPreference?: string
+  equityHoldingMode?: 'MIS' | 'CNC'
+  equityRiskPerTrade?: number
+}
+
 export class EquityAnalysisService {
-  constructor(private readonly agent: EquityAnalystAgent = new EquityAnalystAgent()) {}
+  constructor(
+    private readonly agent: EquityAnalystAgent = new EquityAnalystAgent(),
+    private readonly llmService: LLMService = new LLMService()
+  ) {}
 
   /**
-   * Executes the full multi-timeframe technical, VIX, and AI deliberation pipeline
+   * Executes the full multi-timeframe technical, VIX, and 3-Stage MAS deliberation pipeline
    * for a surfaced NSE stock candidate (supporting both Bullish and Bearish setups).
    */
   public async analyzeCandidate(
     kc: KiteConnectInstance,
     symbol: string,
-    userPreferences?: {
-      stockOptionPreference?: string
-      equityHoldingMode?: 'MIS' | 'CNC'
-      equityRiskPerTrade?: number
-    }
+    userPreferences?: UserEquityPreferences
   ): Promise<EquityAnalysisPipelineResult> {
     const s = symbol.toUpperCase().trim()
-
-    const classification = await classifyInstrument(kc, s)
-    const scanState = globalKiteScanner.getStockState(s)
-
-    const [stockCandles, niftyCandles, vix] = await Promise.all([
-      getMultiTimeframeCandles(s, kc).catch(() => null),
-      getMultiTimeframeCandles('NIFTY', kc).catch(() => null),
-      getIndiaVix().catch(() => ({ current: 15, change: 0, sentiment: 'normal' as const })),
-    ])
+    const { stockCandles, niftyCandles, vix, classification, scanState } = await this.fetchCandidateData(kc, s)
 
     if (!stockCandles || stockCandles.candles15m.length === 0) {
       throw new Error(`Insufficient candle data for ${s}`)
     }
 
-    const context = this.assembleContext({
+    const { context, masInput } = this.assembleContextAndMasInput({
       symbol: s,
       stockCandles,
       niftyCandles,
       classification,
       scanState,
+      vix,
       userPreferences,
     })
 
-    const decision = await this.agent.evaluate(context)
+    const aiRes = await this.llmService.analyzeWithEnsemble(masInput, 'SCALPER', '')
+    const decision = this.toEquityAgentDecision(s, aiRes, context, userPreferences)
     const routed = await this.resolveOptionRouting(kc, s, decision, classification.isFnoListed)
 
     return {
@@ -71,15 +71,73 @@ export class EquityAnalysisService {
     }
   }
 
-  private assembleContext(params: {
+  private async fetchCandidateData(kc: KiteConnectInstance, symbol: string) {
+    const classification = await classifyInstrument(kc, symbol)
+    const scanState = globalKiteScanner.getStockState(symbol)
+
+    const [stockCandles, niftyCandles, vix] = await Promise.all([
+      getMultiTimeframeCandles(symbol, kc).catch(() => null),
+      getMultiTimeframeCandles('NIFTY', kc).catch(() => null),
+      getIndiaVix().catch(() => ({ current: 15, change: 0, sentiment: 'normal' as const })),
+    ])
+
+    return { stockCandles, niftyCandles, vix, classification, scanState }
+  }
+
+  private toEquityAgentDecision(
+    symbol: string,
+    aiRes: any,
+    context: EquityAnalysisContext,
+    userPreferences?: UserEquityPreferences
+  ): EquityAgentDecision {
+    const isExecutionValid = aiRes && aiRes.decision !== 'NO_TRADE' && aiRes.confidence >= 75
+    const currentPrice = context.currentPrice
+    const holdingMode = userPreferences?.equityHoldingMode ?? 'MIS'
+
+    return isExecutionValid
+      ? {
+          symbol,
+          decision: aiRes.decision as 'BUY' | 'SELL',
+          action: (aiRes.optionAction || (aiRes.decision === 'BUY' ? 'BUY_EQUITY' : 'SELL_EQUITY')) as
+            | 'BUY_EQUITY'
+            | 'SELL_EQUITY'
+            | 'BUY_CE'
+            | 'BUY_PE'
+            | 'NONE',
+          strike: aiRes.strike ?? null,
+          entryPrice: aiRes.entry || currentPrice,
+          stopLoss: aiRes.stopLoss || (aiRes.decision === 'SELL' ? currentPrice * 1.01 : currentPrice * 0.99),
+          targets: Array.isArray(aiRes.targets) && aiRes.targets.length > 0 ? aiRes.targets : [currentPrice * 1.015],
+          riskRewardRatio: aiRes.riskRewardRatio || 1.5,
+          confidence: aiRes.confidence,
+          holdingMode,
+          reason: aiRes.reason || 'Synthesized by 3-Stage MAS Orchestrator.',
+        }
+      : {
+          symbol,
+          decision: 'NO_TRADE',
+          action: 'NONE',
+          strike: null,
+          entryPrice: currentPrice,
+          stopLoss: currentPrice,
+          targets: [],
+          riskRewardRatio: 0,
+          confidence: aiRes?.confidence ?? 0,
+          holdingMode,
+          reason: aiRes?.reason || 'MAS rejected setup due to low confidence or regime gating.',
+        }
+  }
+
+  private assembleContextAndMasInput(params: {
     symbol: string
     stockCandles: any
     niftyCandles: any
     classification: any
     scanState: any
+    vix: any
     userPreferences?: any
-  }): EquityAnalysisContext {
-    const { symbol, stockCandles, niftyCandles, classification, scanState, userPreferences } = params
+  }): { context: EquityAnalysisContext; masInput: any } {
+    const { symbol, stockCandles, niftyCandles, classification, scanState, vix, userPreferences } = params
 
     const mtf = analyzeMultiTimeframe(
       stockCandles.candles1h,
@@ -88,6 +146,14 @@ export class EquityAnalysisService {
       stockCandles.candles5m || stockCandles.candles15m
     )
     const dailyContext = analyzeDailyContext(stockCandles.candles1d, stockCandles.candles15m)
+    const niftyMtf = niftyCandles?.candles15m?.length
+      ? analyzeMultiTimeframe(
+          niftyCandles.candles1h || [],
+          niftyCandles.candles30m || [],
+          niftyCandles.candles15m,
+          niftyCandles.candles5m || niftyCandles.candles15m
+        )
+      : null
     const relativeStrengthVsNifty = this.calculateRelativeStrength(
       stockCandles.candles15m,
       niftyCandles?.candles15m
@@ -96,7 +162,7 @@ export class EquityAnalysisService {
     const currentPrice = scanState?.lastPrice || mtf.tf15m.price
     const atp = scanState?.atp || mtf.tf15m.vwap
 
-    return {
+    const context: EquityAnalysisContext = {
       symbol,
       currentPrice,
       atp,
@@ -129,6 +195,33 @@ export class EquityAnalysisService {
       stockOptionPreference: userPreferences?.stockOptionPreference,
       equityHoldingMode: userPreferences?.equityHoldingMode ?? 'MIS',
     }
+
+    const masInput = {
+      symbol,
+      assetClass: classification.isFnoListed ? 'STOCK_OPTION' : 'EQUITY',
+      isFnoListed: classification.isFnoListed,
+      mode: 'intraday',
+      tf1h: mtf.tf1h,
+      tf30m: mtf.tf30m,
+      tf15m: mtf.tf15m,
+      tf5m: mtf.tf5m,
+      dailyContext,
+      vix,
+      benchmark: {
+        trend15m: niftyMtf?.tf15m?.trend || 'SIDEWAYS',
+        rsi15m: niftyMtf?.tf15m?.rsi || 50,
+        relativeStrength: relativeStrengthVsNifty,
+      },
+      optionsAnalysisZerodha: {
+        pcr: 1.0,
+        atmStrike: Math.round(mtf.tf15m.price / 10) * 10,
+        marketFlow: 'NEUTRAL',
+        rows: [],
+      },
+      userPreferences,
+    }
+
+    return { context, masInput }
   }
 
   private calculateRelativeStrength(stock15m: Candle[], nifty15m?: Candle[]): number {
@@ -163,8 +256,7 @@ export class EquityAnalysisService {
     }
 
     if (!isFnoListed || !decision.strike) {
-      this.applyCashEquityFallback(decision)
-      return { decision, assetClass: 'EQUITY' }
+      return { decision: this.applyCashEquityFallback(decision), assetClass: 'EQUITY' }
     }
 
     const optType = decision.action === 'BUY_CE' ? 'CE' : 'PE'
@@ -176,23 +268,26 @@ export class EquityAnalysisService {
     }
 
     console.warn(`[EquityAnalysis] Stock option near expiry or unavailable for ${symbol}. Falling back to equity cash.`)
-    this.applyCashEquityFallback(decision)
-    return { decision, assetClass: 'EQUITY' }
+    return { decision: this.applyCashEquityFallback(decision), assetClass: 'EQUITY' }
   }
 
-  private applyCashEquityFallback(decision: EquityAgentDecision): void {
+  private applyCashEquityFallback(decision: EquityAgentDecision): EquityAgentDecision {
     const isBearish = decision.action === 'BUY_PE' || decision.decision === 'SELL'
     if (!isBearish) {
-      decision.action = 'BUY_EQUITY'
-      return
+      return { ...decision, action: 'BUY_EQUITY' }
     }
-    if (decision.holdingMode === 'MIS') {
-      decision.action = 'SELL_EQUITY'
-      decision.decision = 'SELL'
-      return
+
+    // Strict institutional rule: Do not silently convert a Put Option intent into a naked intraday cash short!
+    // A Put option has strictly capped downside risk, whereas a short equity position has uncapped upside risk.
+    console.warn(
+      `[EquityAnalysis] Stock option unavailable for bearish setup ${decision.symbol}. Silent conversion of Put Option to Cash Short is PROHIBITED. Abstaining.`
+    )
+    return {
+      ...decision,
+      action: 'NONE',
+      decision: 'NO_TRADE',
+      reason: `${decision.reason} [ABSTAIN: Stock option unavailable near expiry; silent cash short conversion prohibited]`,
     }
-    decision.action = 'NONE'
-    decision.decision = 'NO_TRADE'
   }
 }
 

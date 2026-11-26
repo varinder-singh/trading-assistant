@@ -93,8 +93,8 @@ export type MarketContext = {
 export type AIDecision = 'BUY' | 'SELL' | 'NO_TRADE' | 'HOLD'
 export type AIMarketActivitySetup = 'TRUE_BREAKOUT' | 'INSTITUTIONAL_TRAP' | 'TREND_CONTINUATION' | 'NONE'
 export type AIMacroTrend = 'COMPRESSION_BULLISH' | 'EXPANDING_BEARISH' | 'SIDEWAYS'
-export type AIInstrument = 'OPTIONS'
-export type AIOptionAction = 'BUY_CE' | 'BUY_PE' | 'NONE'
+export type AIInstrument = 'OPTIONS' | 'EQUITY'
+export type AIOptionAction = 'BUY_CE' | 'BUY_PE' | 'BUY_EQUITY' | 'SELL_EQUITY' | 'NONE'
 
 export interface AISuccessResponse {
   decision: AIDecision
@@ -102,6 +102,9 @@ export interface AISuccessResponse {
   macroTrend: AIMacroTrend | string
   instrument: AIInstrument
   optionAction: AIOptionAction
+  action?: 'BUY_EQUITY' | 'SELL_EQUITY' | 'BUY_CE' | 'BUY_PE' | 'NONE'
+  assetClass?: 'INDEX_OPTION' | 'STOCK_OPTION' | 'EQUITY'
+  holdingMode?: 'MIS' | 'CNC'
   strike: number | null
   reason: string // "<2-3 sentences citing technicals AND specific OI/buildup signals>",
   confidence: number // <0-100>,

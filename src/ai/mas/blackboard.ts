@@ -105,36 +105,53 @@ export class BlackboardContextScoper {
     const revBear = Number(input?.reversalScore?.bearish ?? 3)
     const rsi5m = Number(input?.tf5m?.rsi ?? 50)
     const isWave5 = input?.tf15m?.waveContext?.currentPhase === 'WAVE_5'
+    const assetClass = input?.assetClass as 'INDEX_OPTION' | 'STOCK_OPTION' | 'EQUITY' | undefined
+    const isEquity = assetClass === 'EQUITY' || assetClass === 'STOCK_OPTION'
+    const benchmarkTrend = String(input?.benchmark?.trend15m || input?.niftyContext?.trend || '').toUpperCase()
 
-    return { zScore15m, rsi15m, gtiConf, gtiComposite, revBull, revBear, rsi5m, isWave5 }
+    return { zScore15m, rsi15m, gtiConf, gtiComposite, revBull, revBear, rsi5m, isWave5, assetClass, isEquity, benchmarkTrend }
   }
 
   private evaluateGatePermissions(metrics: ReturnType<typeof this.extractGateMetrics>) {
     const gtiBlocksCe = metrics.gtiConf > 30 && metrics.gtiComposite < -this.policy.gtiSevereOppositionThreshold
     const gtiBlocksPe = metrics.gtiConf > 30 && metrics.gtiComposite > this.policy.gtiSevereOppositionThreshold
 
-    const scalperAllowsCe = !gtiBlocksCe && metrics.zScore15m <= this.policy.maxScalperVwapZScore
-    const scalperAllowsPe = !gtiBlocksPe && metrics.zScore15m >= -this.policy.maxScalperVwapZScore
+    // Equity-specific deterministic gates: Benchmark Trend Alignment & RSI Exhaustion
+    const benchmarkBlocksPe = metrics.isEquity && metrics.benchmarkTrend.includes('BULL')
+    const benchmarkBlocksCe = metrics.isEquity && metrics.benchmarkTrend.includes('BEAR')
+    const rsiExhaustionBlocksPe = metrics.isEquity && metrics.rsi15m < 35
+    const rsiExhaustionBlocksCe = metrics.isEquity && metrics.rsi15m > 65
+    const rsi5mBlowoffCe = metrics.isEquity && metrics.rsi5m > 75
+    const rsi5mBlowoffPe = metrics.isEquity && metrics.rsi5m < 25
+
+    const scalperAllowsCe = !gtiBlocksCe && !benchmarkBlocksCe && !rsiExhaustionBlocksCe && !rsi5mBlowoffCe && metrics.zScore15m <= this.policy.maxScalperVwapZScore
+    const scalperAllowsPe = !gtiBlocksPe && !benchmarkBlocksPe && !rsiExhaustionBlocksPe && !rsi5mBlowoffPe && metrics.zScore15m >= -this.policy.maxScalperVwapZScore
 
     const trendBlowoffCe =
       (metrics.zScore15m > this.policy.maxTrendBlowoffVwapZScore && metrics.rsi15m > 80) ||
       metrics.rsi5m > 80 ||
+      rsi5mBlowoffCe ||
       (metrics.isWave5 && metrics.rsi5m > 70)
     const trendBlowoffPe =
       (metrics.zScore15m < -this.policy.maxTrendBlowoffVwapZScore && metrics.rsi15m < 20) ||
       metrics.rsi5m < 20 ||
+      rsi5mBlowoffPe ||
       (metrics.isWave5 && metrics.rsi5m < 30)
 
-    const trendAllowsCe = !gtiBlocksCe && !trendBlowoffCe
-    const trendAllowsPe = !gtiBlocksPe && !trendBlowoffPe
+    const trendAllowsCe = !gtiBlocksCe && !benchmarkBlocksCe && !rsiExhaustionBlocksCe && !trendBlowoffCe
+    const trendAllowsPe = !gtiBlocksPe && !benchmarkBlocksPe && !rsiExhaustionBlocksPe && !trendBlowoffPe
     const trapAllowsCe =
-      metrics.revBull >= this.policy.minTrapReversalScore && metrics.zScore15m <= this.policy.maxScalperVwapZScore
+      !benchmarkBlocksCe && !rsiExhaustionBlocksCe && metrics.revBull >= this.policy.minTrapReversalScore && metrics.zScore15m <= this.policy.maxScalperVwapZScore
     const trapAllowsPe =
-      metrics.revBear >= this.policy.minTrapReversalScore && metrics.zScore15m >= -this.policy.maxScalperVwapZScore
+      !benchmarkBlocksPe && !rsiExhaustionBlocksPe && metrics.revBear >= this.policy.minTrapReversalScore && metrics.zScore15m >= -this.policy.maxScalperVwapZScore
 
     return {
       gtiBlocksCe,
       gtiBlocksPe,
+      benchmarkBlocksCe,
+      benchmarkBlocksPe,
+      rsiExhaustionBlocksCe,
+      rsiExhaustionBlocksPe,
       scalperAllowsCe,
       scalperAllowsPe,
       trendBlowoffCe,
@@ -151,6 +168,10 @@ export class BlackboardContextScoper {
     perm: ReturnType<typeof this.evaluateGatePermissions>
   ): readonly string[] {
     return Object.freeze([
+      ...(perm.benchmarkBlocksPe ? [`Benchmark index (NIFTY) is ${metrics.benchmarkTrend}; shorting single stocks against broad index trend is blocked.`] : []),
+      ...(perm.benchmarkBlocksCe ? [`Benchmark index (NIFTY) is ${metrics.benchmarkTrend}; buying single stocks against broad index fall is blocked.`] : []),
+      ...(perm.rsiExhaustionBlocksPe ? [`15m RSI (${metrics.rsi15m.toFixed(1)}) < 35: downward momentum exhausted, chasing short/Put is blocked.`] : []),
+      ...(perm.rsiExhaustionBlocksCe ? [`15m RSI (${metrics.rsi15m.toFixed(1)}) > 65: upward momentum overextended, chasing long/Call is blocked.`] : []),
       ...(perm.gtiBlocksCe ? [`GTI composite (${metrics.gtiComposite.toFixed(2)}) severely opposes BUY_CE`] : []),
       ...(perm.gtiBlocksPe ? [`GTI composite (${metrics.gtiComposite.toFixed(2)}) severely opposes BUY_PE`] : []),
       ...(perm.trendBlowoffCe && !perm.gtiBlocksCe
@@ -202,6 +223,8 @@ export class BlackboardContextScoper {
 
     return Object.freeze({
       symbol: String(input?.symbol || 'NIFTY'),
+      assetClass: input?.assetClass,
+      isFnoListed: input?.isFnoListed,
       mode: String(input?.mode || 'intraday'),
       istTime,
       tf1h: toTimeframeSlice(input?.tf1h, '1h'),
@@ -319,9 +342,18 @@ export class BlackboardContextScoper {
 
   public buildMacroSlice(input: any): MacroBlackboardSlice {
     const istTime = input?.time || new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })
+    const benchmark = input?.benchmark || (input?.niftyContext ? {
+      symbol: 'NIFTY',
+      trend15m: String(input.niftyContext.trend || 'SIDEWAYS'),
+      rsi15m: Number(input.niftyContext.rsi || 50),
+      relativeStrength: input.relativeStrengthVsNifty,
+    } : undefined)
+
     return Object.freeze({
       symbol: String(input?.symbol || 'NIFTY'),
       istTime,
+      assetClass: input?.assetClass,
+      benchmark: benchmark ? Object.freeze(benchmark) : undefined,
       vix: Object.freeze({
         current: Number(input?.vix?.current ?? 15),
         change: Number(input?.vix?.change ?? 0),

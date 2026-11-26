@@ -970,8 +970,14 @@ export class UserSession extends EventEmitter {
     const estimatedRisk = lotSize * entryPrice * optionRiskPct
 
     if (estimatedRisk > maxOptionRisk && candidate) {
+      if (decision.action === 'BUY_PE') {
+        logger.warn(
+          `🛑 [UserSession] Option ${option.symbol} 1-lot risk (₹${estimatedRisk.toFixed(2)}) exceeds max risk cap (₹${maxOptionRisk}). Conversion of Put Option to naked cash short is PROHIBITED to prevent uncapped upside risk. Trade ABORTED.`
+        )
+        return
+      }
       logger.info(
-        `⚖️ [UserSession] Option ${option.symbol} 1-lot risk (₹${estimatedRisk.toFixed(2)}) exceeds max risk cap (₹${maxOptionRisk}). Routing to Cash Equity.`
+        `⚖️ [UserSession] Option ${option.symbol} 1-lot risk (₹${estimatedRisk.toFixed(2)}) exceeds max risk cap (₹${maxOptionRisk}). Routing to Cash Equity Long.`
       )
       await this.executeSurfacedEquityOrder(candidate, decision, telemetry)
       return
